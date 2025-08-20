@@ -11,14 +11,20 @@ TUNSETIFF = 0x400454ca
 IFF_TAP = 0x0002
 IFF_NO_PI = 0x1000
 
+# Name of the TAP device we create
+TAP_NAME = b"tap0"
+
+# Maximum size of an Ethernet frame (including VLAN tag)
+ETH_FRAME_MAX = 1522
+
 
 def create_tap_interface():
     """Create and return a TAP interface file descriptor and name."""
     try:
         tap_fd = os.open('/dev/net/tun', os.O_RDWR)
-        ifr = struct.pack('16sH', b'tap0', IFF_TAP | IFF_NO_PI)
+        ifr = struct.pack('16sH', TAP_NAME, IFF_TAP | IFF_NO_PI)
         fcntl.ioctl(tap_fd, TUNSETIFF, ifr)
-        return tap_fd, 'tap0'
+        return tap_fd, TAP_NAME.decode()
     except IOError as e:
         print(f"Error creating TAP device: {e}")
         exit(1)
@@ -35,13 +41,15 @@ def plc_to_tap(plc, tap_fd):
     while True:
         frame = plc.recv()
         if frame:
+            # Write the complete Ethernet frame to the TAP device
             os.write(tap_fd, bytes(frame))
 
 
 def tap_to_plc(plc, tap_fd):
     """Read from the TAP interface and write to the PLC."""
     while True:
-        packet = os.read(tap_fd, 2048)
+        # Read a full Ethernet frame from the TAP interface
+        packet = os.read(tap_fd, ETH_FRAME_MAX)
         if packet:
             plc.send(list(packet))
 
@@ -61,7 +69,10 @@ def main():
     plc_to_tap_thread.start()
     tap_to_plc_thread.start()
 
-    print(f"TAP device '{tap_name}' is up and bridged with the PLC modem.")
+    print(
+        f"TAP device '{tap_name}' is up and bridged with the PLC modem "
+        f"(frame size {ETH_FRAME_MAX} bytes)."
+    )
     print("Press Ctrl+C to stop.")
 
     try:
