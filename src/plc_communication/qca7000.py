@@ -1,5 +1,6 @@
 import spidev
 import time
+import logging
 
 # QCA7000 SPI registers
 SPI_REG_BFR_SIZE = 0x0100
@@ -9,6 +10,9 @@ SPI_REG_SPI_CONFIG = 0x0400
 SPI_REG_INTR_CAUSE = 0x0C00
 SPI_REG_INTR_ENABLE = 0x0D00
 SPI_REG_SIGNATURE = 0x1A00
+
+# QCA7000 SPI config bits
+QCASPI_SLAVE_RESET_BIT = (1 << 6)
 
 # QCA7000 SPI commands
 SPI_CMD_READ = 0x8000
@@ -21,6 +25,8 @@ SPI_INT_CPU_ON = (1 << 6)
 SPI_INT_WRBUF_ERR = (1 << 2)
 SPI_INT_RDBUF_ERR = (1 << 1)
 SPI_INT_PKT_AVLBL = (1 << 0)
+
+logger = logging.getLogger(__name__)
 
 class QCA7000:
     def __init__(self, spi_bus=0, spi_device=0):
@@ -43,6 +49,29 @@ class QCA7000:
         request = [(command >> 8) & 0xFF, command & 0xFF, (value >> 8) & 0xFF, value & 0xFF]
         self._spi_transfer(request)
 
+    def reset_chip(self):
+        """Reset the QCA7000 and reinitialize the interface."""
+        self._write_register(SPI_REG_SPI_CONFIG, QCASPI_SLAVE_RESET_BIT)
+        time.sleep(0.1)
+        logger.warning("QCA7000 reset triggered")
+        self.initialize()
+
+    def _check_and_handle_interrupts(self):
+        """Check for special interrupts and recover if necessary."""
+        cause = self._read_register(SPI_REG_INTR_CAUSE)
+
+        if cause & SPI_INT_CPU_ON:
+            logger.warning("QCA7000 CPU_ON detected - reinitializing")
+            self.initialize()
+            cause = self._read_register(SPI_REG_INTR_CAUSE)
+
+        if cause & (SPI_INT_WRBUF_ERR | SPI_INT_RDBUF_ERR):
+            logger.error("QCA7000 buffer error detected - resetting")
+            self.reset_chip()
+            cause = self._read_register(SPI_REG_INTR_CAUSE)
+
+        return cause
+
     def initialize(self):
         # Recommended initialization sequence from QCA700X.md
         self._read_register(SPI_REG_SIGNATURE) # Dummy read
@@ -55,8 +84,9 @@ class QCA7000:
         self._write_register(SPI_REG_INTR_ENABLE, interrupts)
 
     def read_ethernet_frame(self):
-        # Check if a packet is available
-        if not (self._read_register(SPI_REG_INTR_CAUSE) & SPI_INT_PKT_AVLBL):
+        # Handle special interrupts and check for packet availability
+        cause = self._check_and_handle_interrupts()
+        if not (cause & SPI_INT_PKT_AVLBL):
             return None
 
         # Get the length of the available data
@@ -78,6 +108,9 @@ class QCA7000:
         return frame_data[2:] # Remove the 2-byte command from the beginning
 
     def write_ethernet_frame(self, frame):
+        # Handle special interrupts before attempting to write
+        self._check_and_handle_interrupts()
+
         # Calculate the frame length
         frame_length = len(frame)
 
