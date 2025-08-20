@@ -1,6 +1,7 @@
 # DC Single GUN PLC for Raspberry Pi
 
 This project provides a Python-based implementation of the ISO 15118 and SLAC protocols for a single-gun DC charger, designed to run on a Raspberry Pi.
+> **Note:** This repository uses Git submodules. After cloning, run `git submodule update --init --recursive` to download them.
 
 ## Features
 
