@@ -58,9 +58,12 @@ Please reboot your Raspberry Pi for the changes to take effect:
 
 sudo reboot
 
-After reboot, you can run the PLC to TAP bridge:
+After reboot, start the unified EVSE application to initialise the PLC
+bridge, run SLAC and launch ISO 15118:
 
-sudo python3 src/plc_communication/plc_to_tap.py
+sudo python3 src/evse_main.py --evse-id <EVSE_ID>
+# or
+sudo python3 start_evse.py
 EOF
 
 echo "Setup script completed successfully."
