@@ -23,12 +23,20 @@ This project provides a Python-based implementation of the ISO 15118 and SLAC pr
 
 ```
 git clone https://github.com/joulepoint/dc-plc.git
+cd dc-plc
 ```
 
-2.  Install the dependencies:
+2.  Initialize Git submodules:
+
+```
+git submodule update --init --recursive
+```
+
+3.  Install the dependencies:
 
 ```
 pip install -r requirements.txt
+pip install -e src/pyslac src/iso15118
 ```
 
 ### Usage
