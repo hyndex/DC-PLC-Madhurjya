@@ -22,9 +22,9 @@
 
 4. **Start the EVSE service**
    ```bash
-   sudo python3 start_evse.py
+   sudo python3 src/evse_main.py --evse-id <EVSE_ID>
    ```
-   The script loads `src/iso15118/.env`, brings up the PLC interface and launches the SECC.
+   This bridges the PLC modem, performs SLAC matching and launches the SECC once matched.
 
 ## Troubleshooting
 
@@ -48,7 +48,7 @@
 flowchart TD
     A[Run setup_rpi.sh] --> B[Reboot]
     B --> C[Generate certificates]
-    C --> D[Start start_evse.py]
+    C --> D[Start evse_main.py]
     D --> E{EV connects}
     E -->|SLAC & ISO 15118 succeed| F[Charging session]
     E -->|Failure| G[Troubleshoot]
