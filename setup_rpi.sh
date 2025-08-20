@@ -52,9 +52,9 @@ Please reboot your Raspberry Pi for the changes to take effect:
 
 sudo reboot
 
-After reboot, you can run the PLC to TUN bridge:
+After reboot, you can run the PLC to TAP bridge:
 
-sudo python3 src/plc_communication/plc_to_tun.py
+sudo python3 src/plc_communication/plc_to_tap.py
 "
 
 echo "Setup script completed successfully."
