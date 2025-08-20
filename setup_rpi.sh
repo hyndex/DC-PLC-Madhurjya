@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 # Check if running as root
 if [ "$(id -u)" != "0" ]; then
@@ -6,13 +7,31 @@ if [ "$(id -u)" != "0" ]; then
    exit 1
 fi
 
-# Enable SPI
+# Enable SPI and QCA7000 overlay
+reboot_required=0
+
+# Enable SPI if not already enabled
 if ! grep -q "^dtparam=spi=on" /boot/config.txt; then
     echo "Enabling SPI interface..."
     echo "dtparam=spi=on" >> /boot/config.txt
-    echo "SPI interface enabled. A reboot is required for changes to take effect."
+    reboot_required=1
 else
     echo "SPI interface is already enabled."
+fi
+
+# Configure QCA7000 overlay
+if ! grep -q "^dtoverlay=qca7000,int_pin=23,speed=12000000" /boot/config.txt; then
+    echo "Configuring QCA7000 overlay..."
+    echo "dtoverlay=qca7000,int_pin=23,speed=12000000" >> /boot/config.txt
+    reboot_required=1
+else
+    echo "QCA7000 overlay is already configured."
+fi
+
+if [ $reboot_required -eq 1 ]; then
+    echo "SPI interface and QCA7000 overlay configured. A reboot is required for changes to take effect."
+else
+    echo "SPI interface and QCA7000 overlay already configured."
 fi
 
 # Install Python dependencies
@@ -37,3 +56,5 @@ After reboot, you can run the PLC to TUN bridge:
 
 sudo python3 src/plc_communication/plc_to_tun.py
 "
+
+echo "Setup script completed successfully."
