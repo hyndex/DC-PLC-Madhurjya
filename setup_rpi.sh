@@ -21,7 +21,10 @@ apt-get update
 apt-get install -y python3-pip
 pip3 install -r requirements.txt
 pip3 install python-tuntap
-pip3 install python-tuntap
+
+# Initialize and update Git submodules
+echo "Initializing and updating Git submodules..."
+git submodule update --init --recursive
 
 echo "
 Setup complete.
