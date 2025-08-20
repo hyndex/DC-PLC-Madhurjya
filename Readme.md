@@ -39,13 +39,31 @@ pip install -r requirements.txt
 pip install -e src/pyslac src/iso15118
 ```
 
+4.  Generate the test certificates (idempotent):
+
+```
+./scripts/generate_certs.sh
+```
+
 ### Usage
 
-To start the EVSE, run the following command:
+The `evse_main.py` helper in `src/` bridges the PLC modem to a TAP
+interface, performs SLAC matching using `pyslac` and, once matched,
+launches the ISO 15118 SECC bound to the same interface.
 
 ```
-python -m pyslac.examples.ev_slac_scapy
+python src/evse_main.py --evse-id <EVSE_ID> \
+    --slac-config path/to/pyslac.env \
+    --secc-config path/to/secc.env \
+    --cert-store pki
 ```
+
+* `--slac-config` – optional path to a PySLAC `.env` file
+* `--secc-config` – optional path to an ISO 15118 SECC `.env` file
+* `--cert-store` – directory containing ISO 15118 certificates (`PKI_PATH`), defaults to `pki`
+
+The TAP interface defaults to `192.168.1.1/24` but can be changed via
+`--iface-ip` and `--iface-netmask`.
 
 ## Contributing
 
