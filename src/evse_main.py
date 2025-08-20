@@ -17,6 +17,7 @@ import asyncio
 import logging
 import os
 import threading
+from pathlib import Path
 from typing import Optional
 
 from plc_communication.plc_network import PLCNetwork
@@ -97,6 +98,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--cert-store",
+        default=str(Path(__file__).resolve().parents[1] / "pki"),
         help="Directory containing ISO 15118 certificates (PKI_PATH)",
     )
     parser.add_argument(
