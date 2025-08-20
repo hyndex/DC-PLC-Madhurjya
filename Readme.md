@@ -56,7 +56,7 @@ overlay.
 sudo ./setup_rpi.sh
 sudo reboot
 ./scripts/generate_certs.sh
-sudo python3 start_evse.py
+sudo python3 src/evse_main.py --evse-id <EVSE_ID>
 ```
 
 Troubleshooting tips and a flow diagram of the process are available in
