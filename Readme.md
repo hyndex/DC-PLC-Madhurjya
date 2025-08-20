@@ -46,6 +46,22 @@ pip install -e src/pyslac src/iso15118
 ./scripts/generate_certs.sh
 ```
 
+### Quick plug-and-play setup
+
+For a turnkey Raspberry Pi configuration the repository provides a helper
+script that enables SPI, installs dependencies and configures the QCA7000
+overlay.
+
+```bash
+sudo ./setup_rpi.sh
+sudo reboot
+./scripts/generate_certs.sh
+sudo python3 start_evse.py
+```
+
+Troubleshooting tips and a flow diagram of the process are available in
+[docs/plug_and_play.md](docs/plug_and_play.md).
+
 ### Usage
 
 The `evse_main.py` helper in `src/` bridges the PLC modem to a TAP
