@@ -1,1 +1,8 @@
 spidev
+scapy
+cryptography
+asyncio
+python-pytuntap
+-e ./src/pyslac
+-e ./src/iso15118
+
