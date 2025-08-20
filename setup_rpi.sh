@@ -48,7 +48,7 @@ echo "Installing Python dependencies..."
 apt-get update
 apt-get install -y python3-pip
 pip3 install -r requirements.txt
-pip3 install python-tuntap
+pip3 install python-pytuntap
 pip3 install -e src/pyslac -e src/iso15118
 
 cat <<'EOF'
