@@ -1,0 +1,6 @@
+[submodule "src/iso15118"]
+	path = src/iso15118
+	url = https://github.com/EcoG-io/iso15118.git
+[submodule "src/pyslac"]
+	path = src/pyslac
+	url = https://github.com/EcoG-io/pyslac.git
