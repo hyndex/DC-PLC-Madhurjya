@@ -117,3 +117,6 @@ dmypy.json
 
 # ISO 15118 certificates
 pki
+
+# macOS metadata
+.DS_Store
