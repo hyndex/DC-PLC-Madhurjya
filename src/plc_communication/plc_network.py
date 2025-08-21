@@ -11,6 +11,10 @@ class PLCNetwork:
         self.qca = QCA7000(spi_bus, spi_device)
         self.qca.initialize()
 
+    def close(self) -> None:
+        """Close the underlying QCA7000 device."""
+        self.qca.close()
+
     def send(self, frame: Union[List[int], bytes]) -> None:
         """Send an Ethernet frame through the PLC.
 

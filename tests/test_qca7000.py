@@ -2,6 +2,7 @@ import sys
 import pathlib
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
+import pytest
 
 # Ensure src path is in sys.path
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
@@ -11,6 +12,8 @@ from plc_communication.qca7000 import (
     SPI_INT_CPU_ON,
     SPI_INT_WRBUF_ERR,
     SPI_INT_RDBUF_ERR,
+    SignatureError,
+    BufferSpaceError,
 )
 
 
@@ -70,4 +73,33 @@ class QCA7000RecoveryTests(TestCase):
 
         q.initialize.assert_called_once()
         q.reset_chip.assert_not_called()
+
+
+@patch('plc_communication.qca7000.spidev.SpiDev')
+def test_initialize_invalid_signature_raises_signature_error(mock_spi):
+    mock_spi.return_value = MagicMock()
+    q = QCA7000()
+    q._read_register = MagicMock(side_effect=[0, 0x1234])
+    with pytest.raises(SignatureError):
+        q.initialize()
+    q.close()
+
+
+@patch('plc_communication.qca7000.spidev.SpiDev')
+def test_write_ethernet_frame_buffer_space_error(mock_spi):
+    mock_spi.return_value = MagicMock()
+    q = QCA7000()
+    q._check_and_handle_interrupts = MagicMock()
+    q._read_register = MagicMock(return_value=1)
+    with pytest.raises(BufferSpaceError):
+        q.write_ethernet_frame([0x00, 0x01])
+    q.close()
+
+
+@patch('plc_communication.qca7000.spidev.SpiDev')
+def test_close_closes_spi(mock_spi):
+    spi_instance = mock_spi.return_value
+    q = QCA7000()
+    q.close()
+    spi_instance.close.assert_called_once()
 
