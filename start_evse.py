@@ -3,20 +3,23 @@
 
 import asyncio
 import logging
-import sys
 from pathlib import Path
 
-# Ensure local iso15118 package is importable
-ROOT = Path(__file__).resolve().parent
-sys.path.append(str(ROOT / "src/iso15118"))
-
-from iso15118.secc import SECCHandler  # type: ignore
-from iso15118.secc.controller.simulator import SimEVSEController  # type: ignore
-from iso15118.secc.controller.interface import ServiceStatus  # type: ignore
-from iso15118.secc.secc_settings import Config  # type: ignore
-from iso15118.shared.exificient_exi_codec import ExificientEXICodec  # type: ignore
-
 logger = logging.getLogger(__name__)
+
+ROOT = Path(__file__).resolve().parent
+
+try:
+    from iso15118.secc import SECCHandler  # type: ignore
+    from iso15118.secc.controller.simulator import SimEVSEController  # type: ignore
+    from iso15118.secc.controller.interface import ServiceStatus  # type: ignore
+    from iso15118.secc.secc_settings import Config  # type: ignore
+    from iso15118.shared.exificient_exi_codec import ExificientEXICodec  # type: ignore
+except ModuleNotFoundError:
+    logger.error(
+        "The 'iso15118' package is required. Install it using 'pip install iso15118'."
+    )
+    raise
 
 async def main() -> None:
     """Load configuration and start SECC."""

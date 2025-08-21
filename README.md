@@ -15,8 +15,9 @@ This project provides a Python-based implementation of the ISO 15118 and SLAC pr
 `src/evse_main.py` orchestrates the charger logic. It links the QCA7000 PLC modem
 with a Linux TAP interface, invokes [`pyslac`](src/pyslac) to perform Signal Level
 Attenuation Characterization (SLAC) and, once a vehicle is matched, hands the
-session to the ISO 15118 stack in [`src/iso15118`](src/iso15118). Each component is
-replaceable, enabling custom hardware front‑ends or SECC implementations.
+session to the ISO 15118 stack provided by the [`iso15118`](https://pypi.org/project/iso15118/)
+Python package. Each component is replaceable, enabling custom hardware front‑ends or
+SECC implementations.
 
 ## Getting Started
 
@@ -45,7 +46,7 @@ git submodule update --init --recursive
 
 ```
 python3 -m pip install -r requirements.txt
-python3 -m pip install -e src/iso15118
+python3 -m pip install iso15118
 python3 -m pip install -e src/pyslac --no-deps
 python3 -m pip install -r requirements-submodules.txt
 ```
@@ -82,7 +83,7 @@ The system brings up a charging session in the following stages:
    interface so higher layers can communicate over IPv6.
 3. **SLAC** – [`pyslac`](src/pyslac) matches the vehicle and establishes a
    powerline link.
-4. **ISO 15118 session** – once matched, the SECC in [`src/iso15118`](src/iso15118)
+4. **ISO 15118 session** – once matched, the SECC from the `iso15118` package
    negotiates charging parameters with the EV.
 
 ## Usage
