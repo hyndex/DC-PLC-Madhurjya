@@ -5,7 +5,7 @@ import struct
 import subprocess
 import threading
 from typing import Optional
-from plc_communication.plc_network import PLCNetwork
+from .plc_network import PLCNetwork
 
 """Bridge PLC traffic to a TAP interface."""
 

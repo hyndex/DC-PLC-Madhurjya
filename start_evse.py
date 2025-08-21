@@ -15,11 +15,12 @@ try:
     from iso15118.secc.controller.interface import ServiceStatus  # type: ignore
     from iso15118.secc.secc_settings import Config  # type: ignore
     from iso15118.shared.exificient_exi_codec import ExificientEXICodec  # type: ignore
-except ModuleNotFoundError:
-    logger.error(
+except ModuleNotFoundError as exc:  # pragma: no cover - import guard
+    msg = (
         "The 'iso15118' package is required. Install it using 'pip install iso15118'."
     )
-    raise
+    logger.error(msg)
+    raise ModuleNotFoundError(msg) from exc
 
 async def main() -> None:
     """Load configuration and start SECC."""

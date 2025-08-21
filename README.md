@@ -51,6 +51,9 @@ python3 -m pip install -e src/pyslac --no-deps
 python3 -m pip install -r requirements-submodules.txt
 ```
 
+Installing the `iso15118` package via pip allows the startup scripts to import
+it directly without modifying `sys.path`.
+
 4.  Generate the test certificates (idempotent):
 
 ```

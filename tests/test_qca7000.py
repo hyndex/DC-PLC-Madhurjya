@@ -1,13 +1,9 @@
-import sys
-import pathlib
+from unittest import TestCase
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 import pytest
 
-# Ensure src path is in sys.path
-sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
-
-from plc_communication.qca7000 import (
+from src.plc_communication.qca7000 import (
     QCA7000,
     SPI_INT_CPU_ON,
     SPI_INT_WRBUF_ERR,
@@ -18,7 +14,7 @@ from plc_communication.qca7000 import (
 
 
 class QCA7000RecoveryTests(TestCase):
-    @patch('plc_communication.qca7000.spidev.SpiDev')
+    @patch('src.plc_communication.qca7000.spidev.SpiDev')
     def test_read_ethernet_frame_cpu_on_triggers_initialize(self, mock_spi):
         mock_spi.return_value = MagicMock()
         q = QCA7000()
@@ -32,7 +28,7 @@ class QCA7000RecoveryTests(TestCase):
         q.reset_chip.assert_not_called()
         self.assertIsNone(result)
 
-    @patch('plc_communication.qca7000.spidev.SpiDev')
+    @patch('src.plc_communication.qca7000.spidev.SpiDev')
     def test_read_ethernet_frame_rdbuf_err_triggers_reset(self, mock_spi):
         mock_spi.return_value = MagicMock()
         q = QCA7000()
@@ -45,7 +41,7 @@ class QCA7000RecoveryTests(TestCase):
         q.reset_chip.assert_called_once()
         self.assertIsNone(result)
 
-    @patch('plc_communication.qca7000.spidev.SpiDev')
+    @patch('src.plc_communication.qca7000.spidev.SpiDev')
     def test_write_ethernet_frame_wrbuf_err_triggers_reset(self, mock_spi):
         mock_spi.return_value = MagicMock()
         q = QCA7000()
@@ -59,7 +55,7 @@ class QCA7000RecoveryTests(TestCase):
 
         q.reset_chip.assert_called_once()
 
-    @patch('plc_communication.qca7000.spidev.SpiDev')
+    @patch('src.plc_communication.qca7000.spidev.SpiDev')
     def test_write_ethernet_frame_cpu_on_triggers_initialize(self, mock_spi):
         mock_spi.return_value = MagicMock()
         q = QCA7000()
@@ -75,7 +71,7 @@ class QCA7000RecoveryTests(TestCase):
         q.reset_chip.assert_not_called()
 
 
-@patch('plc_communication.qca7000.spidev.SpiDev')
+@patch('src.plc_communication.qca7000.spidev.SpiDev')
 def test_initialize_invalid_signature_raises_signature_error(mock_spi):
     mock_spi.return_value = MagicMock()
     q = QCA7000()
@@ -85,7 +81,7 @@ def test_initialize_invalid_signature_raises_signature_error(mock_spi):
     q.close()
 
 
-@patch('plc_communication.qca7000.spidev.SpiDev')
+@patch('src.plc_communication.qca7000.spidev.SpiDev')
 def test_write_ethernet_frame_buffer_space_error(mock_spi):
     mock_spi.return_value = MagicMock()
     q = QCA7000()
@@ -96,7 +92,7 @@ def test_write_ethernet_frame_buffer_space_error(mock_spi):
     q.close()
 
 
-@patch('plc_communication.qca7000.spidev.SpiDev')
+@patch('src.plc_communication.qca7000.spidev.SpiDev')
 def test_close_closes_spi(mock_spi):
     spi_instance = mock_spi.return_value
     q = QCA7000()

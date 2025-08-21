@@ -1,16 +1,18 @@
 import pytest, textwrap
+import sys
+from pathlib import Path
+
+# Ensure project root is on the import path so the `src` package is discoverable
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 SUBPROCESS_SCRIPT = r"""
 import sys, os, asyncio, logging, types, pty, queue
-
-# Ensure repository src directory is in sys.path
-sys.path.insert(0, 'src')
 
 # Create virtual TAP interface using a PTY
 master_fd, slave_fd = pty.openpty()
 
 # Patch PLC to TAP bridging functions
-import plc_communication.plc_to_tap as ptp
+from src.plc_communication import plc_to_tap as ptp
 
 def create_tap_interface():
     return slave_fd, 'tap0'
@@ -55,7 +57,7 @@ frame_len = len(payload)
 qca_frame = [0, 0, 0, 0] + [0xAA]*4 + list(frame_len.to_bytes(2, 'little')) + [0, 0] + payload + [0x55, 0x55]
 MockQCA7000.read_q.put(qca_frame)
 
-import plc_communication.plc_network as pn
+from src.plc_communication import plc_network as pn
 pn.QCA7000 = MockQCA7000
 
 # Stub pyslac package
@@ -127,7 +129,7 @@ async def fast_sleep(_):
     pass
 asyncio.sleep = fast_sleep
 
-import evse_main
+from src import evse_main
 sys.argv = ['evse_main.py', '--evse-id', 'TEST']
 logging.basicConfig(level=logging.INFO)
 evse_main.main()
