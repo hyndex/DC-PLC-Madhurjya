@@ -8,6 +8,7 @@ features.
 - Fork the repository and clone your fork locally.
 - Install dependencies with `pip install -r requirements.txt` and `pip install -e src/pyslac src/iso15118`.
 - Run the test suite with `pytest` to verify your changes.
+- macOS users should ensure that metadata files such as `.DS_Store` are ignored.
 
 ## Pull Requests
 - Use a descriptive title and explain your motivation in the pull request
