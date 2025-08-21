@@ -1,10 +1,17 @@
 import os
 import fcntl
 import struct
+import subprocess
 import threading
+import logging
+from typing import Optional
+
 from plc_communication.plc_network import PLCNetwork
 
 """Bridge PLC traffic to a TAP interface."""
+
+
+logger = logging.getLogger(__name__)
 
 # Constants for TAP device creation
 TUNSETIFF = 0x400454ca
@@ -18,40 +25,85 @@ TAP_NAME = b"tap0"
 ETH_FRAME_MAX = 1522
 
 
+class TapInterfaceError(Exception):
+    """Raised when the TAP interface cannot be created or configured."""
+
+
 def create_tap_interface():
     """Create and return a TAP interface file descriptor and name."""
     try:
-        tap_fd = os.open('/dev/net/tun', os.O_RDWR)
-        ifr = struct.pack('16sH', TAP_NAME, IFF_TAP | IFF_NO_PI)
+        tap_fd = os.open("/dev/net/tun", os.O_RDWR)
+        ifr = struct.pack("16sH", TAP_NAME, IFF_TAP | IFF_NO_PI)
         fcntl.ioctl(tap_fd, TUNSETIFF, ifr)
         return tap_fd, TAP_NAME.decode()
-    except IOError as e:
-        print(f"Error creating TAP device: {e}")
-        exit(1)
+    except OSError as e:
+        logger.error("Error creating TAP device: %s", e)
+        raise TapInterfaceError(f"Error creating TAP device: {e}") from e
 
 
 def configure_tap_interface(interface_name, ip_address, netmask):
     """Configure the TAP interface with the given IP address and netmask."""
-    os.system(f'ip addr add {ip_address}/{netmask} dev {interface_name}')
-    os.system(f'ip link set dev {interface_name} up')
+    try:
+        subprocess.run(
+            [
+                "ip",
+                "addr",
+                "add",
+                f"{ip_address}/{netmask}",
+                "dev",
+                interface_name,
+            ],
+            check=True,
+        )
+        subprocess.run(
+            ["ip", "link", "set", "dev", interface_name, "up"],
+            check=True,
+        )
+        logger.debug(
+            "Configured TAP interface %s with %s/%s",
+            interface_name,
+            ip_address,
+            netmask,
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error("Failed to configure TAP interface %s: %s", interface_name, e)
+        raise TapInterfaceError(
+            f"Failed to configure TAP interface {interface_name}"
+        ) from e
 
 
-def plc_to_tap(plc, tap_fd):
+def plc_to_tap(plc, tap_fd, stop_event: Optional[threading.Event] = None):
     """Read from the PLC and write to the TAP interface."""
-    while True:
-        frame = plc.recv()
+    while not (stop_event and stop_event.is_set()):
+        try:
+            frame = plc.recv()
+        except Exception:  # pragma: no cover - unexpected PLC errors
+            logger.exception("Error receiving frame from PLC")
+            raise
         if frame:
-            # Write the complete Ethernet frame to the TAP device
-            os.write(tap_fd, bytes(frame))
+            try:
+                os.write(tap_fd, bytes(frame))
+                logger.debug("Forwarded %d bytes PLC→TAP", len(frame))
+            except Exception:  # pragma: no cover - write errors
+                logger.exception("Error writing frame to TAP interface")
+                raise
 
 
-def tap_to_plc(plc, tap_fd):
+def tap_to_plc(plc, tap_fd, stop_event: Optional[threading.Event] = None):
     """Read from the TAP interface and write to the PLC."""
-    while True:
-        # Read a full Ethernet frame from the TAP interface
-        packet = os.read(tap_fd, ETH_FRAME_MAX)
+    while not (stop_event and stop_event.is_set()):
+        try:
+            packet = os.read(tap_fd, ETH_FRAME_MAX)
+        except Exception:  # pragma: no cover - read errors
+            logger.exception("Error reading from TAP interface")
+            raise
         if packet:
-            plc.send(list(packet))
+            try:
+                plc.send(list(packet))
+                logger.debug("Forwarded %d bytes TAP→PLC", len(packet))
+            except Exception:  # pragma: no cover - send errors
+                logger.exception("Error sending packet to PLC")
+                raise
 
 
 def main():
