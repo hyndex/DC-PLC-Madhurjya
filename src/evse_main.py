@@ -20,13 +20,22 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from .plc_communication.plc_network import PLCNetwork
-from .plc_communication.plc_to_tap import (
-    configure_tap_interface,
-    create_tap_interface,
-    plc_to_tap,
-    tap_to_plc,
-)
+if __package__:
+    from .plc_communication.plc_network import PLCNetwork
+    from .plc_communication.plc_to_tap import (
+        configure_tap_interface,
+        create_tap_interface,
+        plc_to_tap,
+        tap_to_plc,
+    )
+else:  # pragma: no cover - script execution
+    from plc_communication.plc_network import PLCNetwork
+    from plc_communication.plc_to_tap import (
+        configure_tap_interface,
+        create_tap_interface,
+        plc_to_tap,
+        tap_to_plc,
+    )
 
 from pyslac.environment import Config as SlacConfig
 from pyslac.session import (
