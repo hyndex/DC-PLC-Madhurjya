@@ -21,4 +21,5 @@ def test_evse_main_subprocess(evse_subprocess_script):
     assert 'SLAC match successful, launching ISO 15118 SECC' in output
     assert 'SECC started on tap0' in output
     assert 'plc_to_tap wrote frame' in output
+    assert 'tap_to_plc sent' in output
     assert 'QCA write' in output
