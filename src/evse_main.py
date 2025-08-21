@@ -20,8 +20,8 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from plc_communication.plc_network import PLCNetwork
-from plc_communication.plc_to_tap import (
+from .plc_communication.plc_network import PLCNetwork
+from .plc_communication.plc_to_tap import (
     configure_tap_interface,
     create_tap_interface,
     plc_to_tap,

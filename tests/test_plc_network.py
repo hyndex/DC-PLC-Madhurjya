@@ -1,16 +1,11 @@
-import sys
-import pathlib
 from unittest.mock import MagicMock, patch
 import pytest
 
-# Ensure src path is in sys.path
-sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
-
-from plc_communication.plc_network import PLCNetwork, ETH_FRAME_MAX
+from src.plc_communication.plc_network import PLCNetwork, ETH_FRAME_MAX
 
 
 def _make_plc(mock_qca):
-    with patch('plc_communication.plc_network.QCA7000', return_value=mock_qca):
+    with patch('src.plc_communication.plc_network.QCA7000', return_value=mock_qca):
         plc = PLCNetwork()
     return plc
 

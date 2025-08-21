@@ -1,14 +1,9 @@
-import sys
-import pathlib
 import threading
 import subprocess
 from unittest.mock import MagicMock, patch
 import pytest
 
-# Ensure src path is in sys.path
-sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
-
-from plc_communication.plc_to_tap import (
+from src.plc_communication.plc_to_tap import (
     plc_to_tap,
     tap_to_plc,
     ETH_FRAME_MAX,
@@ -30,7 +25,7 @@ def test_plc_to_tap_forwards_frames():
 
     plc.recv = MagicMock(side_effect=recv)
 
-    with patch('plc_communication.plc_to_tap.os.write') as mock_write:
+    with patch('src.plc_communication.plc_to_tap.os.write') as mock_write:
         plc_to_tap(plc, 1, stop_event)
     mock_write.assert_called_once_with(1, bytes(frame))
 
@@ -46,7 +41,7 @@ def test_tap_to_plc_forwards_frames():
         stop_event.set()
         return packet
 
-    with patch('plc_communication.plc_to_tap.os.read', side_effect=read) as mock_read:
+    with patch('src.plc_communication.plc_to_tap.os.read', side_effect=read) as mock_read:
         tap_to_plc(plc, 2, stop_event)
     mock_read.assert_called_with(2, ETH_FRAME_MAX)
     plc.send.assert_called_once_with(list(packet))
@@ -54,7 +49,7 @@ def test_tap_to_plc_forwards_frames():
 
 def test_create_tap_interface_error():
     """Errors creating the TAP device raise TapInterfaceError."""
-    with patch('plc_communication.plc_to_tap.os.open', side_effect=OSError('fail')):
+    with patch('src.plc_communication.plc_to_tap.os.open', side_effect=OSError('fail')):
         with pytest.raises(TapInterfaceError):
             create_tap_interface()
 
@@ -62,7 +57,7 @@ def test_create_tap_interface_error():
 def test_configure_tap_interface_error():
     """Subprocess failures during configuration raise TapInterfaceError."""
     with patch(
-        'plc_communication.plc_to_tap.subprocess.run',
+        'src.plc_communication.plc_to_tap.subprocess.run',
         side_effect=subprocess.CalledProcessError(1, ['ip']),
     ):
         with pytest.raises(TapInterfaceError):

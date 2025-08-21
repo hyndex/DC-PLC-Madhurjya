@@ -1,6 +1,5 @@
 import sys
 import types
-import pathlib
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -60,10 +59,7 @@ sys.modules['iso15118.secc.controller.interface'] = iso_controller_interface
 sys.modules['iso15118.shared'] = types.ModuleType('iso15118.shared')
 sys.modules['iso15118.shared.exi_codec'] = iso_shared_exi
 
-# Ensure src path is in sys.path
-sys.path.append(str(pathlib.Path(__file__).resolve().parents[1] / 'src'))
-
-from evse_main import EVSECommunicationController
+from src.evse_main import EVSECommunicationController
 from pyslac.session import STATE_MATCHED
 
 
@@ -83,9 +79,9 @@ def test_slac_match_triggers_iso15118_startup():
     controller.process_cp_state = AsyncMock()
 
     async def run_test():
-        with patch('evse_main.SlacEvseSession', return_value=session), \
-             patch('evse_main.start_secc', new=AsyncMock()) as mock_start_secc, \
-             patch('evse_main.asyncio.sleep', new=AsyncMock()):
+        with patch('src.evse_main.SlacEvseSession', return_value=session), \
+             patch('src.evse_main.start_secc', new=AsyncMock()) as mock_start_secc, \
+             patch('src.evse_main.asyncio.sleep', new=AsyncMock()):
             await controller.start('evse-1', 'tap0')
             mock_start_secc.assert_awaited_once_with('tap0', 'conf', 'store')
 
