@@ -49,7 +49,9 @@ apt-get update
 apt-get install -y python3-pip
 pip3 install -r requirements.txt
 pip3 install python-pytuntap
-pip3 install -e src/pyslac -e src/iso15118
+python3 -m pip install -e src/iso15118
+python3 -m pip install -e src/pyslac --no-deps
+python3 -m pip install -r requirements-submodules.txt
 
 cat <<'EOF'
 Setup complete.

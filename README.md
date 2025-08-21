@@ -44,8 +44,10 @@ git submodule update --init --recursive
 3.  Install the dependencies:
 
 ```
-pip install -r requirements.txt
-pip install -e src/pyslac src/iso15118
+python3 -m pip install -r requirements.txt
+python3 -m pip install -e src/iso15118
+python3 -m pip install -e src/pyslac --no-deps
+python3 -m pip install -r requirements-submodules.txt
 ```
 
 4.  Generate the test certificates (idempotent):
