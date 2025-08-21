@@ -1,6 +1,7 @@
 import spidev
 import time
 import logging
+from typing import List, Optional
 
 # QCA7000 SPI registers
 SPI_REG_BFR_SIZE = 0x0100
@@ -35,28 +36,28 @@ class QCA7000:
         self.spi.max_speed_hz = 12000000  # 12 MHz
         self.spi.mode = 0b11  # SPI Mode 3
 
-    def _spi_transfer(self, data):
+    def _spi_transfer(self, data: List[int]) -> List[int]:
         return self.spi.xfer2(data)
 
-    def _read_register(self, register):
+    def _read_register(self, register: int) -> int:
         command = SPI_CMD_READ | SPI_CMD_INTERNAL | register
         request = [(command >> 8) & 0xFF, command & 0xFF, 0x00, 0x00]
         response = self._spi_transfer(request)
         return (response[2] << 8) | response[3]
 
-    def _write_register(self, register, value):
+    def _write_register(self, register: int, value: int) -> None:
         command = SPI_CMD_WRITE | SPI_CMD_INTERNAL | register
         request = [(command >> 8) & 0xFF, command & 0xFF, (value >> 8) & 0xFF, value & 0xFF]
         self._spi_transfer(request)
 
-    def reset_chip(self):
+    def reset_chip(self) -> None:
         """Reset the QCA7000 and reinitialize the interface."""
         self._write_register(SPI_REG_SPI_CONFIG, QCASPI_SLAVE_RESET_BIT)
         time.sleep(0.1)
         logger.warning("QCA7000 reset triggered")
         self.initialize()
 
-    def _check_and_handle_interrupts(self):
+    def _check_and_handle_interrupts(self) -> int:
         """Check for special interrupts and recover if necessary."""
         cause = self._read_register(SPI_REG_INTR_CAUSE)
 
@@ -72,7 +73,7 @@ class QCA7000:
 
         return cause
 
-    def initialize(self):
+    def initialize(self) -> None:
         # Recommended initialization sequence from QCA700X.md
         self._read_register(SPI_REG_SIGNATURE) # Dummy read
         signature = self._read_register(SPI_REG_SIGNATURE)
@@ -83,7 +84,14 @@ class QCA7000:
         interrupts = SPI_INT_CPU_ON | SPI_INT_PKT_AVLBL | SPI_INT_RDBUF_ERR | SPI_INT_WRBUF_ERR
         self._write_register(SPI_REG_INTR_ENABLE, interrupts)
 
-    def read_ethernet_frame(self):
+    def read_ethernet_frame(self) -> Optional[List[int]]:
+        """Read an Ethernet frame from the modem.
+
+        Returns:
+            The raw frame as a list of byte values, or ``None`` if no frame is
+            available.
+        """
+
         # Handle special interrupts and check for packet availability
         cause = self._check_and_handle_interrupts()
         if not (cause & SPI_INT_PKT_AVLBL):
@@ -105,9 +113,15 @@ class QCA7000:
         # Clear the interrupt cause
         self._write_register(SPI_REG_INTR_CAUSE, SPI_INT_PKT_AVLBL)
 
-        return frame_data[2:] # Remove the 2-byte command from the beginning
+        return frame_data[2:]  # Remove the 2-byte command from the beginning
 
-    def write_ethernet_frame(self, frame):
+    def write_ethernet_frame(self, frame: List[int]) -> None:
+        """Write an Ethernet frame to the modem.
+
+        Args:
+            frame: The raw frame as a list of byte values.
+        """
+
         # Handle special interrupts before attempting to write
         self._check_and_handle_interrupts()
 
