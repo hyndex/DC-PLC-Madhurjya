@@ -138,6 +138,7 @@ def main():
         tap_to_plc_thread.join()
     finally:
         os.close(tap_fd)
+        plc.close()
 
 if __name__ == '__main__':
     main()

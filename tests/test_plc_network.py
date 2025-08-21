@@ -69,3 +69,10 @@ def test_send_rejects_empty_frame():
 
     with pytest.raises(ValueError):
         plc.send([])
+
+
+def test_close_invokes_qca_close():
+    mock_qca = MagicMock()
+    plc = _make_plc(mock_qca)
+    plc.close()
+    mock_qca.close.assert_called_once()

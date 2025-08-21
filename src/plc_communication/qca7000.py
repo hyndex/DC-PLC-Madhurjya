@@ -29,6 +29,14 @@ SPI_INT_PKT_AVLBL = (1 << 0)
 
 logger = logging.getLogger(__name__)
 
+
+class SignatureError(Exception):
+    """Raised when the QCA7000 signature is invalid."""
+
+
+class BufferSpaceError(Exception):
+    """Raised when there is not enough space in the write buffer."""
+
 class QCA7000:
     def __init__(self, spi_bus=0, spi_device=0):
         self.spi = spidev.SpiDev()
@@ -37,7 +45,11 @@ class QCA7000:
         self.spi.mode = 0b11  # SPI Mode 3
 
     def _spi_transfer(self, data: List[int]) -> List[int]:
-        return self.spi.xfer2(data)
+        try:
+            return self.spi.xfer2(data)
+        except Exception as exc:  # pragma: no cover - hardware interaction
+            logger.error("SPI transfer failed: %s", exc)
+            raise
 
     def _read_register(self, register: int) -> int:
         command = SPI_CMD_READ | SPI_CMD_INTERNAL | register
@@ -78,7 +90,7 @@ class QCA7000:
         self._read_register(SPI_REG_SIGNATURE) # Dummy read
         signature = self._read_register(SPI_REG_SIGNATURE)
         if signature != 0xAA55:
-            raise Exception(f"Invalid signature: {hex(signature)}")
+            raise SignatureError(f"Invalid signature: {hex(signature)}")
 
         # Enable interrupts
         interrupts = SPI_INT_CPU_ON | SPI_INT_PKT_AVLBL | SPI_INT_RDBUF_ERR | SPI_INT_WRBUF_ERR
@@ -131,7 +143,7 @@ class QCA7000:
         # Check for available space in the write buffer
         available_space = self._read_register(SPI_REG_WRBUF_SPC_AVA)
         if frame_length > available_space:
-            raise Exception("Not enough space in write buffer")
+            raise BufferSpaceError("Not enough space in write buffer")
 
         # Set the buffer size for the write
         self._write_register(SPI_REG_BFR_SIZE, frame_length)
@@ -140,3 +152,7 @@ class QCA7000:
         command = SPI_CMD_WRITE | SPI_CMD_EXTERNAL
         request = [(command >> 8) & 0xFF, command & 0xFF]
         self._spi_transfer(request + frame)
+
+    def close(self) -> None:
+        """Close the underlying SPI device."""
+        self.spi.close()
