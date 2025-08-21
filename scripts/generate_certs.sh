@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Generate ISO 15118 test certificates using the upstream script
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-PKI_SRC="$REPO_ROOT/src/iso15118/iso15118/shared/pki"
+PKI_SRC="$(python3 -c 'import pathlib, iso15118; print(pathlib.Path(iso15118.__file__).resolve().parent / "shared/pki")')"
 PKI_LINK="$REPO_ROOT/pki"
 CERT_FILE="$PKI_LINK/iso15118_2/certs/seccLeafCert.pem"
 

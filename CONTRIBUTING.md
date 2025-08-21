@@ -6,7 +6,8 @@ features.
 
 ## Getting Started
 - Fork the repository and clone your fork locally.
-- Install dependencies with `pip install -r requirements.txt` and `pip install -e src/pyslac src/iso15118`.
+- Install dependencies with `pip install -r requirements.txt`, `pip install iso15118`,
+  `pip install -e src/pyslac --no-deps` and `pip install -r requirements-submodules.txt`.
 - Run the test suite with `pytest` to verify your changes.
 - macOS users should ensure that metadata files such as `.DS_Store` are ignored.
 
