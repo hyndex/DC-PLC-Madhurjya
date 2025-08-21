@@ -24,11 +24,11 @@ def plc_to_tap(plc, tap_fd, stop_event=None):
     frame = plc.recv()
     if frame:
         os.write(tap_fd, bytes(frame))
-        print('plc_to_tap wrote frame')
+        logging.info('plc_to_tap wrote frame')
 
 def tap_to_plc(plc, tap_fd, stop_event=None):
     plc.send([0x10, 0x20, 0x30])
-    print('tap_to_plc sent')
+    logging.info('tap_to_plc sent')
 
 ptp.create_tap_interface = create_tap_interface
 ptp.configure_tap_interface = configure_tap_interface
@@ -45,7 +45,7 @@ class MockQCA7000:
     def close(self):
         pass
     def write_ethernet_frame(self, frame):
-        print('QCA write', frame[:5])
+        logging.info('QCA write %s', frame[:5])
     def read_ethernet_frame(self):
         try:
             return self.read_q.get_nowait()
@@ -108,7 +108,7 @@ class SECCHandler:
     def __init__(self, **kwargs):
         pass
     async def start(self, iface):
-        print('SECC started on', iface)
+        logging.info('SECC started on %s', iface)
 
 sys.modules['iso15118'] = types.ModuleType('iso15118')
 sys.modules['iso15118.secc'] = types.ModuleType('iso15118.secc')
