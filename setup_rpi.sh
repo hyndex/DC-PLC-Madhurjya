@@ -11,38 +11,6 @@ fi
 echo "Initializing and updating Git submodules..."
 git submodule update --init --recursive
 
-# Enable SPI and QCA7000 overlay
-CONFIG_FILE="/boot/config.txt"
-reboot_required=0
-
-if [ -f "$CONFIG_FILE" ]; then
-    # Enable SPI if not already enabled
-    if ! grep -q "^dtparam=spi=on" "$CONFIG_FILE"; then
-        echo "Enabling SPI interface..."
-        echo "dtparam=spi=on" >> "$CONFIG_FILE"
-        reboot_required=1
-    else
-        echo "SPI interface is already enabled."
-    fi
-
-    # Configure QCA7000 overlay
-    if ! grep -q "^dtoverlay=qca7000,int_pin=23,speed=12000000" "$CONFIG_FILE"; then
-        echo "Configuring QCA7000 overlay..."
-        echo "dtoverlay=qca7000,int_pin=23,speed=12000000" >> "$CONFIG_FILE"
-        reboot_required=1
-    else
-        echo "QCA7000 overlay is already configured."
-    fi
-
-    if [ $reboot_required -eq 1 ]; then
-        echo "SPI interface and QCA7000 overlay configured. A reboot is required for changes to take effect."
-    else
-        echo "SPI interface and QCA7000 overlay already configured."
-    fi
-else
-    echo "$CONFIG_FILE not found. If you're using a non-Raspberry Pi board, refer to your board's documentation to enable SPI."
-fi
-
 # Install Python dependencies
 echo "Installing Python dependencies..."
 apt-get update
@@ -61,9 +29,9 @@ Please reboot your Raspberry Pi for the changes to take effect:
 sudo reboot
 
 After reboot, start the unified EVSE application to initialise the PLC
-bridge, run SLAC and launch ISO 15118:
+stack, run SLAC and launch ISO 15118:
 
-sudo python3 src/evse_main.py --evse-id <EVSE_ID>
+sudo python3 src/evse_main.py --evse-id <EVSE_ID> --iface eth0
 # or
 sudo python3 start_evse.py
 EOF

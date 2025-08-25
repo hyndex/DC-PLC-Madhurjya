@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Convenience script to start SLAC and ISO 15118 communication for an EVSE.
 
-This module bridges the QCA7000 PLC modem to a TAP interface, runs the
-PySLAC library in EVSE mode and, once a successful SLAC match occurs,
-starts the ISO 15118 Supply Equipment Communication Controller (SECC).
+The script binds both the SLAC controller and ISO 15118 SECC directly to
+an existing network interface (e.g. ``eth0``). Once a successful SLAC
+match occurs, ISO 15118 traffic continues on the same interface.
 
-The script exposes command line options for providing paths to the
-certificate store used by the ISO 15118 stack as well as to optional
-configuration files for both PySLAC and the SECC implementation.
+Command line options allow supplying paths to the certificate store used
+by the ISO 15118 stack as well as optional configuration files for both
+PySLAC and the SECC implementation.
 """
 
 from __future__ import annotations
@@ -16,17 +16,8 @@ import argparse
 import asyncio
 import logging
 import os
-import threading
 from pathlib import Path
 from typing import Optional
-
-from .plc_communication.plc_network import PLCNetwork
-from .plc_communication.plc_to_tap import (
-    configure_tap_interface,
-    create_tap_interface,
-    plc_to_tap,
-    tap_to_plc,
-)
 
 from pyslac.environment import Config as SlacConfig
 from pyslac.session import (
@@ -102,14 +93,9 @@ def parse_args() -> argparse.Namespace:
         help="Directory containing ISO 15118 certificates (PKI_PATH)",
     )
     parser.add_argument(
-        "--iface-ip",
-        default="192.168.1.1",
-        help="IPv4 address assigned to the TAP interface",
-    )
-    parser.add_argument(
-        "--iface-netmask",
-        default="24",
-        help="Netmask for the TAP interface",
+        "--iface",
+        default="eth0",
+        help="Network interface used for SLAC and ISO 15118 communication",
     )
     return parser.parse_args()
 
@@ -137,23 +123,9 @@ async def start_secc(
     ).start(config.iface)
 
 
-def start_plc_bridge(ip_address: str, netmask: str) -> str:
-    """Initialise the PLC ↔ TAP bridge and return the interface name."""
-    tap_fd, tap_name = create_tap_interface()
-    configure_tap_interface(tap_name, ip_address, netmask)
-    plc = PLCNetwork()
-
-    threading.Thread(target=plc_to_tap, args=(plc, tap_fd), daemon=True).start()
-    threading.Thread(target=tap_to_plc, args=(plc, tap_fd), daemon=True).start()
-    return tap_name
-
-
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     args = parse_args()
-
-    tap_name = start_plc_bridge(args.iface_ip, args.iface_netmask)
-
     slac_config = SlacConfig()
     slac_config.load_envs(args.slac_config)
 
@@ -163,7 +135,7 @@ def main() -> None:
         certificate_store=args.cert_store,
     )
 
-    asyncio.run(controller.start(args.evse_id, tap_name))
+    asyncio.run(controller.start(args.evse_id, args.iface))
 
 
 if __name__ == "__main__":
