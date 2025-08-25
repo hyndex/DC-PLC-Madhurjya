@@ -12,12 +12,13 @@ This project provides a Python-based implementation of the ISO 15118 and SLAC pr
 
 ## Architectural Overview
 
-`src/evse_main.py` orchestrates the charger logic. It links the QCA7000 PLC modem
-with a Linux TAP interface, invokes [`pyslac`](src/pyslac) to perform Signal Level
-Attenuation Characterization (SLAC) and, once a vehicle is matched, hands the
-session to the ISO 15118 stack provided by the [`iso15118`](https://pypi.org/project/iso15118/)
-Python package. Each component is replaceable, enabling custom hardware front‑ends or
-SECC implementations.
+`src/evse_main.py` orchestrates the charger logic. It binds
+[`pyslac`](src/pyslac) and the ISO 15118 stack provided by the
+[`iso15118`](https://pypi.org/project/iso15118/) package directly to a
+standard network interface (for example `eth0`). Once a vehicle is
+matched via SLAC, ISO 15118 communication continues on the same
+interface. Each component is replaceable, enabling custom hardware
+front‑ends or SECC implementations.
 
 ## Getting Started
 
@@ -63,8 +64,7 @@ it directly without modifying `sys.path`.
 ### Quick plug-and-play setup
 
 For a turnkey Raspberry Pi configuration the repository provides a helper
-script that enables SPI, installs dependencies and configures the QCA7000
-overlay.
+script that installs dependencies and initialises git submodules.
 
 ```bash
 sudo ./setup_rpi.sh
@@ -80,34 +80,31 @@ Troubleshooting tips and a flow diagram of the process are available in
 
 The system brings up a charging session in the following stages:
 
-1. **Setup script** – [`setup_rpi.sh`](setup_rpi.sh) enables SPI, installs
-   dependencies and configures the QCA7000 overlay.
-2. **PLC↔TAP bridge** – `evse_main.py` connects the modem to a Linux TAP
-   interface so higher layers can communicate over IPv6.
-3. **SLAC** – [`pyslac`](src/pyslac) matches the vehicle and establishes a
-   powerline link.
-4. **ISO 15118 session** – once matched, the SECC from the `iso15118` package
-   negotiates charging parameters with the EV.
+1. **Setup script** – [`setup_rpi.sh`](setup_rpi.sh) installs dependencies
+   and updates submodules.
+2. **SLAC** – [`pyslac`](src/pyslac) matches the vehicle and establishes a
+   powerline link on the chosen network interface.
+3. **ISO 15118 session** – once matched, the SECC from the `iso15118`
+   package negotiates charging parameters with the EV.
 
 ## Usage
 
-The `evse_main.py` helper in `src/` bridges the PLC modem to a TAP
-interface, performs SLAC matching using `pyslac` and, once matched,
-launches the ISO 15118 SECC bound to the same interface.
+The `evse_main.py` helper in `src/` performs SLAC matching using
+`pyslac` and, once matched, launches the ISO 15118 SECC bound to the
+same network interface.
 
 ```
 python src/evse_main.py --evse-id <EVSE_ID> \
     --slac-config path/to/pyslac.env \
     --secc-config path/to/secc.env \
-    --cert-store pki
+    --cert-store pki \
+    --iface eth0
 ```
 
 * `--slac-config` – optional path to a PySLAC `.env` file
 * `--secc-config` – optional path to an ISO 15118 SECC `.env` file
 * `--cert-store` – directory containing ISO 15118 certificates (`PKI_PATH`), defaults to `pki`
-
-The TAP interface defaults to `192.168.1.1/24` but can be changed via
-`--iface-ip` and `--iface-netmask`.
+* `--iface` – network interface used for both SLAC and ISO 15118 (default `eth0`)
 
 ## Configuration and Certificates
 
@@ -117,10 +114,10 @@ two `.env` files and point `evse_main.py` at them with the
 
 ```bash
 # pyslac.env
-QCA7000_IFACE=spi0.0
+IFACE=eth0
 
 # secc.env
-IFACE=tap0
+IFACE=eth0
 EVSE_ID=DE*PNC*E12345*1
 ```
 
@@ -131,12 +128,11 @@ for Plug & Charge are generated with
 
 ## Troubleshooting and Hardware Notes
 
-* Confirm SPI wiring (MOSI/MISO/SCK/CS/INT) between the Raspberry Pi and
-  the QCA7000 modem is short and correctly oriented. Detailed pin‑outs are
-  available in [docs/STAMPMICRO.md](docs/STAMPMICRO.md).
-* After running the setup script, `ip link` should list the PLC interface
-  (e.g. `plc0`). Update `.env` files if the interface name differs.
-* Flow and wiring diagrams plus additional tips live in
+* Ensure the selected interface (default ``eth0``) exists and is
+  connected.
+* For wiring the PLC Stamp micro 2 via SPI to a Raspberry Pi refer to
+  [docs/rpi_plc_pinout.md](docs/rpi_plc_pinout.md).
+* Flow diagrams and additional tips live in
   [docs/plug_and_play.md](docs/plug_and_play.md).
 
 ## Testing and Verification
