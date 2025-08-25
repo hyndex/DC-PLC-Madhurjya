@@ -3,3 +3,5 @@ scapy
 cryptography
 python-pytuntap
 iso15118
+fastapi
+uvicorn

@@ -145,6 +145,54 @@ pip install -r requirements.txt
 pytest
 ```
 
+## CCS DC Charging Simulation Suite
+
+The repository ships with a self‑contained simulation environment for
+exercising a complete CCS DC charging session.  The suite emulates the
+control pilot (CP) signal, pre‑charge ramp and a basic energy meter so
+that the high‑level ISO 15118 logic can be tested without real power
+hardware.
+
+### Modules
+
+The simulation lives under `src/ccs_sim` and is composed of:
+
+* `pwm.py` – generates a 1 kHz CP PWM signal and reports CP voltage
+  levels.  In the absence of GPIO/ADC hardware it returns simulated
+  values.
+* `precharge.py` – models a simple DC power supply and a pre‑charge
+  controller that ramps the voltage to match the EV battery while
+  limiting inrush current.
+* `emeter.py` – integrates voltage and current readings to provide
+  session energy statistics.
+* `orchestrator.py` – coordinates the complete charging sequence from
+  vehicle plug‑in through charging and session termination.
+* `fastapi_app.py` – optional FastAPI wrapper exposing `/start_session`
+  and `/status` endpoints for remote triggering and monitoring.
+
+### Running the simulation
+
+Run the orchestrator directly to exercise the full flow:
+
+```bash
+python src/ccs_sim/orchestrator.py
+```
+
+The script waits for the CP to transition from state A to state B.  In
+simulation mode this can be triggered from another Python shell by
+calling `pwm.simulate_cp_state("B")`.  The orchestrator then performs
+the cable check, pre‑charge and a short charging loop while reporting
+voltage, current and accumulated energy.
+
+To drive the session via an HTTP API, launch the FastAPI application:
+
+```bash
+uvicorn ccs_sim.fastapi_app:app --host 0.0.0.0 --port 8000
+```
+
+POST to `/start_session` to begin a sequence and query `/status` for
+live metrics.
+
 To confirm runtime dependencies, invoke the main program with `--help` and
 ensure it prints usage information:
 
