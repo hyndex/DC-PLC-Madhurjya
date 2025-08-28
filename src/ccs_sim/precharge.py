@@ -70,10 +70,14 @@ class PrechargeSimulator:
         self.supply.set_current_limit(max_current)  # typically 2A
         start_time = time.time()
         print(f"[Precharge] Starting precharge to {target_voltage:.1f} V with <= {max_current} A")
+        # Choose a dynamic step size so we can realistically reach the target
+        # within the given timeout (10 iterations per second due to the 0.1s sleep)
+        # Be generous to account for logging overhead in simulation
+        step_size = max(1.0, target_voltage / max(timeout * 5.0, 1.0))
         # Loop until voltage nearly reaches target or timeout
         while time.time() - start_time < timeout:
-            # Step the supply voltage up by small increments (e.g., 1 V step)
-            self.supply.step_towards_voltage(target_voltage, step=1.0)
+            # Step the supply voltage up towards the target
+            self.supply.step_towards_voltage(target_voltage, step=step_size)
             volts, amps = self.supply.get_status()
             # Log the status for debugging
             print(f"[Precharge] Voltage = {volts:.1f} V, Current = {amps:.2f} A")
