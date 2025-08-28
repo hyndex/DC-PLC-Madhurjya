@@ -4,6 +4,7 @@ from typing import Optional
 import threading
 import asyncio
 from src.hlc.manager import hlc
+from src.hlc.slac import slac as slac_mgr
 try:
     from . import pwm
     from .orchestrator import ChargeOrchestrator
@@ -109,16 +110,7 @@ def vehicle_bms():
 
 @app.get("/vehicle/slac")
 def vehicle_slac():
-    # Placeholder until PySLAC session is integrated into this process
-    import time as _time
-    return {
-        "state": "IDLE",
-        "ev_mac": None,
-        "nid": None,
-        "run_id": None,
-        "attenuation_db": None,
-        "last_updated": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
-    }
+    return slac_mgr.status()
 
 
 @app.get("/vehicle/iso15118")
@@ -156,6 +148,30 @@ async def hlc_stop():
 @app.get("/hlc/status")
 def hlc_status():
     return hlc.status()
+
+
+class SlacMatchRequest(BaseModel):
+    ev_mac: str
+    nid: Optional[str] = None
+    run_id: Optional[str] = None
+    attenuation_db: Optional[float] = None
+    iface: str = Field("eth0")
+    secc_config: Optional[str] = None
+    cert_store: Optional[str] = None
+
+
+@app.post("/slac/start_matching")
+def slac_start_matching():
+    slac_mgr.start_matching()
+    return slac_mgr.status()
+
+
+@app.post("/slac/matched")
+async def slac_matched(body: SlacMatchRequest):
+    slac_mgr.matched(body.ev_mac, body.nid, body.run_id, body.attenuation_db)
+    # Start HLC upon match
+    await hlc.start(body.iface, body.secc_config, body.cert_store)
+    return {"slac": slac_mgr.status(), "hlc": hlc.status()}
 
 
 class FaultRequest(BaseModel):

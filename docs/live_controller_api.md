@@ -96,7 +96,7 @@ Response: `{ "status": "stopping" }`
 
 GET /vehicle/slac
 
-Expose SLAC (HomePlug Green PHY) link information. Available when PySLAC runs as part of the SECC orchestration.
+Expose SLAC (HomePlug Green PHY) link information. Backed by an in‑process SLAC manager for simulation/glue; will be driven by PySLAC session in production.
 
 Response (JSON):
 - `state` (string): `IDLE|MATCHING|MATCHED|FAILED`
@@ -107,7 +107,32 @@ Response (JSON):
 - `last_updated` (string, ISO8601)
 
 Notes:
-- Derived from `pyslac.session.SlacEvseSession`. In sim‑only mode these values may be null.
+- Exposed by `src/hlc/slac.py`. In sim mode this is controller‑internal state; when PySLAC is integrated these fields come from the real `SlacEvseSession`.
+
+SLAC Control Endpoints (Glue)
+
+POST /slac/start_matching
+
+Set SLAC state to MATCHING (simulation/glue).
+
+Response: same as `GET /vehicle/slac`.
+
+POST /slac/matched
+
+Register a SLAC match and trigger HLC startup.
+
+Request (JSON):
+- `ev_mac` (string): EV MAC address
+- `nid` (string|null)
+- `run_id` (string|null)
+- `attenuation_db` (number|null)
+- `iface` (string, default `"eth0"`): interface to use for HLC
+- `secc_config` (string|null): SECC env path
+- `cert_store` (string|null): PKI path
+
+Response (JSON):
+- `slac`: current SLAC status
+- `hlc`: current HLC status (see `/hlc/status`)
 
 GET /status
 
