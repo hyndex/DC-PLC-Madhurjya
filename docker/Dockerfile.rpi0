@@ -1,0 +1,49 @@
+# RPi Zero (ARMv6) compatible image using balena base
+# Build and run with buildx/QEMU: see scripts and README
+
+FROM balenalib/raspberry-pi-python:3.9-bullseye AS base
+
+# Avoid Python .pyc and enable unbuffered stdout
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    QEMU_CPU=arm1176
+
+WORKDIR /app
+
+# Workaround: disable apt seccomp sandbox under qemu-user emulation
+RUN echo 'APT::Sandbox::Seccomp "false";' > /etc/apt/apt.conf.d/no-seccomp
+
+# Keep base minimal for faster emulated builds
+# Heavy build deps are installed only in the runtime stage
+
+# Pre-copy requirement files for better caching
+COPY requirements.txt requirements.txt
+COPY requirements-submodules.txt requirements-submodules.txt
+
+# Ensure modern packaging tools and poetry-core for PEP517 builds
+RUN pip3 install --upgrade pip setuptools wheel "poetry-core>=1.0.0"
+
+# Copy source
+COPY . .
+
+# -----------------------------
+# Test stage (runs unit tests)
+# -----------------------------
+FROM base AS test
+# Minimal deps for running top-level tests only (avoid pydantic-core/rust on armv6)
+RUN pip3 install pytest "httpx<0.28" requests "fastapi<0.100" "pydantic<2" uvicorn
+
+# Restrict test discovery to top-level tests to avoid submodule test deps
+RUN pytest -q tests
+
+# -----------------------------
+# Runtime stage (FastAPI app)
+# -----------------------------
+FROM base AS runtime
+
+# Minimal runtime deps to serve the simulation API
+RUN pip3 install "fastapi<0.100" "pydantic<2" uvicorn
+
+EXPOSE 8000
+CMD ["python3", "-m", "uvicorn", "src.ccs_sim.fastapi_app:app", "--host", "0.0.0.0", "--port", "8000"]

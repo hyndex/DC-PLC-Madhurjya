@@ -69,8 +69,8 @@ script that installs dependencies and initialises git submodules.
 ```bash
 sudo ./setup_rpi.sh
 sudo reboot
-./scripts/generate_certs.sh
-sudo python3 src/evse_main.py --evse-id <EVSE_ID>
+source /opt/evse-venv/bin/activate
+python src/evse_main.py --evse-id <EVSE_ID>
 ```
 
 Troubleshooting tips and a flow diagram of the process are available in
@@ -135,6 +135,25 @@ for Plug & Charge are generated with
 * Flow diagrams and additional tips live in
   [docs/plug_and_play.md](docs/plug_and_play.md).
 
+### QCA7000 SPI Ethernet on Raspberry Pi
+
+The script `setup_rpi.sh` now configures the Raspberry Pi to use the
+in‑kernel `qcaspi` driver via the standard `qca7000` Device Tree
+overlay. It:
+
+- Enables SPI and adds `dtoverlay=qca7000,int_pin=25,speed=12000000` to the boot config
+- Creates a post‑boot check to detect the `qcaspi` interface and bring it up via NetworkManager
+- Installs an optional reset deassert service for `RESET_L` on BCM24
+
+After running `sudo ./setup_rpi.sh` and rebooting, verify with:
+
+```bash
+sudo scripts/qca_health.sh
+```
+
+This prints module info, overlay lines in boot config, dmesg entries,
+and the detected interface with driver details.
+
 ## Testing and Verification
 
 Run the unit tests with [pytest](https://pytest.org/) to verify the
@@ -144,6 +163,113 @@ installation:
 pip install -r requirements.txt
 pytest
 ```
+
+### End-to-End on Raspberry Pi
+
+After running `setup_rpi.sh` and rebooting:
+
+- Start the API simulation service:
+
+  ```bash
+  source /opt/evse-venv/bin/activate
+  python -m uvicorn src.ccs_sim.fastapi_app:app --host 0.0.0.0 --port 8000
+  ```
+
+- In another shell, trigger a short session and inspect status:
+
+  ```bash
+  curl -fsS http://localhost:8000/hlc/status
+  curl -fsS -X POST http://localhost:8000/start_session \
+    -H 'Content-Type: application/json' \
+    -d '{"target_voltage": 20, "initial_current": 15, "duration_s": 2}'
+  watch -n 0.5 curl -fsS http://localhost:8000/status
+  curl -fsS http://localhost:8000/meter
+  ```
+
+- To run the unified EVSE controller (SLAC + ISO 15118):
+
+  ```bash
+  sudo -s
+  source /opt/evse-venv/bin/activate
+  python src/evse_main.py --evse-id <EVSE_ID> --iface eth0 --controller sim
+  # Or set EVSE_CONTROLLER=hal for HAL-backed control
+  ```
+
+### Docker on Raspberry Pi OS
+
+To verify the Dockerized flow natively on a Raspberry Pi (no cross-build):
+
+- Build, run, and smoke-test the API in one go:
+
+  ```bash
+  scripts/pi_docker_e2e.sh
+  ```
+
+- Or do it step-by-step:
+
+  ```bash
+  # Run tests during build via the test stage
+  docker build --target test -t eco-rpi0:test -f docker/Dockerfile.rpi0 .
+
+  # Build runtime image and run on host network
+  docker build -t eco-rpi0:latest -f docker/Dockerfile.rpi0 .
+  docker run --rm --network host -d --name eco-rpi0 eco-rpi0:latest
+
+  # Smoke test
+  curl -fsS http://127.0.0.1:8000/hlc/status
+  curl -fsS -X POST http://127.0.0.1:8000/start_session \
+    -H 'Content-Type: application/json' \
+    -d '{"target_voltage":20, "initial_current":15, "duration_s":2}'
+  curl -fsS http://127.0.0.1:8000/status
+  curl -fsS http://127.0.0.1:8000/meter
+  ```
+
+## RPi Zero Docker Cross‑Build & Test
+
+You can verify that the codebase builds and tests successfully on an
+RPi Zero–compatible arm/v6 rootfs using Docker buildx and QEMU
+emulation. This does not exercise real hardware but provides strong
+compatibility assurance.
+
+- Prerequisites: Docker (with buildx) installed on your host.
+
+Steps:
+
+1. Initialize the cross‑build environment (installs QEMU emulators and selects a builder):
+
+   ```bash
+   ./scripts/buildx_setup.sh
+   ```
+
+2. Cross‑build and run tests for linux/arm/v6:
+
+   ```bash
+   ./scripts/rpi0_build_test.sh
+   ```
+
+   This uses `docker/Dockerfile.rpi0` and executes `pytest tests` inside
+   the image under QEMU. If tests pass, the image `eco-rpi0:test` is
+   loaded into your local Docker.
+
+3. Build a runtime image for RPi Zero (arm/v6):
+
+   ```bash
+   ./scripts/rpi0_build_runtime.sh
+   ```
+
+4. Run the FastAPI simulation API locally (useful for quick sanity checks):
+
+   ```bash
+   ./scripts/rpi0_run_app.sh
+   # Then visit http://localhost:8000/docs
+   ```
+
+Notes:
+
+- The Docker base image is `balenalib/raspberry-pi-python:3.9-bullseye`,
+  which targets ARMv6 hard‑float (RPi Zero/Zero W).
+- The test stage only runs top‑level tests under `tests/` (not submodule tests).
+- For full hardware integration (e.g., tuntap, PLC drivers), run on a real RPi with `setup_rpi.sh`.
 
 ## CCS DC Charging Simulation Suite
 
