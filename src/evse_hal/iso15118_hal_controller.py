@@ -17,6 +17,7 @@ from src.iso15118.iso15118.shared.messages.enums import (
 )
 from src.iso15118.iso15118.shared.messages.iso15118_2.datatypes import MeterInfo as MeterInfoV2
 from src.iso15118.iso15118.shared.messages.iso15118_20.common_types import MeterInfo as MeterInfoV20
+from src.iso15118.iso15118.shared.states import State
 
 
 class HalEVSEController(SimEVSEController):
@@ -83,3 +84,16 @@ class HalEVSEController(SimEVSEController):
     async def stop_charger(self) -> None:
         self._hal.contactor().set_closed(False)
 
+    async def set_present_protocol_state(self, state: State):
+        # Call parent for logging
+        try:
+            await super().set_present_protocol_state(state)  # type: ignore
+        except Exception:
+            pass
+        # Publish to HLC manager if available
+        try:
+            from src.hlc.manager import hlc
+
+            hlc.set_protocol_state(state)
+        except Exception:
+            pass

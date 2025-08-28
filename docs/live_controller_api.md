@@ -41,6 +41,10 @@ Base URL: `http://127.0.0.1:8000`
 
 Every endpoint returns HTTP 200 on success unless specified otherwise. Errors are returned as JSON with a `status` field and message.
 
+Error format (example):
+
+- `{ "status": "error", "message": "Session already in progress" }`
+
 POST /start_session
 
 Start a charging session. If a session is already active, returns `{ "status": "error" }`.
@@ -126,6 +130,34 @@ Response (JSON):
   - `duration_s` (float)
   - `ended_phase` (string)
   - `error` (nullable string)
+  - `session_params` (object):
+    - `target_voltage` (float|null)
+    - `initial_current` (float|null)
+    - `duration_s` (float|null)
+    - `requested_current` (float|null)
+
+Example:
+
+```
+{
+  "session_active": true,
+  "phase": "CHARGING",
+  "error": null,
+  "contactor_closed": true,
+  "cp_state": "C",
+  "voltage": 400.0,
+  "current": 30.0,
+  "energy_Wh": 42.5,
+  "time_s": 7.2,
+  "last_session_summary": null,
+  "session_params": {
+    "target_voltage": 400.0,
+    "initial_current": 50.0,
+    "duration_s": 10.0,
+    "requested_current": 30.0
+  }
+}
+```
 
 GET /vehicle/iso15118
 
@@ -142,6 +174,38 @@ Response (JSON):
 
 Notes:
 - Values can be sourced from SECC session context once integrated into the API process.
+
+HLC (ISO 15118) Control Endpoints
+
+POST /hlc/start
+
+Start the ISO 15118 SECC (HLC) in-process using the HAL controller.
+
+Request (JSON):
+- `iface` (string, default `"eth0"`): network interface to bind
+- `secc_config` (string|null): path to SECC `.env` file
+- `cert_store` (string|null): PKI store path (also accepts env `PKI_PATH`)
+
+Response (JSON):
+- `status` (object): same as `GET /hlc/status`
+
+POST /hlc/stop
+
+Stop the in-process SECC task.
+
+Response (JSON):
+- `status` (object): same as `GET /hlc/status`
+
+GET /hlc/status
+
+HLC manager status.
+
+Response (JSON):
+- `state` (string): `stopped|starting|running|error`
+- `error` (string|null)
+- `protocol_state` (string|null): last reported state from SECC
+- `iface` (string|null)
+- `session_id` (string|null)
 
 Notes: Meter counters reset when the session ends; use `last_session_summary` for totals.
 
@@ -204,6 +268,23 @@ Session Flow and Semantics
 5) Completion
 - After `duration_s`, set `COMPLETE`, capture `last_session_summary`, reset meter
 
+Timeouts and parameters
+
+- Handshake hold: ~2 s (simulated)
+- Cable check hold: ~1 s
+- Precharge: dynamic step size to reach `target_voltage` within timeout (default 10 s).
+  - Implementation uses a step derived from `target_voltage` and timeout; see `src/ccs_sim/precharge.py`.
+- Charging: current decreases after 5 s from `initial_current` to 30 A (simulator behavior).
+- Stop/fault can abort from any phase. Abort sets `ABORTED` and records `last_session_summary`.
+
+Edge cases handled
+
+- Start while active: rejected with error JSON.
+- Stop during HANDSHAKE/CABLE CHECK/PRECHARGE: safe abort.
+- Fault injection during any phase: safe abort with `error` set to the injected fault.
+- Contactor opened during CHARGING: output voltage/current reported as 0; session continues to count down.
+- Meter resets at end; totals preserved in `last_session_summary`.
+
 HAL (Pluggable Hardware Abstraction)
 
 Interfaces (summarized):
@@ -216,6 +297,24 @@ Interfaces (summarized):
 Reference adapter: `src/evse_hal/adapters/sim.py`
 Register new adapter in: `src/evse_hal/registry.py`
 
+Implementing a new adapter
+
+1. Create `src/evse_hal/adapters/<name>.py` implementing:
+   - `EVSEHardware.pwm() -> PWMController`
+   - `EVSEHardware.cp() -> CPReader`
+   - `EVSEHardware.contactor() -> ContactorDriver`
+   - `EVSEHardware.supply() -> DCPowerSupply`
+   - `EVSEHardware.meter() -> Meter`
+2. Register it in `src/evse_hal/registry.py` under a key (e.g., `"rpi"`).
+3. Use via the orchestrator or SECC HAL controller by selecting the adapter.
+
+Notes for RPi hardware
+
+- PWM: prefer hardware PWM (e.g., `pigpio` or `RPi.GPIO` PWM) on a suitable pin.
+- CP voltage: read via ADC (e.g., MCP3008 over `spidev`) with a proper divider.
+- Contactor: drive with a protected transistor circuit; read contact feedback if available.
+- Meter: integrate with a DC meter IC or simulate using supply telemetry.
+
 SECC Integration (ISO 15118)
 
 - Sim SECC controller: `python src/evse_main.py --evse-id EVSE-1 --iface eth0`
@@ -223,11 +322,39 @@ SECC Integration (ISO 15118)
 
 SECC receives contactor and meter data via `HalEVSEController`. Certificates via `--cert-store` / `PKI_PATH`. SECC and SLAC `.env` files loaded with `--secc-config` and `--slac-config`.
 
+HalEVSEController overrides (mapping to HAL)
+
+- `is_contactor_closed()` / `is_contactor_opened()` → `hal.contactor()`
+- `get_meter_info_v2()` / `get_meter_info_v20()` → `hal.meter()`
+- `get_cp_state()` → approximate mapping from `hal.cp().get_state()`
+- All other SECC behaviors default to `SimEVSEController` unless extended.
+
+Surfacing EV/SLAC data to the API
+
+- `/vehicle/bms`: maps to `EVDataContext` via the in-process HLC manager when HLC is running; otherwise falls back to orchestrator snapshot.
+- `/vehicle/slac`: maps to `pyslac.session.SlacEvseSession` once integrated.
+- `/vehicle/iso15118`: maps to SECC session (protocol, energy service, control mode, auth, IDs). Currently exposes `protocol_state` and `session_id` placeholders via the HLC manager.
+
 Error Handling and Status Codes
 
 - `POST /start_session` returns `{ "status": "error", "message": "Session already in progress" }` if active
 - Control endpoints validate inputs (`duty` 0..100, CP state pattern `^[ABCDE]$`)
 - All endpoints return HTTP 200. Secure the API in production (no auth included).
+
+Validation
+
+- `/control/pwm`: `duty` must be 0..100 (float accepted).
+- `/control/cp_state`: one of `A,B,C, D, E`.
+- `/start_session`: `target_voltage`/`initial_current`/`duration_s` must be non‑negative; `duration_s` ≥ 1.0.
+
+Concurrency and idempotency
+
+- Single active session is enforced. Repeated `/start_session` while active returns error.
+- Control endpoints affect the single active session; they are not idempotent but safe to repeat.
+
+Testing
+
+- Run `pytest tests -q` to execute API tests: 5 tests cover start/stop, status progression, contactor behavior, fault abort, and endpoint availability.
 
 Examples
 

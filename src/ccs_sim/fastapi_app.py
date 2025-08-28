@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel, Field
 from typing import Optional
 import threading
+import asyncio
+from src.hlc.manager import hlc
 try:
     from . import pwm
     from .orchestrator import ChargeOrchestrator
@@ -79,6 +81,81 @@ def meter():
         "avg_current": m.get_avg_current(),
         "session_time_s": round(m.get_session_time_s(), 2),
     }
+
+
+@app.get("/vehicle/bms")
+def vehicle_bms():
+    # Prefer HLC EV data if available, else fall back to orchestrator snapshot
+    hlc_bms = hlc.bms_snapshot()
+    if hlc_bms:
+        return {"protocol": None, **hlc_bms}
+    snap = orch.snapshot()
+    volts = snap.get("voltage")
+    sp = (snap.get("session_params") or {})
+    return {
+        "protocol": None,
+        "evcc_id": None,
+        "present_soc": None,
+        "present_voltage": volts,
+        "target_voltage": sp.get("target_voltage"),
+        "target_current": sp.get("requested_current"),
+        "total_battery_capacity": None,
+        "energy_requests": {"target_energy_request": None, "max_energy_request": None, "min_energy_request": None},
+        "soc_limits": {"min_soc": None, "max_soc": None, "target_soc": None},
+        "rated_limits": {"dc": {}, "ac": {}},
+        "session_limits": {"dc": {}, "ac": {}},
+    }
+
+
+@app.get("/vehicle/slac")
+def vehicle_slac():
+    # Placeholder until PySLAC session is integrated into this process
+    import time as _time
+    return {
+        "state": "IDLE",
+        "ev_mac": None,
+        "nid": None,
+        "run_id": None,
+        "attenuation_db": None,
+        "last_updated": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
+    }
+
+
+@app.get("/vehicle/iso15118")
+def vehicle_iso15118():
+    st = hlc.status()
+    return {
+        "protocol": st.get("protocol_state"),
+        "energy_service": None,
+        "control_mode": None,
+        "authorized": None,
+        "evse_id": None,
+        "session_id": st.get("session_id"),
+        "timestamps": {"started_at": None, "last_message_at": None},
+    }
+
+
+class HLCStartRequest(BaseModel):
+    iface: str = Field("eth0")
+    secc_config: Optional[str] = None
+    cert_store: Optional[str] = None
+
+
+@app.post("/hlc/start")
+async def hlc_start(body: HLCStartRequest = HLCStartRequest()):
+    await hlc.start(body.iface, body.secc_config, body.cert_store)
+    return {"status": hlc.status()}
+
+
+@app.post("/hlc/stop")
+async def hlc_stop():
+    await hlc.stop()
+    return {"status": hlc.status()}
+
+
+@app.get("/hlc/status")
+def hlc_status():
+    return hlc.status()
 
 
 class FaultRequest(BaseModel):

@@ -38,6 +38,11 @@ class ChargeOrchestrator:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.last_session_summary: Optional[Dict[str, Any]] = None
+        # Session parameters (for diagnostics/BMS-like readout)
+        self._session_target_voltage: Optional[float] = None
+        self._session_initial_current: Optional[float] = None
+        self._session_duration_s: Optional[float] = None
+        self._session_requested_current: Optional[float] = None
 
     def wait_for_vehicle(self):
         """
@@ -64,6 +69,10 @@ class ChargeOrchestrator:
             self.error = None
             self.last_session_summary = None
             self._stop_event.clear()
+            self._session_target_voltage = target_voltage
+            self._session_initial_current = initial_current
+            self._session_duration_s = duration_s
+            self._session_requested_current = initial_current
         # 1. Vehicle detected (state B). Start High-Level Communication (HLC) via PLC.
         # In real scenario, at this point SLAC matching and ISO 15118 session starts.
         print("[Orchestrator] Starting PLC handshake (SLAC) ...")
@@ -98,6 +107,7 @@ class ChargeOrchestrator:
         charging_duration = duration_s  # seconds to simulate charging
         start_time = time.time()
         requested_current = initial_current  # EV initial current request (A)
+        self._session_requested_current = requested_current
         self.hal.supply().set_current_limit(requested_current)
         while time.time() - start_time < charging_duration:
             if self._stop_event.is_set():
@@ -108,6 +118,7 @@ class ChargeOrchestrator:
             if elapsed > 5:  # after 5 seconds, simulate tapering current
                 requested_current = 30.0
                 self.hal.supply().set_current_limit(requested_current)
+                self._session_requested_current = requested_current
             # EVSE supplies whatever is requested (within limit), so current = requested_current (simulate).
             # We'll simulate that voltage remains near target (battery voltage).
             self.hal.supply().set_voltage(target_voltage)  # maintain target voltage
@@ -176,6 +187,12 @@ class ChargeOrchestrator:
                 "energy_Wh": self.hal.meter().get_energy_Wh(),
                 "time_s": round(self.hal.meter().get_session_time_s(), 1),
                 "last_session_summary": self.last_session_summary,
+                "session_params": {
+                    "target_voltage": self._session_target_voltage,
+                    "initial_current": self._session_initial_current,
+                    "duration_s": self._session_duration_s,
+                    "requested_current": self._session_requested_current,
+                },
             }
 
     # Internal helpers
