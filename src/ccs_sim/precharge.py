@@ -57,11 +57,13 @@ class PrechargeSimulator:
     """
     Controls the pre-charge process: ramping the EVSE output to match EV's voltage, limiting current.
     """
-    def __init__(self, supply: DCPowerSupplySim):
+    def __init__(self, supply):
+        # supply: object providing set_voltage(), set_current_limit(), get_status(),
+        # and optionally step_towards_voltage(target, step)
         self.supply = supply
         self.precharge_complete = False
 
-    def run_precharge(self, target_voltage: float, max_current: float = 2.0, timeout: float = 5.0):
+    def run_precharge(self, target_voltage: float, max_current: float = 2.0, timeout: float = 5.0, stop_event=None):
         """
         Perform pre-charge by raising supply voltage to `target_voltage` with current <= max_current.
         Returns True if successful, False if timeout or error.
@@ -76,8 +78,17 @@ class PrechargeSimulator:
         step_size = max(1.0, target_voltage / max(timeout * 5.0, 1.0))
         # Loop until voltage nearly reaches target or timeout
         while time.time() - start_time < timeout:
+            if stop_event is not None and getattr(stop_event, "is_set", lambda: False)():
+                print("[Precharge] Aborted by stop event")
+                return False
             # Step the supply voltage up towards the target
-            self.supply.step_towards_voltage(target_voltage, step=step_size)
+            if hasattr(self.supply, "step_towards_voltage"):
+                self.supply.step_towards_voltage(target_voltage, step=step_size)
+            else:
+                # Fallback: increment voltage directly
+                volts, _ = self.supply.get_status()
+                new_voltage = min(target_voltage, volts + step_size)
+                self.supply.set_voltage(new_voltage)
             volts, amps = self.supply.get_status()
             # Log the status for debugging
             print(f"[Precharge] Voltage = {volts:.1f} V, Current = {amps:.2f} A")
@@ -92,5 +103,11 @@ class PrechargeSimulator:
         else:
             print("[Precharge] Precharge complete.")
         # Reset current limit to full (EVSE can provide more current after precharge)
-        self.supply.set_current_limit(self.supply.max_current)
+        try:
+            max_curr = getattr(self.supply, "max_current", None)
+            if max_curr is None:
+                max_curr = 1e9  # effectively no limit for simulation
+            self.supply.set_current_limit(max_curr)
+        except Exception:
+            pass
         return self.precharge_complete

@@ -97,6 +97,12 @@ def parse_args() -> argparse.Namespace:
         default="eth0",
         help="Network interface used for SLAC and ISO 15118 communication",
     )
+    parser.add_argument(
+        "--controller",
+        choices=["sim", "hal"],
+        default="sim",
+        help="EVSE controller backend: 'sim' (default) or 'hal' (pluggable hardware)",
+    )
     return parser.parse_args()
 
 
@@ -114,7 +120,14 @@ async def start_secc(
     config.iface = iface
     config.print_settings()
 
-    evse_controller = SimEVSEController()
+    if os.environ.get("EVSE_CONTROLLER", args.__dict__.get("controller")) == "hal":
+        # Lazy import to avoid test-time dependency and keep sim default
+        from src.evse_hal.registry import create as create_hal
+        from src.evse_hal.iso15118_hal_controller import HalEVSEController
+
+        evse_controller = HalEVSEController(create_hal("sim"))
+    else:
+        evse_controller = SimEVSEController()
     await evse_controller.set_status(ServiceStatus.STARTING)
     await SECCHandler(
         exi_codec=ExificientEXICodec(),
@@ -140,4 +153,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
