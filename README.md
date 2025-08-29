@@ -135,6 +135,25 @@ for Plug & Charge are generated with
 * Flow diagrams and additional tips live in
   [docs/plug_and_play.md](docs/plug_and_play.md).
 
+### ESP32-S3 CP Helper (UART)
+
+An optional ESP32-S3 firmware provides CP PWM generation and ADC sampling, exposing
+status/control over a simple JSON‑over‑UART protocol.
+
+- Firmware: `firmware/esp32s3_cp/` (PlatformIO; board: `esp32-s3-devkitc-1`)
+- Protocol: see `docs/esp_cp_uart_protocol.md`
+- Python client: `src/evse_hal/esp_cp_client.py`
+ - HAL adapter (CP + PWM over UART, others simulated): set `EVSE_CONTROLLER=hal` and select adapter via `EVSE_HAL_ADAPTER=esp-uart`.
+
+On Raspberry Pi, set `ESP_CP_PORT` (e.g., `/dev/ttyAMA0`) and ensure 115200 8N1. Example:
+
+```
+export ESP_CP_PORT=/dev/ttyAMA0
+export EVSE_CONTROLLER=hal
+export EVSE_HAL_ADAPTER=esp-uart
+python src/evse_main.py --evse-id <EVSE_ID> --iface eth0
+```
+
 ### QCA7000 SPI Ethernet on Raspberry Pi
 
 The script `setup_rpi.sh` now configures the Raspberry Pi to use the

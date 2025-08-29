@@ -4,20 +4,20 @@ import time
 from typing import Optional, List, Union, Dict
 
 from src.evse_hal.interfaces import EVSEHardware
-from src.iso15118.iso15118.secc.controller.simulator import SimEVSEController
-from src.iso15118.iso15118.secc.controller.interface import (
+from iso15118.secc.controller.simulator import SimEVSEController
+from iso15118.secc.controller.interface import (
     AuthorizationResponse,
     ServiceStatus,
 )
-from src.iso15118.iso15118.shared.messages.enums import (
+from iso15118.shared.messages.enums import (
     AuthorizationStatus,
     CpState,
     Protocol,
     EnergyTransferModeEnum,
 )
-from src.iso15118.iso15118.shared.messages.iso15118_2.datatypes import MeterInfo as MeterInfoV2
-from src.iso15118.iso15118.shared.messages.iso15118_20.common_types import MeterInfo as MeterInfoV20
-from src.iso15118.iso15118.shared.states import State
+from iso15118.shared.messages.iso15118_2.datatypes import MeterInfo as MeterInfoV2
+from iso15118.shared.messages.iso15118_20.common_types import MeterInfo as MeterInfoV20
+from iso15118.shared.states import State
 
 
 class HalEVSEController(SimEVSEController):

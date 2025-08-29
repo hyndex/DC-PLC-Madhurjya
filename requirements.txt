@@ -5,3 +5,4 @@ iso15118
 fastapi
 uvicorn
 # Optional (Raspberry Pi + MCP3008 ADC): spidev
+pyserial

@@ -4,10 +4,12 @@ from typing import Dict
 
 from src.evse_hal.interfaces import EVSEHardware
 from src.evse_hal.adapters.sim import SimHardware
+from src.evse_hal.adapters.esp_uart import ESPSerialHardware
 
 
 _REGISTRY: Dict[str, type[EVSEHardware]] = {
     "sim": SimHardware,
+    "esp-uart": ESPSerialHardware,
 }
 
 

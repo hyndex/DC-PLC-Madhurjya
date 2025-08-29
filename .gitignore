@@ -120,3 +120,6 @@ pki
 
 # macOS metadata
 .DS_Store
+
+
+.pio

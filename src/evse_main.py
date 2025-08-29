@@ -120,12 +120,14 @@ async def start_secc(
     config.iface = iface
     config.print_settings()
 
-    if os.environ.get("EVSE_CONTROLLER", args.__dict__.get("controller")) == "hal":
+    controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
+    if controller_mode == "hal":
         # Lazy import to avoid test-time dependency and keep sim default
         from src.evse_hal.registry import create as create_hal
         from src.evse_hal.iso15118_hal_controller import HalEVSEController
 
-        evse_controller = HalEVSEController(create_hal("sim"))
+        adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
+        evse_controller = HalEVSEController(create_hal(adapter))
     else:
         evse_controller = SimEVSEController()
     await evse_controller.set_status(ServiceStatus.STARTING)
@@ -139,6 +141,9 @@ async def start_secc(
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     args = parse_args()
+    # Mirror CLI controller choice to environment for downstream components
+    if args.controller:
+        os.environ["EVSE_CONTROLLER"] = args.controller
     slac_config = SlacConfig()
     slac_config.load_envs(args.slac_config)
 
