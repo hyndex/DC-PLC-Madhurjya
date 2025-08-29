@@ -1,4 +1,7 @@
 import time
+import logging
+
+logger = logging.getLogger("precharge")
 
 class DCPowerSupplySim:
     """
@@ -71,7 +74,7 @@ class PrechargeSimulator:
         self.precharge_complete = False
         self.supply.set_current_limit(max_current)  # typically 2A
         start_time = time.time()
-        print(f"[Precharge] Starting precharge to {target_voltage:.1f} V with <= {max_current} A")
+        logger.info("Precharge start", extra={"target_v": round(target_voltage, 2), "max_current_a": max_current})
         # Choose a dynamic step size so we can realistically reach the target
         # within the given timeout (10 iterations per second due to the 0.1s sleep)
         # Be generous to account for logging overhead in simulation
@@ -79,7 +82,7 @@ class PrechargeSimulator:
         # Loop until voltage nearly reaches target or timeout
         while time.time() - start_time < timeout:
             if stop_event is not None and getattr(stop_event, "is_set", lambda: False)():
-                print("[Precharge] Aborted by stop event")
+                logger.warning("Precharge aborted by stop event")
                 return False
             # Step the supply voltage up towards the target
             if hasattr(self.supply, "step_towards_voltage"):
@@ -91,7 +94,7 @@ class PrechargeSimulator:
                 self.supply.set_voltage(new_voltage)
             volts, amps = self.supply.get_status()
             # Log the status for debugging
-            print(f"[Precharge] Voltage = {volts:.1f} V, Current = {amps:.2f} A")
+            logger.debug("Precharge step", extra={"voltage_v": volts, "current_a": amps})
             # Check if we've reached target (within a threshold)
             if volts >= target_voltage - 1.0:
                 # Consider precharge done when we're within ~1V of target
@@ -99,9 +102,9 @@ class PrechargeSimulator:
                 break
             time.sleep(0.1)  # 100 ms step delay to simulate ramp time
         if not self.precharge_complete:
-            print("[Precharge] Timeout or incomplete precharge!")
+            logger.error("Precharge timeout or incomplete")
         else:
-            print("[Precharge] Precharge complete.")
+            logger.info("Precharge complete")
         # Reset current limit to full (EVSE can provide more current after precharge)
         try:
             max_curr = getattr(self.supply, "max_current", None)

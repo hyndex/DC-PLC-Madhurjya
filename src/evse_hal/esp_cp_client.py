@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
 import time
@@ -24,6 +25,9 @@ class CPStatus:
     pwm: PWMStatus
     ts: float
     mode: str = "dc"
+
+
+logger = logging.getLogger("esp.cp")
 
 
 class EspCpClient:
@@ -51,6 +55,7 @@ class EspCpClient:
     def connect(self) -> None:
         self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
         self._stop.clear()
+        logger.info("ESP CP serial connect", extra={"port": self._port, "baud": self._baud})
         self._rx_thread = threading.Thread(target=self._rx_loop, name="esp-cp-rx", daemon=True)
         self._rx_thread.start()
 
@@ -59,6 +64,7 @@ class EspCpClient:
         if self._rx_thread and self._rx_thread.is_alive():
             self._rx_thread.join(timeout=1.0)
         if self._ser and self._ser.is_open:
+            logger.info("ESP CP serial close")
             self._ser.close()
 
     # ----- Public API -----
@@ -101,6 +107,7 @@ class EspCpClient:
             raise RuntimeError("Serial not connected")
         line = json.dumps(obj, separators=(",", ":")) + "\n"
         self._ser.write(line.encode("utf-8"))
+        logger.debug("UART TX", extra={"line": line.strip()})
 
     def _rx_loop(self) -> None:
         assert self._ser is not None
@@ -116,7 +123,9 @@ class EspCpClient:
             try:
                 msg = json.loads(line.decode("utf-8").strip())
             except Exception:
+                logger.debug("UART RX (non-JSON)", extra={"line": line.decode(errors="ignore").strip()})
                 continue
+            logger.debug("UART RX", extra=msg)
             if msg.get("type") == "status":
                 mv = int(msg.get("cp_mv", 0))
                 st = str(msg.get("state", "A"))[:1]

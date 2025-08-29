@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+import logging
+from fastapi import FastAPI, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 import threading
@@ -12,7 +13,19 @@ except ImportError:  # executed from within package root
     import pwm
     from orchestrator import ChargeOrchestrator
 
+logger = logging.getLogger("api")
 app = FastAPI()
+
+# Configure logging if not already configured (use shared util)
+try:
+    from src.util.logging import setup_logging as _setup_logging
+except Exception:
+    try:
+        from util.logging import setup_logging as _setup_logging
+    except Exception:
+        _setup_logging = None
+if _setup_logging:
+    _setup_logging()
 orch = ChargeOrchestrator()
 
 class StartSessionRequest(BaseModel):
@@ -23,6 +36,7 @@ class StartSessionRequest(BaseModel):
 
 @app.post("/start_session")
 def start_session(body: StartSessionRequest = StartSessionRequest()):
+    logger.info("POST /start_session", extra=body.dict())
     if orch.session_active:
         return {"status": "error", "message": "Session already in progress"}
     started = orch.start_session(
@@ -35,11 +49,13 @@ def start_session(body: StartSessionRequest = StartSessionRequest()):
 
 @app.post("/stop_session")
 def stop_session():
+    logger.info("POST /stop_session")
     orch.stop_session()
     return {"status": "stopping"}
 
 @app.get("/status")
 def status():
+    logger.debug("GET /status")
     return orch.snapshot()
 
 
@@ -49,6 +65,7 @@ class ContactorRequest(BaseModel):
 
 @app.post("/control/contactor")
 def control_contactor(body: ContactorRequest):
+    logger.info("POST /control/contactor", extra=body.dict())
     orch.set_contactor(body.closed)
     return {"status": "ok", "contactor_closed": body.closed}
 
@@ -59,8 +76,12 @@ class PWMRequest(BaseModel):
 
 @app.post("/control/pwm")
 def control_pwm(body: PWMRequest):
-    orch.set_pwm_duty(body.duty)
-    return {"status": "ok", "duty": body.duty}
+    logger.info("POST /control/pwm", extra=body.dict())
+    try:
+        orch.set_pwm_duty(body.duty)
+        return {"status": "ok", "duty": body.duty}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 
 class CPStateRequest(BaseModel):
@@ -69,8 +90,27 @@ class CPStateRequest(BaseModel):
 
 @app.post("/control/cp_state")
 def control_cp_state(body: CPStateRequest):
-    orch.set_cp_state(body.state)
-    return {"status": "ok", "state": body.state}
+    logger.info("POST /control/cp_state", extra=body.dict())
+    try:
+        orch.set_cp_state(body.state)
+        return {"status": "ok", "state": body.state}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/cp")
+def cp_status():
+    logger.debug("GET /cp")
+    cp = orch.hal.cp()
+    try:
+        v = float(cp.read_voltage())
+    except Exception:
+        v = None
+    try:
+        st = cp.get_state()
+    except Exception:
+        st = None
+    return {"voltage_v": v, "state": st}
 
 
 @app.get("/meter")
@@ -86,6 +126,7 @@ def meter():
 
 @app.get("/vehicle/bms")
 def vehicle_bms():
+    logger.debug("GET /vehicle/bms")
     # Prefer HLC EV data if available, else fall back to orchestrator snapshot
     hlc_bms = hlc.bms_snapshot()
     if hlc_bms:
@@ -110,11 +151,13 @@ def vehicle_bms():
 
 @app.get("/vehicle/slac")
 def vehicle_slac():
+    logger.debug("GET /vehicle/slac")
     return slac_mgr.status()
 
 
 @app.get("/vehicle/iso15118")
 def vehicle_iso15118():
+    logger.debug("GET /vehicle/iso15118")
     st = hlc.status()
     return {
         "protocol": st.get("protocol_state"),
@@ -135,12 +178,14 @@ class HLCStartRequest(BaseModel):
 
 @app.post("/hlc/start")
 async def hlc_start(body: HLCStartRequest = HLCStartRequest()):
+    logger.info("POST /hlc/start", extra=body.dict())
     await hlc.start(body.iface, body.secc_config, body.cert_store)
     return {"status": hlc.status()}
 
 
 @app.post("/hlc/stop")
 async def hlc_stop():
+    logger.info("POST /hlc/stop")
     await hlc.stop()
     return {"status": hlc.status()}
 
@@ -162,12 +207,14 @@ class SlacMatchRequest(BaseModel):
 
 @app.post("/slac/start_matching")
 def slac_start_matching():
+    logger.info("POST /slac/start_matching")
     slac_mgr.start_matching()
     return slac_mgr.status()
 
 
 @app.post("/slac/matched")
 async def slac_matched(body: SlacMatchRequest):
+    logger.info("POST /slac/matched", extra=body.dict())
     slac_mgr.matched(body.ev_mac, body.nid, body.run_id, body.attenuation_db)
     # Start HLC upon match
     await hlc.start(body.iface, body.secc_config, body.cert_store)
@@ -180,5 +227,6 @@ class FaultRequest(BaseModel):
 
 @app.post("/fault")
 def inject_fault(body: FaultRequest):
+    logger.warning("POST /fault", extra=body.dict())
     orch.inject_fault(body.type)
     return {"status": "fault_injected", "type": body.type}

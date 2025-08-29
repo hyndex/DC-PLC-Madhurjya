@@ -33,7 +33,7 @@ from iso15118.secc import SECCHandler
 from iso15118.shared.exi_codec import ExificientEXICodec
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("evse.main")
 
 
 class EVSECommunicationController(SlacSessionController):
@@ -115,10 +115,14 @@ async def start_secc(
     if certificate_store:
         os.environ["PKI_PATH"] = certificate_store
 
+    logger.info("Starting SECC", extra={"iface": iface})
     config = SeccConfig()
     config.load_envs(secc_config_path)
     config.iface = iface
-    config.print_settings()
+    try:
+        config.print_settings()
+    except Exception:
+        pass
 
     controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
     if controller_mode == "hal":
@@ -127,8 +131,10 @@ async def start_secc(
         from src.evse_hal.iso15118_hal_controller import HalEVSEController
 
         adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
+        logger.info("EVSE controller=hal", extra={"adapter": adapter})
         evse_controller = HalEVSEController(create_hal(adapter))
     else:
+        logger.info("EVSE controller=sim")
         evse_controller = SimEVSEController()
     await evse_controller.set_status(ServiceStatus.STARTING)
     await SECCHandler(
@@ -139,7 +145,12 @@ async def start_secc(
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    # Unified logging setup
+    try:
+        from src.util.logging import setup_logging
+    except Exception:
+        from util.logging import setup_logging  # fallback
+    setup_logging()
     args = parse_args()
     # Mirror CLI controller choice to environment for downstream components
     if args.controller:

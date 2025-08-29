@@ -364,11 +364,12 @@ Error Handling and Status Codes
 
 - `POST /start_session` returns `{ "status": "error", "message": "Session already in progress" }` if active
 - Control endpoints validate inputs (`duty` 0..100, CP state pattern `^[ABCDE]$`)
+  - Note: with the `esp-uart` HAL adapter (ESP32‑S3 CP firmware in DC mode), `/control/pwm` is a no‑op and CP stays at fixed 5% duty while connected; use simulation or switch firmware to manual mode for bench testing.
 - All endpoints return HTTP 200. Secure the API in production (no auth included).
 
 Validation
 
-- `/control/pwm`: `duty` must be 0..100 (float accepted).
+- `/control/pwm`: `duty` must be 0..100 (float accepted). In hardware DC mode, this is ignored (fixed 5%).
 - `/control/cp_state`: one of `A,B,C, D, E`.
 - `/start_session`: `target_voltage`/`initial_current`/`duration_s` must be non‑negative; `duration_s` ≥ 1.0.
 
@@ -398,6 +399,9 @@ Inject fault:
 
 Read meter:
 - `curl -s localhost:8000/meter | jq`
+
+Read CP status:
+- `curl -s localhost:8000/cp | jq`
 
 Notes & Limitations
 

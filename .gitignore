@@ -123,3 +123,5 @@ pki
 
 
 .pio
+firmware/**/.pio/
+firmware/**/.vscode/

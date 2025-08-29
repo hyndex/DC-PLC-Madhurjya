@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+import logging
 from typing import Optional, Tuple
 
 from src.evse_hal.interfaces import (
@@ -15,13 +16,19 @@ from src.evse_hal.interfaces import (
 from src.evse_hal.esp_cp_client import EspCpClient
 from src.evse_hal.adapters.sim import SimHardware
 
+logger = logging.getLogger("hal.esp")
 
 class _EspPWM(PWMController):
     def __init__(self, client: EspCpClient) -> None:
         self._c = client
 
     def set_duty(self, duty_percent: float) -> None:
-        self._c.set_pwm(int(duty_percent), enable=True)
+        # In DC mode on firmware this is ignored; still log intent
+        logger.info("HAL PWM set_duty", extra={"duty_percent": duty_percent})
+        try:
+            self._c.set_pwm(int(duty_percent), enable=True)
+        except Exception as e:
+            logger.warning("HAL PWM set_duty failed", extra={"error": str(e)})
 
 
 class _EspCP(CPReader):
@@ -33,7 +40,9 @@ class _EspCP(CPReader):
         st = self._c.get_status(wait_s=0.2)
         if st:
             self._last_state = st.state
-            return st.cp_mv / 1000.0
+            v = st.cp_mv / 1000.0
+            logger.debug("HAL CP read", extra={"voltage_v": v, "state": st.state, "mode": getattr(st, "mode", None)})
+            return v
         return 0.0
 
     def simulate_state(self, state: str) -> None:
@@ -60,8 +69,9 @@ class ESPSerialHardware(EVSEHardware):
         # Ensure firmware is in DC auto mode
         try:
             self._client.set_mode("dc")
+            logger.info("HAL ESP set_mode(dc)")
         except Exception:
-            pass
+            logger.warning("HAL ESP set_mode(dc) failed")
         self._pwm = _EspPWM(self._client)
         self._cp = _EspCP(self._client)
         # reuse sim for the rest to keep plumbing simple

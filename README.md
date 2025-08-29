@@ -154,6 +154,21 @@ export EVSE_HAL_ADAPTER=esp-uart
 python src/evse_main.py --evse-id <EVSE_ID> --iface eth0
 ```
 
+End-to-End DC setup (ESP CP + HAL)
+- Flash `firmware/esp32s3_cp/` to ESP32‑S3 DevKitC‑1 (pins: PWM `GPIO38`, ADC `GPIO1`, UART RX `GPIO44`, TX `GPIO43`).
+- Wire UART to Pi and CP to your EVSE CP frontend per hardware design.
+- On the Pi, set `ESP_CP_PORT`, then run with `EVSE_CONTROLLER=hal` and `EVSE_HAL_ADAPTER=esp-uart`.
+- The firmware enforces DC mode: CP is 100% (idle +12 V) in A/E/F and 5% in B/C/D.
+- Use `GET /cp` to observe CP state/voltage and `/status` for session state; `/control/pwm` affects only sim or manual firmware mode.
+
+Logging
+- Configure unified logs with env vars:
+  - `EVSE_LOG_LEVEL=DEBUG|INFO|...` (default INFO)
+  - `EVSE_LOG_FORMAT=text|json` (default text)
+  - `EVSE_LOG_FILE=/path/to/file.log` (optional)
+- UART client logs TX/RX lines at DEBUG under logger `esp.cp`.
+- Orchestrator emits event/periodic logs under `orchestrator`; precharge under `precharge`; API under `api`.
+
 ### QCA7000 SPI Ethernet on Raspberry Pi
 
 The script `setup_rpi.sh` now configures the Raspberry Pi to use the

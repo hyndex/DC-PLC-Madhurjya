@@ -1,5 +1,6 @@
 import time
 import threading
+import logging
 from enum import Enum
 from typing import Optional, Dict, Any
 try:
@@ -26,6 +27,9 @@ class Phase(str, Enum):
     ABORTED = "ABORTED"
 
 
+logger = logging.getLogger("orchestrator")
+
+
 class ChargeOrchestrator:
     def __init__(self, hal: Optional[EVSEHardware] = None):
         # Initialize subsystems
@@ -50,14 +54,23 @@ class ChargeOrchestrator:
         For simulation, this could be triggered externally or by a manual call.
         On real hardware, poll the CP voltage until it drops to ~9V (State B).
         """
-        print("[Orchestrator] Waiting for vehicle connection (State A to B)...")
+        logger.info("Waiting for vehicle connection (A -> B)...")
         # Simulation: directly call simulate_cp_state for testing, in real use CP ADC
         while True:
-            voltage = self.cp.read_cp_voltage()
+            voltage = 0.0
+            try:
+                voltage = float(self.hal.cp().read_voltage())
+            except Exception:
+                # Fallback to sim if HAL not available or raises
+                try:
+                    voltage = float(pwm.read_cp_voltage())
+                except Exception:
+                    voltage = 0.0
+            logger.debug("CP voltage read", extra={"cp_voltage_v": round(voltage, 3)})
             if voltage < 11.0:  # heuristic: below ~11V means a car is present
                 # Enter State B
                 self.session_active = True
-                print("[Orchestrator] Vehicle detected! CP Voltage ~ {:.1f} V".format(voltage))
+                logger.info("Vehicle detected (State B)", extra={"cp_voltage_v": round(voltage, 2)})
                 break
             time.sleep(0.5)
 
@@ -75,31 +88,31 @@ class ChargeOrchestrator:
             self._session_requested_current = initial_current
         # 1. Vehicle detected (state B). Start High-Level Communication (HLC) via PLC.
         # In real scenario, at this point SLAC matching and ISO 15118 session starts.
-        print("[Orchestrator] Starting PLC handshake (SLAC) ...")
+        logger.info("Starting PLC handshake (SLAC)...")
         # Simulate SLAC/ISO15118 handshake delay
         if self._wait_or_stop(2.0):
             return self._abort("STOPPED_DURING_HANDSHAKE")
-        print("[Orchestrator] PLC link established. Starting ISO 15118 communication...")
+        logger.info("PLC link established. Starting ISO 15118 communication...")
         # Enter State C (vehicle ready) after handshake
         self.hal.cp().simulate_state("C")  # simulate EV moves to state C (6V)
         with self._lock:
             self.phase = Phase.PRECARGE
         # 2. Cable check
-        print("[Orchestrator] Performing cable check...")
+        logger.info("Performing cable check...")
         # Ensure no voltage on DC lines and connector locked
         # (Simulation assumes connector is locked and no stray voltage)
         if self._wait_or_stop(1.0):
             return self._abort("STOPPED_DURING_CABLE_CHECK")
-        print("[Orchestrator] Cable check passed. EVSE ready for pre-charge.")
+        logger.info("Cable check passed. EVSE ready for pre-charge.")
         # 3. Pre-charge phase
         # Get target voltage from EV (for simulation, choose a target arbitrarily or preset)
         # EV would also request <=2A current for precharge (implicitly handled by PrechargeSimulator)
         pre_ok = self.precharger.run_precharge(target_voltage, max_current=2.0, timeout=10.0, stop_event=self._stop_event)
         if not pre_ok:
-            print("[Orchestrator] Pre-charge failed or timed out, aborting session.")
+            logger.error("Pre-charge failed or timed out, aborting session.")
             return self._abort("PRECHARGE_FAILED")
         # Precharge complete, now close contactors (simulate by just assuming they are closed)
-        print("[Orchestrator] Closing contactor and starting energy transfer.")
+        logger.info("Closing contactor and starting energy transfer.")
         with self._lock:
             self.hal.contactor().set_closed(True)
             self.phase = Phase.CHARGING
@@ -137,11 +150,11 @@ class ChargeOrchestrator:
                 volts, amps = 0.0, 0.0
             # Update energy meter with current measurements
             self.hal.meter().update(volts, amps)
-            print(f"[Orchestrator] Supplying {amps:.1f} A at {volts:.1f} V")
+            logger.debug("Supply status", extra={"voltage_v": volts, "current_a": amps})
             if self._wait_or_stop(1.0):
                 return self._abort("STOP_REQUESTED")
         # 5. Charging complete – simulate EV sending stop request
-        print("[Orchestrator] EV charging complete or stop requested.")
+        logger.info("EV charging complete or stop requested.")
         # Open contactors (simulate instantly)
         self.hal.cp().simulate_state("B")  # vehicle still present but not charging
         self._complete_session()
@@ -214,7 +227,7 @@ class ChargeOrchestrator:
             # Record summary prior to reset
             self.last_session_summary = self._build_summary()
             self.hal.meter().reset()
-        print(f"[Orchestrator] Session aborted: {self.error}")
+        logger.warning("Session aborted", extra={"reason": self.error})
 
     def _complete_session(self):
         # Log session summary
@@ -222,10 +235,13 @@ class ChargeOrchestrator:
         avg_v = self.hal.meter().get_avg_voltage()
         avg_i = self.hal.meter().get_avg_current()
         duration = self.hal.meter().get_session_time_s()
-        print("[Orchestrator] Session finished.")
-        print(f" Total energy delivered: {energy:.3f} Wh")
-        print(f" Average voltage: {avg_v:.1f} V, Average current: {avg_i:.1f} A")
-        print(f" Session duration: {duration:.1f} seconds")
+        logger.info("Session finished")
+        logger.info("Session totals", extra={
+            "energy_Wh": round(energy, 3),
+            "avg_voltage_v": round(avg_v, 2),
+            "avg_current_a": round(avg_i, 2),
+            "duration_s": round(duration, 2),
+        })
         with self._lock:
             self.phase = Phase.COMPLETE
             self.hal.contactor().set_closed(False)

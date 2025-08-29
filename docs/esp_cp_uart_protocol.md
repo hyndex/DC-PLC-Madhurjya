@@ -34,4 +34,10 @@ Notes
   - Connected (B/C/D): fixed 5% duty for DC fast charging (per CCS guidance)
 - Manual mode: when disabled, firmware holds 100% duty (idle high) to keep +12 V
 - Debug USB console (CDC) remains on `Serial` at 115200 baud
- - Noise handling: 25-sample averaging plus ~100 mV hysteresis on state transitions prevents flapping near thresholds
+- Noise handling: 25-sample averaging plus ~100 mV hysteresis on state transitions prevents flapping near thresholds
+
+Logging
+
+- USB-CDC (`Serial`): human-readable boot and init messages
+- UART (to Pi): periodic JSON status frames every 200 ms; log/rpc via Pi
+- Recommended: enable Python DEBUG logs to capture UART TX/RX lines
