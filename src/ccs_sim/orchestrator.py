@@ -147,6 +147,15 @@ class ChargeOrchestrator:
             # Contactor open means no output (simulate by zeroing status)
             volts, amps = self.hal.supply().get_status()
             if not self.hal.contactor().is_closed():
+                # Force-zero the supply readings in simulation when the contactor is open
+                try:
+                    s = self.hal.supply()
+                    impl = getattr(s, "_impl", None)
+                    if impl is not None:
+                        setattr(impl, "voltage", 0.0)
+                        setattr(impl, "current", 0.0)
+                except Exception:
+                    pass
                 volts, amps = 0.0, 0.0
             # Update energy meter with current measurements
             self.hal.meter().update(volts, amps)
@@ -189,6 +198,8 @@ class ChargeOrchestrator:
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
             volts, amps = self.hal.supply().get_status()
+            if not self.hal.contactor().is_closed():
+                volts, amps = 0.0, 0.0
             return {
                 "session_active": self.session_active,
                 "phase": self.phase,

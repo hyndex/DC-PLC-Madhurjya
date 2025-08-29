@@ -34,9 +34,9 @@ class HLCManager:
         # Lazy imports to avoid iso15118 package import at module load time
         try:
             from src.evse_hal.iso15118_hal_controller import HalEVSEController
-            from src.iso15118.iso15118.secc import SECCHandler
-            from src.iso15118.iso15118.secc.secc_settings import Config as SeccConfig
-            from src.iso15118.iso15118.shared.exi_codec import ExificientEXICodec
+            from iso15118.secc import SECCHandler
+            from iso15118.secc.secc_settings import Config as SeccConfig
+            from iso15118.shared.exi_codec import ExificientEXICodec
         except Exception as e:
             self._status.state = "error"
             self._status.error = f"import_error: {e}"
