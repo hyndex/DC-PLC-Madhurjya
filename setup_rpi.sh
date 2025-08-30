@@ -12,6 +12,28 @@ if [ "$(id -u)" != "0" ]; then
   exit 1
 fi
 
+usage() {
+  cat <<USAGE
+Usage: $0 [--use-nm|--no-nm]
+
+Options:
+  --use-nm   Force use of NetworkManager for PLC (installs network-manager)
+  --no-nm    Force use of dhcpcd for PLC (skips NetworkManager)
+  -h, --help Show this help message and exit
+USAGE
+}
+
+# Parse flags (simple)
+FORCE_USE_NM=""
+for arg in "$@"; do
+  case "$arg" in
+    --use-nm) FORCE_USE_NM=1 ;;
+    --no-nm)  FORCE_USE_NM=0 ;;
+    -h|--help) usage; exit 0 ;;
+    *) ;; # ignore unknown for now
+  esac
+done
+
 REPO_ROOT=$(cd "$(dirname "$0")" && pwd)
 VENV_DIR=${VENV_DIR:-/opt/evse-venv}
 
@@ -20,6 +42,32 @@ git -C "${REPO_ROOT}" submodule update --init --recursive
 
 echo "Installing system packages (this may take a while on Pi Zero)..."
 export DEBIAN_FRONTEND=noninteractive
+
+# Detect Raspberry Pi OS and decide whether to use/install NetworkManager
+IS_RPI_OS=0
+if [ -f /etc/os-release ]; then
+  if grep -qiE 'raspbian|raspberry pi os' /etc/os-release; then
+    IS_RPI_OS=1
+  fi
+fi
+
+# Decide USE_NM from flags or OS defaults
+if [ -n "$FORCE_USE_NM" ]; then
+  USE_NM=$FORCE_USE_NM
+elif [ "$IS_RPI_OS" -eq 1 ]; then
+  USE_NM=0
+else
+  USE_NM=1
+fi
+
+if [ "$USE_NM" -eq 1 ]; then
+  NM_PKG="network-manager"
+  echo "Using NetworkManager for PLC configuration"
+else
+  NM_PKG=""
+  echo "Using dhcpcd for PLC configuration (no NetworkManager)"
+fi
+
 apt-get update
 apt-get install -y \
   python3 \
@@ -40,8 +88,11 @@ apt-get install -y \
   cargo \
   curl \
   ethtool \
-  network-manager \
-  gpiod
+  gpiod ${NM_PKG}
+
+# Persist choice for the post-boot script to read later
+mkdir -p /etc/default
+echo "USE_NM=${USE_NM}" > /etc/default/plc-post
 
 echo "Ensuring TUN/TAP support (for SLAC/TAP usage)..."
 modprobe tun || true
@@ -91,6 +142,20 @@ cat >/usr/local/sbin/plc_post_boot.sh <<'POST'
 set -euo pipefail
 LOG(){ echo "[plc-post] $(date -Iseconds) $*"; }
 
+# Load persisted preference if present; otherwise decide by OS
+if [ -f /etc/default/plc-post ]; then
+  # shellcheck disable=SC1091
+  . /etc/default/plc-post || true
+fi
+if [ -z "${USE_NM:-}" ]; then
+  USE_NM=1
+  if [ -f /etc/os-release ]; then
+    if grep -qiE 'raspbian|raspberry pi os' /etc/os-release; then
+      USE_NM=0
+    fi
+  fi
+fi
+
 LOG "Waiting for qcaspi driver to bind..."
 for i in {1..60}; do
   if dmesg | grep -qi '\bqcaspi\b'; then
@@ -113,7 +178,7 @@ if [ -z "$IFACE" ]; then
 fi
 LOG "Detected PLC interface: $IFACE"
 
-if command -v nmcli >/dev/null 2>&1; then
+if [ "$USE_NM" -eq 1 ] && command -v nmcli >/dev/null 2>&1; then
   if ! nmcli -t -f NAME con show | grep -qx "plc0"; then
     LOG "Creating NetworkManager connection plc0 for $IFACE (DHCP IPv4, IPv6 ignore, never default)"
     nmcli con add type ethernet ifname "$IFACE" con-name plc0 ipv4.method auto ipv6.method ignore || true
@@ -124,7 +189,48 @@ if command -v nmcli >/dev/null 2>&1; then
   LOG "Bringing up connection plc0"
   nmcli con up plc0 || true
 else
-  LOG "NetworkManager not found; skipping NM config"
+  LOG "Using dhcpcd to configure $IFACE (either RPi OS or nmcli missing)"
+  CONF=/etc/dhcpcd.conf
+  if [ -w "$CONF" ]; then
+    # Ensure per-interface section exists with safe defaults
+    if ! grep -q "^interface $IFACE\b" "$CONF"; then
+      LOG "Adding dhcpcd section for $IFACE with nogateway + low metric"
+      {
+        echo ""
+        echo "# Auto-added by plc_post_boot.sh for qcaspi interface"
+        echo "interface $IFACE"
+        echo "  metric 600"
+        echo "  nogateway"
+      } | tee -a "$CONF" >/dev/null
+    else
+      # Update metric/nogateway if missing in existing section
+      awk -v IFACE="$IFACE" '
+        BEGIN{insec=0}
+        {
+          if($0 ~ /^interface[[:space:]]+" IFACE "\b/){insec=1; print; next}
+          if(insec && $0 ~ /^interface[[:space:]]+/){
+            if(!seen_metric) print "  metric 600";
+            if(!seen_nogw) print "  nogateway";
+            insec=0
+          }
+          if(insec && $0 ~ /^[[:space:]]+metric[[:space:]]+/){seen_metric=1}
+          if(insec && $0 ~ /^[[:space:]]+nogateway\b/){seen_nogw=1}
+          print
+        }
+        END{
+          if(insec){
+            if(!seen_metric) print "  metric 600";
+            if(!seen_nogw) print "  nogateway";
+          }
+        }
+      ' "$CONF" >"${CONF}.tmp" && mv "${CONF}.tmp" "$CONF" || true
+    fi
+    LOG "Restarting dhcpcd to apply settings"
+    systemctl restart dhcpcd || true
+    dhcpcd -n "$IFACE" || true
+  else
+    LOG "dhcpcd.conf not writable; skipping dhcpcd adjustments"
+  fi
 fi
 
 LOG "Interface details:"
