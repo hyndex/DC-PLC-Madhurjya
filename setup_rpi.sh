@@ -48,7 +48,7 @@ modprobe tun || true
 
 echo "Configuring SPI and QCA7000 overlay..."
 IRQ_PIN=${IRQ_PIN:-25}
-SPI_SPEED=${SPI_SPEED:-12000000}
+SPI_SPEED=${SPI_SPEED:-4000000}
 
 # Detect boot config path
 BOOTCFG="/boot/firmware/config.txt"
