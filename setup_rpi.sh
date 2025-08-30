@@ -115,9 +115,12 @@ LOG "Detected PLC interface: $IFACE"
 
 if command -v nmcli >/dev/null 2>&1; then
   if ! nmcli -t -f NAME con show | grep -qx "plc0"; then
-    LOG "Creating NetworkManager connection plc0 for $IFACE (DHCP IPv4, IPv6 ignore)"
+    LOG "Creating NetworkManager connection plc0 for $IFACE (DHCP IPv4, IPv6 ignore, never default)"
     nmcli con add type ethernet ifname "$IFACE" con-name plc0 ipv4.method auto ipv6.method ignore || true
   fi
+  # Ensure PLC link never becomes default route and has low priority
+  LOG "Hardening plc0 connection: never default route, low metric, ignore auto DNS"
+  nmcli con modify plc0 ipv4.never-default yes ipv4.route-metric 600 ipv4.ignore-auto-dns yes || true
   LOG "Bringing up connection plc0"
   nmcli con up plc0 || true
 else
