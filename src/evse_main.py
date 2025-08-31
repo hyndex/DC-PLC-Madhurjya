@@ -76,12 +76,22 @@ class EVSECommunicationController(SlacSessionController):
         # HAL mode: use real CP input to drive SLAC and ISO lifecycles
         try:
             from src.evse_hal.registry import create as create_hal
-        except Exception as e:  # pragma: no cover - runtime only
-            logger.error("HAL mode requested but HAL registry unavailable", extra={"error": str(e)})
-            return
+        except Exception as e1:  # pragma: no cover - runtime only
+            try:
+                from evse_hal.registry import create as create_hal  # fallback when run as package root
+            except Exception as e2:
+                logger.error(
+                    "HAL mode requested but HAL registry unavailable",
+                    extra={"error": f"{e1}; {e2}"},
+                )
+                return
 
         adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
-        hal = create_hal(adapter)
+        try:
+            hal = create_hal(adapter)
+        except Exception as e:
+            logger.error("HAL adapter init failed", extra={"adapter": adapter, "error": str(e)})
+            return
         connected_states = {"B", "C", "D"}
         logger.info("HAL mode: waiting for CP states to start SLAC", extra={"adapter": adapter})
 
@@ -256,8 +266,13 @@ async def start_secc(
     controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
     if controller_mode == "hal":
         # Lazy import to avoid test-time dependency and keep sim default
-        from src.evse_hal.registry import create as create_hal
-        from src.evse_hal.iso15118_hal_controller import HalEVSEController
+        try:
+            from src.evse_hal.registry import create as create_hal
+            from src.evse_hal.iso15118_hal_controller import HalEVSEController
+        except Exception:
+            # Fallback when executed from within src/ (PYTHONPATH=src)
+            from evse_hal.registry import create as create_hal  # type: ignore
+            from evse_hal.iso15118_hal_controller import HalEVSEController  # type: ignore
 
         adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
         logger.info("EVSE controller=hal", extra={"adapter": adapter})
