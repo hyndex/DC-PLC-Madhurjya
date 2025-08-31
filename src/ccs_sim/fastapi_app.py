@@ -7,9 +7,10 @@ import asyncio
 from src.hlc.manager import hlc
 from src.hlc.slac import slac as slac_mgr
 try:
-    from src.util.slac_peer_store import read_peer
+    from src.util.slac_peer_store import read_peer, write_peer
 except Exception:
     read_peer = None  # type: ignore
+    write_peer = None  # type: ignore
 try:
     from . import pwm
     from .orchestrator import ChargeOrchestrator
@@ -246,6 +247,12 @@ def slac_start_matching():
 async def slac_matched(body: SlacMatchRequest):
     logger.info("POST /slac/matched", extra=body.dict())
     slac_mgr.matched(body.ev_mac, body.nid, body.run_id, body.attenuation_db)
+    # Persist peer info so external clients can read MAC via /slac/peer
+    try:
+        if write_peer:
+            write_peer(body.ev_mac, body.nid, body.run_id)
+    except Exception:
+        pass
     # Start HLC upon match
     await hlc.start(body.iface, body.secc_config, body.cert_store)
     return {"slac": slac_mgr.status(), "hlc": hlc.status()}
