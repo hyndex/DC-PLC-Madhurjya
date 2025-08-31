@@ -39,6 +39,14 @@ static volatile uint32_t g_pwm_freq_hz = CP_1_PWM_FREQUENCY;
 
 static uint32_t g_last_status_ms = 0;
 static char g_last_cp_state = 'A';
+static int g_last_cp_mv = 0;
+static uint16_t g_last_output_duty_pct = 100; // effective output duty applied on CP line
+static uint32_t g_last_usb_log_ms = 0;
+
+// USB log cadence (ms)
+#ifndef USB_LOG_PERIOD_MS
+#define USB_LOG_PERIOD_MS 1000
+#endif
 
 static inline uint32_t pct_to_duty(uint16_t pct) {
   if (pct == 0) return 0;
@@ -138,6 +146,7 @@ static void handle_cmd_set_pwm(JsonObject obj) {
     resp["msg"] = "mode_dc_auto";
     serializeJson(resp, SerialPi);
     SerialPi.print('\n');
+    Serial.print("["); Serial.print(millis()); Serial.print("] [W] set_pwm rejected in dc mode\n");
     return;
   }
   if (obj.containsKey("duty")) {
@@ -149,6 +158,10 @@ static void handle_cmd_set_pwm(JsonObject obj) {
     g_pwm_enabled = obj["enable"].as<bool>();
   }
   apply_pwm_manual();
+  Serial.print("["); Serial.print(millis()); Serial.print("] [I] PWM manual updated: enable=");
+  Serial.print(g_pwm_enabled);
+  Serial.print(" duty%="); Serial.print(g_pwm_duty_pct);
+  Serial.print(" hz="); Serial.println(g_pwm_freq_hz);
   send_status_json();
 }
 
@@ -159,10 +172,13 @@ static void handle_cmd_enable_pwm(JsonObject obj) {
     resp["msg"] = "mode_dc_auto";
     serializeJson(resp, SerialPi);
     SerialPi.print('\n');
+    Serial.print("["); Serial.print(millis()); Serial.print("] [W] enable_pwm rejected in dc mode\n");
     return;
   }
   g_pwm_enabled = obj["enable"].as<bool>();
   apply_pwm_manual();
+  Serial.print("["); Serial.print(millis()); Serial.print("] [I] PWM enable set to ");
+  Serial.println(g_pwm_enabled ? "true" : "false");
   send_status_json();
 }
 
@@ -172,6 +188,8 @@ static void handle_cmd_set_freq(JsonObject obj) {
   if (hz > 5000) hz = 5000;
   g_pwm_freq_hz = hz;
   configure_pwm();
+  Serial.print("["); Serial.print(millis()); Serial.print("] [I] PWM freq set to ");
+  Serial.print(g_pwm_freq_hz); Serial.println(" Hz");
   send_status_json();
 }
 
@@ -187,8 +205,12 @@ static void handle_cmd_set_mode(JsonObject obj) {
     resp["msg"] = "bad_mode";
     serializeJson(resp, SerialPi);
     SerialPi.print('\n');
+    Serial.print("["); Serial.print(millis()); Serial.print("] [E] set_mode invalid value: ");
+    Serial.println(m);
     return;
   }
+  Serial.print("["); Serial.print(millis()); Serial.print("] [I] Mode set to ");
+  Serial.println((g_mode == OpMode::DC_AUTO) ? "dc" : "manual");
   send_status_json();
 }
 
@@ -222,6 +244,8 @@ static void process_line(String &line) {
     resp["msg"] = String("bad_json:") + err.c_str();
     serializeJson(resp, SerialPi);
     SerialPi.print('\n');
+    Serial.print("["); Serial.print(millis()); Serial.print("] [E] Bad JSON: ");
+    Serial.println(err.c_str());
     return;
   }
 
@@ -232,10 +256,13 @@ static void process_line(String &line) {
     resp["msg"] = "missing_cmd";
     serializeJson(resp, SerialPi);
     SerialPi.print('\n');
+    Serial.print("["); Serial.print(millis()); Serial.println("] [E] Missing cmd field");
     return;
   }
 
   String scmd(cmd);
+  Serial.print("["); Serial.print(millis()); Serial.print("] [D] RX cmd: ");
+  Serial.println(scmd);
   if (scmd == "set_pwm") {
     handle_cmd_set_pwm(doc.as<JsonObject>());
   } else if (scmd == "enable_pwm") {
@@ -257,6 +284,8 @@ static void process_line(String &line) {
     resp["msg"] = "unknown_cmd";
     serializeJson(resp, SerialPi);
     SerialPi.print('\n');
+    Serial.print("["); Serial.print(millis()); Serial.print("] [E] Unknown cmd: ");
+    Serial.println(scmd);
   }
 }
 
@@ -287,10 +316,24 @@ void loop() {
     g_last_status_ms = now;
     // Update outputs based on mode and latest measured state
     const int mv = read_cp_mv();
-    const char st = cp_state_with_hysteresis(mv, g_last_cp_state);
+    const char prev = g_last_cp_state;
+    const char st = cp_state_with_hysteresis(mv, prev);
     g_last_cp_state = st;
     if (g_mode == OpMode::DC_AUTO) {
       apply_dc_auto_output(st);
+    }
+    // Track effective output duty
+    if (g_mode == OpMode::DC_AUTO) {
+      g_last_output_duty_pct = (st == 'B' || st == 'C' || st == 'D') ? 5 : 100;
+    } else {
+      g_last_output_duty_pct = g_pwm_enabled ? g_pwm_duty_pct : 100;
+    }
+    g_last_cp_mv = mv;
+    // Event: CP state transition
+    if (st != prev) {
+      Serial.print("["); Serial.print(now); Serial.print("] [I] CP state ");
+      Serial.print(prev); Serial.print(" -> "); Serial.print(st);
+      Serial.print(" at "); Serial.print(mv); Serial.println(" mV");
     }
     // Report after applying
     StaticJsonDocument<256> doc;
@@ -304,6 +347,19 @@ void loop() {
     pwm["hz"] = g_pwm_freq_hz;
     serializeJson(doc, SerialPi);
     SerialPi.print('\n');
+  }
+
+  // Periodic USB human-readable log (throttled)
+  if (now - g_last_usb_log_ms >= USB_LOG_PERIOD_MS) {
+    g_last_usb_log_ms = now;
+    Serial.print("["); Serial.print(now); Serial.print("] [S] ");
+    Serial.print("mv="); Serial.print(g_last_cp_mv);
+    Serial.print(" state="); Serial.print(g_last_cp_state);
+    Serial.print(" mode="); Serial.print((g_mode == OpMode::DC_AUTO) ? "dc" : "manual");
+    Serial.print(" pwm: en="); Serial.print(g_pwm_enabled);
+    Serial.print(" duty%="); Serial.print(g_pwm_duty_pct);
+    Serial.print(" hz="); Serial.print(g_pwm_freq_hz);
+    Serial.print(" outDuty%="); Serial.println(g_last_output_duty_pct);
   }
 
   // Read commands (newline-delimited JSON)
