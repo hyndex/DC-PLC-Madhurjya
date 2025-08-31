@@ -65,6 +65,7 @@ class EVSECommunicationController(SlacSessionController):
         """
         controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
         if controller_mode != "hal":
+            logger.info("Vehicle detected via CP", extra={"cp_state": st})
             session = SlacEvseSession(evse_id, iface, self.slac_config)
             await session.evse_set_key()
             await self._trigger_matching(session)
@@ -93,8 +94,10 @@ class EVSECommunicationController(SlacSessionController):
             logger.error("HAL adapter init failed", extra={"adapter": adapter, "error": str(e)})
             return
         connected_states = {"B", "C", "D"}
-        logger.info("HAL mode: waiting for CP states to start SLAC", extra={"adapter": adapter})
-
+        
+        # Only set the SLAC key once per process; repeated CM_SET_KEY can
+        # collide with early frames during retries and is unnecessary.
+        keyed_once = False
         while True:
             # Wait for vehicle (B/C/D)
             st = hal.cp().get_state()
@@ -102,9 +105,10 @@ class EVSECommunicationController(SlacSessionController):
                 await asyncio.sleep(0.2)
                 continue
 
-            logger.info("Vehicle detected via CP", extra={"cp_state": st})
             session = SlacEvseSession(evse_id, iface, self.slac_config)
-            await session.evse_set_key()
+            if not keyed_once:
+                await session.evse_set_key()
+                keyed_once = True
             # Feed CP state(s) into SLAC controller
             await self.process_cp_state(session, "B")
             await asyncio.sleep(0.2)
@@ -123,10 +127,12 @@ class EVSECommunicationController(SlacSessionController):
                     break
                 # Timeout: attempt a SLAC restart hint if using ESP HAL, then retry
                 if (asyncio.get_event_loop().time() - start_wait) > timeout_s:
-                    logger.warning("SLAC match timeout; attempting restart hint and retry")
+                    logger.warning('SLAC match timeout; attempting restart hint and retry')
                     try:
-                        # Only available on ESP HAL
-                        getattr(hal, "restart_slac_hint", lambda: None)()
+                        # Only available on ESP HAL; allow override via env
+                        reset_ms = int(os.environ.get('SLAC_RESTART_HINT_MS', '400'))
+                        getattr(hal, 'restart_slac_hint', lambda _ms=None: None)(reset_ms)
+                        logger.info('HAL SLAC restart hint requested', extra={'reset_ms': reset_ms})
                     except Exception:
                         pass
                     break
@@ -313,3 +319,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
