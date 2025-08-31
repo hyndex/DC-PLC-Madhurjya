@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+import time
 import logging
 from typing import Optional, Tuple
 
@@ -71,6 +72,12 @@ class ESPSerialHardware(EVSEHardware):
     def __init__(self, port: Optional[str] = None) -> None:
         self._client = EspCpClient(port=port or os.environ.get("ESP_CP_PORT"))
         self._client.connect()
+        # Duplex check
+        try:
+            ok = self._client.ping(timeout=0.5)
+            logger.info("HAL ESP ping", extra={"ok": ok})
+        except Exception:
+            logger.warning("HAL ESP ping failed")
         # Ensure firmware is in DC auto mode
         try:
             self._client.set_mode("dc")
@@ -96,3 +103,33 @@ class ESPSerialHardware(EVSEHardware):
 
     def meter(self) -> Meter:
         return self._fallback.meter()
+
+    # Optional helper: attempt to nudge EV/stack to restart SLAC by toggling CP duty
+    def restart_slac_hint(self, reset_ms: int = 400) -> None:
+        """Try prompting a fresh SLAC by briefly leaving DC 5% indication.
+
+        Sequence:
+        - Switch to manual and drive 100% duty for a short period
+        - Return to dc mode (firmware enforces 5% in B/C/D)
+        """
+        try:
+            self._client.set_mode("manual")
+            self._client.set_pwm(100, enable=True)
+            time.sleep(max(0, reset_ms) / 1000.0)
+            self._client.set_mode("dc")
+            logger.info("HAL ESP SLAC restart hint sent", extra={"reset_ms": reset_ms})
+        except Exception as e:
+            logger.warning("HAL ESP SLAC restart hint failed", extra={"error": str(e)})
+
+    # Expose minimal ESP controls for diagnostics
+    def esp_ping(self, timeout: float = 0.5) -> bool:
+        try:
+            return self._client.ping(timeout)
+        except Exception:
+            return False
+
+    def esp_set_mode(self, mode: str) -> None:
+        self._client.set_mode(mode)
+
+    def esp_set_pwm(self, duty: int, enable: bool = True) -> None:
+        self._client.set_pwm(int(duty), enable=enable)

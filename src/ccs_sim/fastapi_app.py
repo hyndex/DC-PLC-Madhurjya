@@ -191,6 +191,56 @@ def vehicle_live():
     }
 
 
+# ESP controls (when using esp-uart HAL)
+@app.post("/esp/ping")
+def esp_ping():
+    hal = orch.hal
+    if not hasattr(hal, "esp_ping"):
+        return {"status": "error", "message": "HAL is not esp-uart"}
+    ok = getattr(hal, "esp_ping")(timeout=0.5)
+    return {"status": "ok", "pong": ok}
+
+
+class ESPModeBody(BaseModel):
+    mode: str
+
+
+@app.post("/esp/mode")
+def esp_mode(body: ESPModeBody):
+    hal = orch.hal
+    if not hasattr(hal, "esp_set_mode"):
+        return {"status": "error", "message": "HAL is not esp-uart"}
+    getattr(hal, "esp_set_mode")(body.mode)
+    return {"status": "ok", "mode": body.mode}
+
+
+class ESPPWMBody(BaseModel):
+    duty: int
+    enable: bool = True
+
+
+@app.post("/esp/pwm")
+def esp_pwm(body: ESPPWMBody):
+    hal = orch.hal
+    if not hasattr(hal, "esp_set_pwm"):
+        return {"status": "error", "message": "HAL is not esp-uart"}
+    getattr(hal, "esp_set_pwm")(body.duty, enable=body.enable)
+    return {"status": "ok", "duty": body.duty, "enable": body.enable}
+
+
+class ESPRestartBody(BaseModel):
+    reset_ms: int = 400
+
+
+@app.post("/esp/restart_slac")
+def esp_restart_slac(body: ESPRestartBody = ESPRestartBody()):
+    hal = orch.hal
+    if not hasattr(hal, "restart_slac_hint"):
+        return {"status": "error", "message": "HAL is not esp-uart"}
+    getattr(hal, "restart_slac_hint")(body.reset_ms)
+    return {"status": "ok", "reset_ms": body.reset_ms}
+
+
 class HLCStartRequest(BaseModel):
     iface: str = Field("eth0")
     secc_config: Optional[str] = None

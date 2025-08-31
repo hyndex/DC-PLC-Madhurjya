@@ -25,6 +25,7 @@ class CPStatus:
     pwm: PWMStatus
     ts: float
     mode: str = "dc"
+    cp_mv_robust: int = 0
 
 
 logger = logging.getLogger("esp.cp")
@@ -52,6 +53,7 @@ class EspCpClient:
         self._stop = threading.Event()
         self._lock = threading.Lock()
         self._last: Optional[CPStatus] = None
+        self._pong = threading.Event()
 
     def connect(self) -> None:
         self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
@@ -84,12 +86,35 @@ class EspCpClient:
         with self._lock:
             return self._last
 
-    def set_pwm(self, duty_percent: int, enable: Optional[bool] = None) -> None:
+    def _wait_status(self, predicate, timeout: float = 1.0) -> Optional[CPStatus]:
+        """Wait until predicate(latest_status) is True or timeout expires."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            with self._lock:
+                cur = self._last
+            if cur and predicate(cur):
+                return cur
+            time.sleep(0.02)
+        with self._lock:
+            return self._last
+
+    def set_pwm(self, duty_percent: int, enable: Optional[bool] = None, wait: bool = True, timeout: float = 1.0) -> Optional[CPStatus]:
         duty = max(0, min(100, int(duty_percent)))
         payload: Dict[str, Any] = {"cmd": "set_pwm", "duty": duty}
         if enable is not None:
             payload["enable"] = bool(enable)
         self._send(payload)
+        if wait:
+            def _pred(st: CPStatus) -> bool:
+                # In manual mode, status should reflect requested duty/enable
+                if st.mode != "manual":
+                    return True  # nothing to wait for in dc mode
+                ok = (st.pwm.duty == duty)
+                if enable is not None:
+                    ok = ok and (st.pwm.enabled == bool(enable))
+                return ok
+            return self._wait_status(_pred, timeout)
+        return None
 
     def enable_pwm(self, enable: bool) -> None:
         self._send({"cmd": "enable_pwm", "enable": bool(enable)})
@@ -97,10 +122,19 @@ class EspCpClient:
     def set_freq(self, hz: int) -> None:
         self._send({"cmd": "set_freq", "hz": int(hz)})
 
-    def set_mode(self, mode: str) -> None:
+    def set_mode(self, mode: str, wait: bool = True, timeout: float = 1.2) -> Optional[CPStatus]:
         if mode not in ("dc", "manual"):
             raise ValueError("mode must be 'dc' or 'manual'")
         self._send({"cmd": "set_mode", "mode": mode})
+        if wait:
+            return self._wait_status(lambda st: st.mode == mode, timeout)
+        return None
+
+    def ping(self, timeout: float = 0.5) -> bool:
+        """Check duplex connectivity with a ping/pong."""
+        self._pong.clear()
+        self._send({"cmd": "ping"})
+        return self._pong.wait(timeout)
 
     # ----- Internals -----
     def _send(self, obj: Dict[str, Any]) -> None:
@@ -127,8 +161,10 @@ class EspCpClient:
                 logger.debug("UART RX (non-JSON)", extra={"line": line.decode(errors="ignore").strip()})
                 continue
             logger.debug("UART RX", extra=msg)
-            if msg.get("type") == "status":
+            mtype = msg.get("type")
+            if mtype == "status":
                 mv = int(msg.get("cp_mv", 0))
+                mv_r = int(msg.get("cp_mv_robust", mv))
                 st = str(msg.get("state", "A"))[:1]
                 mode = str(msg.get("mode", "dc"))
                 pwm_obj = msg.get("pwm", {}) or {}
@@ -138,4 +174,6 @@ class EspCpClient:
                     hz=int(pwm_obj.get("hz", 1000)),
                 )
                 with self._lock:
-                    self._last = CPStatus(cp_mv=mv, state=st, pwm=pwm, ts=time.time(), mode=mode)
+                    self._last = CPStatus(cp_mv=mv, state=st, pwm=pwm, ts=time.time(), mode=mode, cp_mv_robust=mv_r)
+            elif mtype == "pong":
+                self._pong.set()
