@@ -145,7 +145,7 @@ status/control over a simple JSON‑over‑UART protocol.
 - Python client: `src/evse_hal/esp_cp_client.py`
  - HAL adapter (CP + PWM over UART, others simulated): set `EVSE_CONTROLLER=hal` and select adapter via `EVSE_HAL_ADAPTER=esp-uart`.
 
-On Raspberry Pi, set `ESP_CP_PORT` (e.g., `/dev/ttyAMA0`) and ensure 115200 8N1. Example:
+On Raspberry Pi, set `ESP_CP_PORT` (e.g., `/dev/serial0` or `/dev/ttyAMA0`) and ensure 115200 8N1. If unset, the client defaults to `/dev/serial0`. Example:
 
 ```
 export ESP_CP_PORT=/dev/ttyAMA0

@@ -42,10 +42,20 @@ static char g_last_cp_state = 'A';
 static int g_last_cp_mv = 0;
 static uint16_t g_last_output_duty_pct = 100; // effective output duty applied on CP line
 static uint32_t g_last_usb_log_ms = 0;
+static int g_last_cp_mv_min = 0;
+static int g_last_cp_mv_avg = 0;
 
 // USB log cadence (ms)
 #ifndef USB_LOG_PERIOD_MS
 #define USB_LOG_PERIOD_MS 1000
+#endif
+
+// ADC sampling parameters for plateau capture
+#ifndef CP_SAMPLE_COUNT
+#define CP_SAMPLE_COUNT 64
+#endif
+#ifndef CP_SAMPLE_DELAY_US
+#define CP_SAMPLE_DELAY_US 80
 #endif
 
 static inline uint32_t pct_to_duty(uint16_t pct) {
@@ -71,17 +81,23 @@ static void configure_pwm() {
   }
 }
 
-static int read_cp_mv(size_t samples = 25) {
-  // Ensure proper attenuation for ~3.3V range
-  analogSetPinAttenuation(CP_1_READ_PIN, ADC_11db);
+static void read_cp_mv_stats(int &min_mv, int &max_mv, int &avg_mv, size_t samples = CP_SAMPLE_COUNT) {
+  if (samples == 0) samples = 1;
   int64_t acc = 0;
+  int minv = INT32_MAX;
+  int maxv = INT32_MIN;
   for (size_t i = 0; i < samples; ++i) {
-    // Discard first sample occasionally for stability
+    // Warm-up read improves stability on ESP32 ADC
     (void)analogRead(CP_1_READ_PIN);
-    delayMicroseconds(150);
-    acc += analogReadMilliVolts(CP_1_READ_PIN);
+    delayMicroseconds(CP_SAMPLE_DELAY_US);
+    int v = analogReadMilliVolts(CP_1_READ_PIN);
+    acc += v;
+    if (v < minv) minv = v;
+    if (v > maxv) maxv = v;
   }
-  return (int)(acc / (int64_t)samples);
+  min_mv = (minv == INT32_MAX) ? 0 : minv;
+  max_mv = (maxv == INT32_MIN) ? 0 : maxv;
+  avg_mv = (int)(acc / (int64_t)samples);
 }
 
 static char cp_state_from_mv(int mv) {
@@ -123,7 +139,9 @@ static char cp_state_with_hysteresis(int mv, char last) {
 }
 
 static void send_status_json() {
-  const int mv = read_cp_mv();
+  int smin = 0, smax = 0, savg = 0;
+  read_cp_mv_stats(smin, smax, savg);
+  const int mv = smax; // report upper plateau as cp_mv
   const char st = cp_state_from_mv(mv);
   StaticJsonDocument<256> doc;
   doc["type"] = "status";
@@ -315,7 +333,9 @@ void loop() {
   if (now - g_last_status_ms >= 200) {
     g_last_status_ms = now;
     // Update outputs based on mode and latest measured state
-    const int mv = read_cp_mv();
+    int smin = 0, smax = 0, savg = 0;
+    read_cp_mv_stats(smin, smax, savg);
+    const int mv = smax; // use upper plateau for state inference
     const char prev = g_last_cp_state;
     const char st = cp_state_with_hysteresis(mv, prev);
     g_last_cp_state = st;
@@ -329,6 +349,8 @@ void loop() {
       g_last_output_duty_pct = g_pwm_enabled ? g_pwm_duty_pct : 100;
     }
     g_last_cp_mv = mv;
+    g_last_cp_mv_min = smin;
+    g_last_cp_mv_avg = savg;
     // Event: CP state transition
     if (st != prev) {
       Serial.print("["); Serial.print(now); Serial.print("] [I] CP state ");
@@ -353,7 +375,9 @@ void loop() {
   if (now - g_last_usb_log_ms >= USB_LOG_PERIOD_MS) {
     g_last_usb_log_ms = now;
     Serial.print("["); Serial.print(now); Serial.print("] [S] ");
-    Serial.print("mv="); Serial.print(g_last_cp_mv);
+    Serial.print("mv_max="); Serial.print(g_last_cp_mv);
+    Serial.print(" mv_min="); Serial.print(g_last_cp_mv_min);
+    Serial.print(" mv_avg="); Serial.print(g_last_cp_mv_avg);
     Serial.print(" state="); Serial.print(g_last_cp_state);
     Serial.print(" mode="); Serial.print((g_mode == OpMode::DC_AUTO) ? "dc" : "manual");
     Serial.print(" pwm: en="); Serial.print(g_pwm_enabled);

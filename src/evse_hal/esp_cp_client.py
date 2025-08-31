@@ -43,7 +43,8 @@ class EspCpClient:
         baud: int = 115200,
         timeout_s: float = 0.2,
     ) -> None:
-        self._port = port or os.environ.get("ESP_CP_PORT", "/dev/ttyS0")
+        # Prefer Raspberry Pi's stable alias when not specified
+        self._port = port or os.environ.get("ESP_CP_PORT", "/dev/serial0")
         self._baud = baud
         self._timeout = timeout_s
         self._ser: Optional[serial.Serial] = None
