@@ -18,6 +18,9 @@ from iso15118.shared.messages.enums import (
 from iso15118.shared.messages.iso15118_2.datatypes import MeterInfo as MeterInfoV2
 from iso15118.shared.messages.iso15118_20.common_types import MeterInfo as MeterInfoV20
 from iso15118.shared.states import State
+import logging
+
+logger = logging.getLogger("hlc")
 
 
 class HalEVSEController(SimEVSEController):
@@ -90,6 +93,31 @@ class HalEVSEController(SimEVSEController):
             await super().set_present_protocol_state(state)  # type: ignore
         except Exception:
             pass
+        # Attempt to emit BMS demand snapshot on each protocol state transition
+        try:
+            ctx = self.get_ev_data_context()  # type: ignore[attr-defined]
+        except Exception:
+            ctx = None
+        snapshot = None
+        if ctx is not None:
+            try:
+                snapshot = {
+                    "present_soc": getattr(ctx, "present_soc", None),
+                    "present_voltage": getattr(ctx, "present_voltage", None),
+                    "target_voltage": getattr(ctx, "target_voltage", None),
+                    "target_current": getattr(ctx, "target_current", None),
+                    "max_current_limit": getattr(ctx, "max_current_limit", None),
+                    "evcc_id": getattr(ctx, "evcc_id", None),
+                }
+            except Exception:
+                snapshot = None
+        logger.info(
+            "ISO15118 state",
+            extra={
+                "state": str(state),
+                **({"bms": snapshot} if snapshot else {}),
+            },
+        )
         # Publish to HLC manager if available
         try:
             from src.hlc.manager import hlc

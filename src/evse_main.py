@@ -110,7 +110,24 @@ class EVSECommunicationController(SlacSessionController):
                     break
 
             if session.state == STATE_MATCHED:
-                logger.info("SLAC match successful, launching ISO 15118 SECC")
+                # Try to extract and log SLAC match details if available
+                try:
+                    ev_mac = getattr(session, "ev_mac", None)
+                    nid = getattr(session, "nid", None)
+                    run_id = getattr(session, "run_id", None)
+                    attenuation = getattr(session, "attenuation_db", None)
+                    logger.info(
+                        "SLAC matched",
+                        extra={
+                            "ev_mac": ev_mac,
+                            "nid": nid,
+                            "run_id": run_id,
+                            "attenuation_db": attenuation,
+                        },
+                    )
+                except Exception:
+                    logger.info("SLAC matched (details unavailable)")
+                logger.info("Launching ISO 15118 SECC")
                 await start_secc(iface, self.secc_config_path, self.certificate_store)
                 return
 
