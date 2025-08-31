@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from pyslac.environment import Config as SlacConfig
+from pyslac.pyslac.environment import Config as SlacConfig
 from pyslac.session import (
     SlacEvseSession,
     SlacSessionController,
