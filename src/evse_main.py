@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from pyslac.pyslac.environment import Config as SlacConfig
+from pyslac.environment import Config as SlacConfig
 from pyslac.session import (
     SlacEvseSession,
     SlacSessionController,
@@ -68,6 +68,7 @@ class EVSECommunicationController(SlacSessionController):
             session = SlacEvseSession(evse_id, iface, self.slac_config)
             await session.evse_set_key()
             await self._trigger_matching(session)
+            self._log_slac_peer(session)
             logger.info("SLAC match successful, launching ISO 15118 SECC")
             await start_secc(iface, self.secc_config_path, self.certificate_store)
             return
@@ -110,6 +111,7 @@ class EVSECommunicationController(SlacSessionController):
                     break
 
             if session.state == STATE_MATCHED:
+                self._log_slac_peer(session)
                 logger.info("SLAC match successful, launching ISO 15118 SECC")
                 await start_secc(iface, self.secc_config_path, self.certificate_store)
                 return
@@ -124,6 +126,48 @@ class EVSECommunicationController(SlacSessionController):
         while session.state != STATE_MATCHED:
             await asyncio.sleep(1)
         # Caller continues to start SECC
+
+    def _log_slac_peer(self, session: SlacEvseSession) -> None:
+        """Best-effort logging of EV MAC/NID/RUN_ID from the PySLAC session.
+
+        PySLAC versions expose different attribute names; probe common ones.
+        """
+        def _first_attr(obj, names):
+            for n in names:
+                try:
+                    v = getattr(obj, n)
+                except Exception:
+                    v = None
+                if v:
+                    return v
+            return None
+
+        ev_mac = _first_attr(session, [
+            "ev_mac",
+            "peer_mac",
+            "ev_mac_str",
+            "peer_mac_str",
+            "ev_mac_addr",
+            "peer_mac_addr",
+        ])
+        nid = _first_attr(session, ["nid", "NID"])  # Network Identifier
+        run_id = _first_attr(session, ["run_id", "RUN_ID"])  # SLAC run ID
+
+        try:
+            extra = {
+                "ev_mac": str(ev_mac) if ev_mac is not None else None,
+                "nid": str(nid) if nid is not None else None,
+                "run_id": str(run_id) if run_id is not None else None,
+            }
+            logger.info("SLAC peer info", extra=extra)
+        except Exception:
+            # Fallback plain log
+            logger.info(
+                "SLAC peer info: ev_mac=%s nid=%s run_id=%s",
+                ev_mac,
+                nid,
+                run_id,
+            )
 
 
 def parse_args() -> argparse.Namespace:
