@@ -143,9 +143,9 @@ status/control over a simple JSON‑over‑UART protocol.
 - Firmware: `firmware/esp32s3_cp/` (PlatformIO; board: `esp32-s3-devkitc-1`)
 - Protocol: see `docs/esp_cp_uart_protocol.md`
 - Python client: `src/evse_hal/esp_cp_client.py`
- - HAL adapter (CP + PWM over UART, others simulated): set `EVSE_CONTROLLER=hal` and select adapter via `EVSE_HAL_ADAPTER=esp-uart`.
+- HAL adapter (CP + PWM over UART, others simulated): set `EVSE_CONTROLLER=hal` and select adapter via `EVSE_HAL_ADAPTER=esp-uart`.
 
-On Raspberry Pi, set `ESP_CP_PORT` (e.g., `/dev/serial0` or `/dev/ttyAMA0`) and ensure 115200 8N1. If unset, the client defaults to `/dev/serial0`. Example:
+On Raspberry Pi, set `ESP_CP_PORT` (e.g., `/dev/serial0` or `/dev/ttyAMA0`) and ensure 115200 8N1. If unset, the client defaults to `/dev/serial0`. The CCS simulator (`src/ccs_sim/*`) will automatically use the HAL adapter selected via `EVSE_HAL_ADAPTER` (default `sim`). Example:
 
 ```
 export ESP_CP_PORT=/dev/ttyAMA0
@@ -159,6 +159,10 @@ End-to-End DC setup (ESP CP + HAL)
 - Wire UART to Pi and CP to your EVSE CP frontend per hardware design.
 - On the Pi, set `ESP_CP_PORT`, then run with `EVSE_CONTROLLER=hal` and `EVSE_HAL_ADAPTER=esp-uart`.
 - The firmware enforces DC mode: CP is 100% (idle +12 V) in A/E/F and 5% in B/C/D.
+- In `EVSE_CONTROLLER=hal` mode, `src/evse_main.py` waits for CP transitions from the ESP:
+  - On `B` detected, it triggers SLAC; if `C/D`, it advances to `C`.
+  - If CP returns to `A/E/F` before a match, it restarts waiting.
+  - On SLAC match, it launches the ISO 15118 SECC on the selected interface.
 - Use `GET /cp` to observe CP state/voltage and `/status` for session state; `/control/pwm` affects only sim or manual firmware mode.
 
 Logging

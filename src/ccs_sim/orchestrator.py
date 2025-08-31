@@ -1,3 +1,4 @@
+import os
 import time
 import threading
 import logging
@@ -33,7 +34,12 @@ logger = logging.getLogger("orchestrator")
 class ChargeOrchestrator:
     def __init__(self, hal: Optional[EVSEHardware] = None):
         # Initialize subsystems
-        self.hal: EVSEHardware = hal or hal_registry.create("sim")
+        if hal is not None:
+            self.hal: EVSEHardware = hal
+        else:
+            adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
+            self.hal = hal_registry.create(adapter)
+            logger.info("CCS Sim HAL adapter", extra={"adapter": adapter})
         self.precharger = PrechargeSimulator(self.hal.supply())
         self.session_active = False
         self.phase: Phase = Phase.IDLE

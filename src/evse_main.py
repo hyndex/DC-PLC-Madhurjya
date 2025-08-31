@@ -57,10 +57,62 @@ class EVSECommunicationController(SlacSessionController):
         logger.info("Enabling HLC for EVSE %s", evse_id)
 
     async def start(self, evse_id: str, iface: str) -> None:
-        """Initialise the SLAC session and trigger matching."""
-        session = SlacEvseSession(evse_id, iface, self.slac_config)
-        await session.evse_set_key()
-        await self._trigger_matching(session)
+        """Initialise SLAC and trigger matching.
+
+        - In sim mode, simulate CP B->C transitions.
+        - In HAL mode (EVSE_CONTROLLER=hal), monitor CP state from hardware
+          and trigger matching on B/C as reported by the CP reader (e.g. ESP).
+        """
+        controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
+        if controller_mode != "hal":
+            session = SlacEvseSession(evse_id, iface, self.slac_config)
+            await session.evse_set_key()
+            await self._trigger_matching(session)
+            logger.info("SLAC match successful, launching ISO 15118 SECC")
+            await start_secc(iface, self.secc_config_path, self.certificate_store)
+            return
+
+        # HAL mode: use real CP input to drive SLAC and ISO lifecycles
+        try:
+            from src.evse_hal.registry import create as create_hal
+        except Exception as e:  # pragma: no cover - runtime only
+            logger.error("HAL mode requested but HAL registry unavailable", extra={"error": str(e)})
+            return
+
+        adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
+        hal = create_hal(adapter)
+        connected_states = {"B", "C", "D"}
+        logger.info("HAL mode: waiting for CP states to start SLAC", extra={"adapter": adapter})
+
+        while True:
+            # Wait for vehicle (B/C/D)
+            st = hal.cp().get_state()
+            if st not in connected_states:
+                await asyncio.sleep(0.2)
+                continue
+
+            logger.info("Vehicle detected via CP", extra={"cp_state": st})
+            session = SlacEvseSession(evse_id, iface, self.slac_config)
+            await session.evse_set_key()
+            # Feed CP state(s) into SLAC controller
+            await self.process_cp_state(session, "B")
+            await asyncio.sleep(0.2)
+            st = hal.cp().get_state()
+            if st in {"C", "D"}:
+                await self.process_cp_state(session, "C")
+
+            # Wait for match or disconnect
+            while session.state != STATE_MATCHED:
+                await asyncio.sleep(0.5)
+                st = hal.cp().get_state()
+                if st not in connected_states:
+                    logger.warning("CP disconnected before SLAC match; restarting", extra={"cp_state": st})
+                    break
+
+            if session.state == STATE_MATCHED:
+                logger.info("SLAC match successful, launching ISO 15118 SECC")
+                await start_secc(iface, self.secc_config_path, self.certificate_store)
+                return
 
     async def _trigger_matching(self, session: SlacEvseSession) -> None:
         """Simulate CP state transitions to start SLAC and wait for a match."""
@@ -71,9 +123,7 @@ class EVSECommunicationController(SlacSessionController):
 
         while session.state != STATE_MATCHED:
             await asyncio.sleep(1)
-
-        logger.info("SLAC match successful, launching ISO 15118 SECC")
-        await start_secc(session.iface, self.secc_config_path, self.certificate_store)
+        # Caller continues to start SECC
 
 
 def parse_args() -> argparse.Namespace:
