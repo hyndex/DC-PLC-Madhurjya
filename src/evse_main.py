@@ -65,7 +65,6 @@ class EVSECommunicationController(SlacSessionController):
         """
         controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
         if controller_mode != "hal":
-            logger.info("Vehicle detected via CP", extra={"cp_state": st})
             session = SlacEvseSession(evse_id, iface, self.slac_config)
             await session.evse_set_key()
             await self._trigger_matching(session)
@@ -94,6 +93,7 @@ class EVSECommunicationController(SlacSessionController):
             logger.error("HAL adapter init failed", extra={"adapter": adapter, "error": str(e)})
             return
         connected_states = {"B", "C", "D"}
+        logger.info("HAL mode: waiting for CP states to start SLAC", extra={"adapter": adapter})
         
         # Only set the SLAC key once per process; repeated CM_SET_KEY can
         # collide with early frames during retries and is unnecessary.
@@ -105,6 +105,7 @@ class EVSECommunicationController(SlacSessionController):
                 await asyncio.sleep(0.2)
                 continue
 
+            logger.info("Vehicle detected via CP", extra={"cp_state": st})
             session = SlacEvseSession(evse_id, iface, self.slac_config)
             if not keyed_once:
                 await session.evse_set_key()

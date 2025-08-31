@@ -6,6 +6,29 @@ import os
 from typing import Any, Dict
 
 
+
+class SafeRecordFilter(logging.Filter):
+    """Filter that tolerates bad logger calls with stray args.
+
+    If a library calls logger.error(f"msg", exc) without placeholders, the
+    base formatter would raise TypeError. We preflight getMessage() and
+    drop args if it would fail so logging continues gracefully.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            record.getMessage()
+        except TypeError:
+            # If msg has no %-placeholders but args were provided, drop args.
+            # If an exception object was passed as the sole arg, preserve it as exc_info.
+            try:
+                if isinstance(record.args, tuple) and len(record.args) == 1 and isinstance(record.args[0], BaseException):
+                    ex = record.args[0]
+                    record.exc_info = (ex.__class__, ex, ex.__traceback__)
+            except Exception:
+                pass
+            record.args = ()
+        return True
 class JSONFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         payload: Dict[str, Any] = {
@@ -48,8 +71,12 @@ def setup_logging(default_level: str | int = "INFO") -> None:
     handler: logging.Handler
     if file_env:
         handler = logging.FileHandler(file_env)
+        # Normalize misused logger calls that pass stray args
+        handler.addFilter(SafeRecordFilter())
     else:
         handler = logging.StreamHandler()
+        # Normalize misused logger calls that pass stray args
+        handler.addFilter(SafeRecordFilter())
 
     if fmt_env == "json":
         handler.setFormatter(JSONFormatter())
@@ -57,4 +84,6 @@ def setup_logging(default_level: str | int = "INFO") -> None:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
 
     root.addHandler(handler)
+
+
 
