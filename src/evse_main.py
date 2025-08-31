@@ -132,6 +132,11 @@ class EVSECommunicationController(SlacSessionController):
 
         PySLAC versions expose different attribute names; probe common ones.
         """
+        try:
+            # Local import to avoid hard dependency during tests
+            from src.util.slac_peer_store import write_peer  # type: ignore
+        except Exception:
+            write_peer = None  # type: ignore
         def _first_attr(obj, names):
             for n in names:
                 try:
@@ -161,13 +166,16 @@ class EVSECommunicationController(SlacSessionController):
             }
             logger.info("SLAC peer info", extra=extra)
         except Exception:
-            # Fallback plain log
-            logger.info(
-                "SLAC peer info: ev_mac=%s nid=%s run_id=%s",
-                ev_mac,
-                nid,
-                run_id,
-            )
+            logger.info("SLAC peer info: ev_mac=%s nid=%s run_id=%s", ev_mac, nid, run_id)
+
+        # Persist for external readers (e.g., API curl)
+        try:
+            if write_peer:
+                write_peer(ev_mac=str(ev_mac) if ev_mac is not None else None,
+                           nid=str(nid) if nid is not None else None,
+                           run_id=str(run_id) if run_id is not None else None)
+        except Exception:
+            pass
 
 
 def parse_args() -> argparse.Namespace:

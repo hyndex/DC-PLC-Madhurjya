@@ -7,6 +7,10 @@ import asyncio
 from src.hlc.manager import hlc
 from src.hlc.slac import slac as slac_mgr
 try:
+    from src.util.slac_peer_store import read_peer
+except Exception:
+    read_peer = None  # type: ignore
+try:
     from . import pwm
     from .orchestrator import ChargeOrchestrator
 except ImportError:  # executed from within package root
@@ -152,7 +156,33 @@ def vehicle_bms():
 @app.get("/vehicle/slac")
 def vehicle_slac():
     logger.debug("GET /vehicle/slac")
-    return slac_mgr.status()
+    st = slac_mgr.status()
+    # If API SLAC manager has no info, try to augment from peer store
+    try:
+        if (not st.get("ev_mac")) and read_peer:
+            peer = read_peer()
+            if peer:
+                st.update({
+                    "ev_mac": peer.get("ev_mac"),
+                    "nid": peer.get("nid"),
+                    "run_id": peer.get("run_id"),
+                    "peer_ts": peer.get("ts"),
+                })
+    except Exception:
+        pass
+    return st
+
+@app.get("/slac/peer")
+def slac_peer():
+    """Return last SLAC peer information if available."""
+    try:
+        if read_peer:
+            peer = read_peer()
+        else:
+            peer = None
+    except Exception:
+        peer = None
+    return peer or {"ev_mac": None, "nid": None, "run_id": None, "ts": None}
 
 
 @app.get("/vehicle/iso15118")
