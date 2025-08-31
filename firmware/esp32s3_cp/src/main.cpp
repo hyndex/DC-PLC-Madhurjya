@@ -44,6 +44,13 @@ static uint16_t g_last_output_duty_pct = 100; // effective output duty applied o
 static uint32_t g_last_usb_log_ms = 0;
 static int g_last_cp_mv_min = 0;
 static int g_last_cp_mv_avg = 0;
+// Robust filtering across loops
+static int g_mv_max_hist[6] = {0};
+static uint8_t g_mv_max_hist_count = 0;
+static uint8_t g_mv_max_hist_idx = 0;
+static char g_pending_state = 'A';
+static uint8_t g_pending_count = 0;
+static uint32_t g_sample_phase_us = 0; // desynchronize burst sampling vs PWM
 
 // USB log cadence (ms)
 #ifndef USB_LOG_PERIOD_MS
@@ -52,10 +59,10 @@ static int g_last_cp_mv_avg = 0;
 
 // ADC sampling parameters for plateau capture
 #ifndef CP_SAMPLE_COUNT
-#define CP_SAMPLE_COUNT 64
+#define CP_SAMPLE_COUNT 256
 #endif
 #ifndef CP_SAMPLE_DELAY_US
-#define CP_SAMPLE_DELAY_US 80
+#define CP_SAMPLE_DELAY_US 10
 #endif
 
 static inline uint32_t pct_to_duty(uint16_t pct) {
@@ -86,6 +93,8 @@ static void read_cp_mv_stats(int &min_mv, int &max_mv, int &avg_mv, size_t sampl
   int64_t acc = 0;
   int minv = INT32_MAX;
   int maxv = INT32_MIN;
+  // Small phase offset to avoid aliasing with PWM period
+  if (g_sample_phase_us) delayMicroseconds(g_sample_phase_us);
   for (size_t i = 0; i < samples; ++i) {
     // Warm-up read improves stability on ESP32 ADC
     (void)analogRead(CP_1_READ_PIN);
@@ -98,6 +107,8 @@ static void read_cp_mv_stats(int &min_mv, int &max_mv, int &avg_mv, size_t sampl
   min_mv = (minv == INT32_MAX) ? 0 : minv;
   max_mv = (maxv == INT32_MIN) ? 0 : maxv;
   avg_mv = (int)(acc / (int64_t)samples);
+  // Advance phase (prime to 1000us for 1kHz PWM); keep small
+  g_sample_phase_us = (g_sample_phase_us + 17) % 1000;
 }
 
 static char cp_state_from_mv(int mv) {
@@ -136,6 +147,33 @@ static char cp_state_with_hysteresis(int mv, char last) {
       if (mv >= CP_1_ADC_THRESHOLD_0 + CP_1_ADC_HYSTERESIS) return 'E';
       return 'F';
   }
+}
+
+// Return whether mv is comfortably inside the voltage band for 'st'
+static bool mv_strong_in_state(int mv, char st) {
+  switch (st) {
+    case 'A': return mv >= (CP_1_ADC_THRESHOLD_12 + CP_1_ADC_HYSTERESIS);
+    case 'B': return mv >= (CP_1_ADC_THRESHOLD_9 + CP_1_ADC_HYSTERESIS) && mv < (CP_1_ADC_THRESHOLD_12 - CP_1_ADC_HYSTERESIS);
+    case 'C': return mv >= (CP_1_ADC_THRESHOLD_6 + CP_1_ADC_HYSTERESIS) && mv < (CP_1_ADC_THRESHOLD_9 - CP_1_ADC_HYSTERESIS);
+    case 'D': return mv >= (CP_1_ADC_THRESHOLD_3 + CP_1_ADC_HYSTERESIS) && mv < (CP_1_ADC_THRESHOLD_6 - CP_1_ADC_HYSTERESIS);
+    case 'E': return mv >= (CP_1_ADC_THRESHOLD_0 + CP_1_ADC_HYSTERESIS) && mv < (CP_1_ADC_THRESHOLD_3 - CP_1_ADC_HYSTERESIS);
+    case 'F': default: return mv < (CP_1_ADC_THRESHOLD_0 - CP_1_ADC_HYSTERESIS);
+  }
+}
+
+static inline bool is_connected_state(char st) { return (st == 'B' || st == 'C' || st == 'D'); }
+
+// Compute robust max over recent bursts (average of top-2 values)
+static int robust_max_mv() {
+  if (g_mv_max_hist_count == 0) return g_last_cp_mv; // fallback
+  int top1 = 0, top2 = 0;
+  for (uint8_t i = 0; i < g_mv_max_hist_count; ++i) {
+    int v = g_mv_max_hist[i];
+    if (v >= top1) { top2 = top1; top1 = v; }
+    else if (v > top2) { top2 = v; }
+  }
+  if (g_mv_max_hist_count == 1) return top1;
+  return (top1 + top2) / 2;
 }
 
 static void send_status_json() {
@@ -335,10 +373,43 @@ void loop() {
     // Update outputs based on mode and latest measured state
     int smin = 0, smax = 0, savg = 0;
     read_cp_mv_stats(smin, smax, savg);
-    const int mv = smax; // use upper plateau for state inference
+    // push into history for robust filtering
+    g_mv_max_hist[g_mv_max_hist_idx] = smax;
+    if (g_mv_max_hist_count < (uint8_t)(sizeof(g_mv_max_hist)/sizeof(g_mv_max_hist[0]))) {
+      g_mv_max_hist_count++;
+    }
+    g_mv_max_hist_idx = (g_mv_max_hist_idx + 1) % (uint8_t)(sizeof(g_mv_max_hist)/sizeof(g_mv_max_hist[0]));
+    const int mv_robust = robust_max_mv();
+    const int mv = smax; // report immediate peak; use robust for state
     const char prev = g_last_cp_state;
-    const char st = cp_state_with_hysteresis(mv, prev);
-    g_last_cp_state = st;
+    const char cand = cp_state_from_mv(mv_robust);
+    // Treat sudden very-low max (missed plateau) as transient if previously connected
+    bool transient_low = is_connected_state(prev) && (smax < (CP_1_ADC_THRESHOLD_0 - 150));
+    // Debounce: require multiple confirmations unless strongly in new band
+    const uint8_t confirm_needed = mv_strong_in_state(mv_robust, cand) ? 1 : 3;
+    if (!transient_low) {
+      if (cand != prev) {
+        if (g_pending_state == cand) {
+          if (g_pending_count + 1 >= confirm_needed) {
+            g_last_cp_state = cand;
+            g_pending_count = 0;
+          } else {
+            g_pending_count++;
+          }
+        } else {
+          g_pending_state = cand;
+          g_pending_count = 1;
+        }
+      } else {
+        g_pending_count = 0;
+        g_pending_state = cand;
+        g_last_cp_state = cand;
+      }
+    } else {
+      // keep previous state; slowly decay pending
+      if (g_pending_count > 0) g_pending_count--;
+    }
+    const char st = g_last_cp_state;
     if (g_mode == OpMode::DC_AUTO) {
       apply_dc_auto_output(st);
     }
@@ -355,7 +426,7 @@ void loop() {
     if (st != prev) {
       Serial.print("["); Serial.print(now); Serial.print("] [I] CP state ");
       Serial.print(prev); Serial.print(" -> "); Serial.print(st);
-      Serial.print(" at "); Serial.print(mv); Serial.println(" mV");
+      Serial.print(" at "); Serial.print(mv); Serial.print(" mV (robust="); Serial.print(mv_robust); Serial.println(" mV)");
     }
     // Report after applying
     StaticJsonDocument<256> doc;
