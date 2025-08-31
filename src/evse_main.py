@@ -103,11 +103,22 @@ class EVSECommunicationController(SlacSessionController):
                 await self.process_cp_state(session, "C")
 
             # Wait for match or disconnect
+            start_wait = asyncio.get_event_loop().time()
+            timeout_s = float(os.environ.get("SLAC_WAIT_TIMEOUT_S", "25"))
             while session.state != STATE_MATCHED:
                 await asyncio.sleep(0.5)
                 st = hal.cp().get_state()
                 if st not in connected_states:
                     logger.warning("CP disconnected before SLAC match; restarting", extra={"cp_state": st})
+                    break
+                # Timeout: attempt a SLAC restart hint if using ESP HAL, then retry
+                if (asyncio.get_event_loop().time() - start_wait) > timeout_s:
+                    logger.warning("SLAC match timeout; attempting restart hint and retry")
+                    try:
+                        # Only available on ESP HAL
+                        getattr(hal, "restart_slac_hint", lambda: None)()
+                    except Exception:
+                        pass
                     break
 
             if session.state == STATE_MATCHED:

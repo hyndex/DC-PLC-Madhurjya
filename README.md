@@ -174,6 +174,77 @@ Logging
 - Orchestrator emits event/periodic logs under `orchestrator`; precharge under `precharge`; API under `api`.
 - Live view: when running the API server (`src/ccs_sim/fastapi_app.py`), use `GET /vehicle/live` to see CP voltage/state, SLAC status (incl. EV MAC if provided), ISO15118 protocol state, and BMS snapshot (target/present voltage/current, SoC).
 
+## End-to-End With CCS BMS Simulator
+
+This section documents a full, practical test loop using:
+
+- Raspberry Pi + QCA7000‑class PLC over SPI (via transformer to the CP line)
+- ESP32‑S3 for CP PWM/ADC (UART to the Pi)
+- A CCS BMS simulator connected to the CP line
+
+Hardware topology (simplified):
+
+- Data path: `Pi → PLC (SPI) → Transformer → CP line → BMS Simulator`
+- CP PWM/States: `Pi → ESP32‑S3 (UART) → CP line → BMS Simulator`
+
+Prerequisites
+- Run `sudo ./setup_rpi.sh` and reboot (enables qca7000 overlay, installs deps)
+- Verify PLC overlay: `sudo scripts/qca_health.sh`
+- Flash ESP32‑S3 firmware from `firmware/esp32s3_cp/` (PlatformIO)
+- Wire ESP pins: PWM `GPIO38`, ADC `GPIO1`, UART RX `GPIO44`, TX `GPIO43`
+
+Environment (on the Pi)
+
+```bash
+export ESP_CP_PORT=/dev/serial0   # or /dev/ttyAMA0
+export EVSE_LOG_LEVEL=INFO        # or DEBUG
+```
+
+Option A: Full HAL run (recommended for real SLAC/ISO)
+
+```bash
+export EVSE_CONTROLLER=hal
+export EVSE_HAL_ADAPTER=esp-uart
+python src/evse_main.py --evse-id EVSE-1 --iface eth0
+```
+
+What to expect in logs:
+- ESP USB logs show stable CP states and `mv_max/min/avg`, with occasional event logs (state transitions)
+- `evse.main` logs:
+  - “Vehicle detected via CP” once CP enters B/C/D
+  - “SLAC matched” with fields: `ev_mac`, `nid`, `run_id`, `attenuation_db` (if available)
+  - “Launching ISO 15118 SECC” and then ISO protocol state changes (logger `hlc`), including BMS snapshot fields: `present_voltage`, `target_voltage`, `target_current`, `present_soc`
+- If SLAC doesn’t match within `SLAC_WAIT_TIMEOUT_S` (default 25 s), it emits a warning and sends an ESP “restart hint” (briefly leaves 5% then returns), then retries automatically.
+
+Option B: API server (sim orchestration + live views)
+
+```bash
+python -m uvicorn src.ccs_sim.fastapi_app:app --host 0.0.0.0 --port 8000
+```
+
+Useful endpoints for manual checks:
+- `GET /vehicle/live` → { cp, slac, iso15118, bms } snapshot
+- `POST /esp/ping` → check Pi↔ESP link (“pong”: true)
+- `POST /esp/restart_slac` → ask ESP to briefly leave 5% and return (nudges SLAC re‑init)
+- `POST /esp/mode` {"mode":"dc|manual"} and `POST /esp/pwm` {"duty":5,"enable":true} for diagnostics
+
+Automated smoke test (API)
+
+```bash
+python scripts/esp_slac_smoke.py --base http://localhost:8000 --timeout 30
+```
+
+This script:
+- pings the ESP (`/esp/ping`)
+- waits for CP state B/C/D via `/vehicle/live`
+- tries SLAC matching (sim API) and times until MATCHED; on timeout, calls `/esp/restart_slac` and retries once
+- prints a final `/vehicle/live` snapshot including CP, SLAC state, ISO state and BMS snapshot
+
+Notes
+- For a true end‑to‑end SLAC match with MAC/NID, prefer Option A (`evse_main.py`) so PySLAC runs for real.
+- The API server provides observability and manual controls; it does not start PySLAC by itself.
+- The ESP status JSON includes both `cp_mv` (instant peak) and `cp_mv_robust` (filtered peak used for state). The Pi client parses both.
+
 ### QCA7000 SPI Ethernet on Raspberry Pi
 
 The script `setup_rpi.sh` now configures the Raspberry Pi to use the

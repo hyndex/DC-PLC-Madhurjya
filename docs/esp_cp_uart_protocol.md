@@ -15,7 +15,7 @@ Messages from Pi to ESP (one per line):
 
 Messages from ESP to Pi:
 
-- Status: {"type":"status","cp_mv":int,"state":"A|B|C|D|E|F","mode":"dc|manual","pwm":{"enabled":bool,"duty":0..100,"hz":int}}
+- Status: {"type":"status","cp_mv":int,"cp_mv_robust":int,"state":"A|B|C|D|E|F","mode":"dc|manual","pwm":{"enabled":bool,"duty":0..100,"hz":int}}
 - Pong:   {"type":"pong"}
 - Error:  {"type":"error","msg":"..."}
 

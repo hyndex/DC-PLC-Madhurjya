@@ -179,11 +179,19 @@ static int robust_max_mv() {
 static void send_status_json() {
   int smin = 0, smax = 0, savg = 0;
   read_cp_mv_stats(smin, smax, savg);
-  const int mv = smax; // report upper plateau as cp_mv
-  const char st = cp_state_from_mv(mv);
+  // Update history for robust calculation
+  g_mv_max_hist[g_mv_max_hist_idx] = smax;
+  if (g_mv_max_hist_count < (uint8_t)(sizeof(g_mv_max_hist)/sizeof(g_mv_max_hist[0]))) {
+    g_mv_max_hist_count++;
+  }
+  g_mv_max_hist_idx = (g_mv_max_hist_idx + 1) % (uint8_t)(sizeof(g_mv_max_hist)/sizeof(g_mv_max_hist[0]));
+  const int mv_robust = robust_max_mv();
+  const int mv = smax; // cp_mv = immediate peak
+  const char st = cp_state_from_mv(mv_robust);
   StaticJsonDocument<256> doc;
   doc["type"] = "status";
   doc["cp_mv"] = mv;
+  doc["cp_mv_robust"] = mv_robust;
   doc["state"] = String(st);
   doc["mode"] = (g_mode == OpMode::DC_AUTO) ? "dc" : "manual";
   JsonObject pwm = doc.createNestedObject("pwm");
@@ -432,6 +440,7 @@ void loop() {
     StaticJsonDocument<256> doc;
     doc["type"] = "status";
     doc["cp_mv"] = mv;
+    doc["cp_mv_robust"] = mv_robust;
     doc["state"] = String(st);
     doc["mode"] = (g_mode == OpMode::DC_AUTO) ? "dc" : "manual";
     JsonObject pwm = doc.createNestedObject("pwm");
