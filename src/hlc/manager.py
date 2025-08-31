@@ -42,7 +42,9 @@ class HLCManager:
             self._status.error = f"import_error: {e}"
             return
 
-        hal = create_hal("sim")
+        # Select HAL adapter based on environment (default 'sim').
+        adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
+        hal = create_hal(adapter)
         self._controller = HalEVSEController(hal)
 
         config = SeccConfig()

@@ -22,7 +22,7 @@ Messages from ESP to Pi:
 ESP pin mapping (firmware defaults):
 
 - CP PWM: `GPIO38` (1 kHz, 12-bit LEDC)
-- CP ADC: `GPIO1` (averaged, mV; thresholds map A..F)
+- CP ADC: `GPIO1` (peak-of-burst in mV; thresholds map A..F)
 - UART to Pi: RX `GPIO44`, TX `GPIO43`
 
 Notes
@@ -34,10 +34,23 @@ Notes
   - Connected (B/C/D): fixed 5% duty for DC fast charging (per CCS guidance)
 - Manual mode: when disabled, firmware holds 100% duty (idle high) to keep +12 V
 - Debug USB console (CDC) remains on `Serial` at 115200 baud
-- Noise handling: 25-sample averaging plus ~100 mV hysteresis on state transitions prevents flapping near thresholds
+- Sampling/noise handling: a short burst (default 64 samples, ~80 µs spacing)
+  is captured each cycle. The firmware uses the maximum (upper plateau) from
+  this burst to report `cp_mv` and infer A..F state, which reliably captures
+  the +12 V plateau under PWM. ~100 mV hysteresis on state transitions prevents
+  flapping near thresholds. USB logs also show min/avg for diagnostics.
 
 Logging
 
-- USB-CDC (`Serial`): human-readable boot and init messages
-- UART (to Pi): periodic JSON status frames every 200 ms; log/rpc via Pi
-- Recommended: enable Python DEBUG logs to capture UART TX/RX lines
+- USB-CDC (`Serial`):
+  - Human-readable boot/init
+  - Periodic status snapshot (1 s cadence): `mv_max`, `mv_min`, `mv_avg`, state, mode, PWM config, applied duty
+  - Event logs: CP state transitions, command acks, errors
+- UART (to Pi): periodic JSON status frames every 200 ms; commands/acks as specified above
+- Recommended: enable Python DEBUG logs to capture UART TX/RX lines (logger `esp.cp`)
+
+Build-time tuning (optional `-D` macros)
+
+- `USB_LOG_PERIOD_MS` (default `1000`): cadence for USB human-readable snapshots
+- `CP_SAMPLE_COUNT` (default `64`): samples per burst for plateau capture
+- `CP_SAMPLE_DELAY_US` (default `80`): delay between samples within the burst

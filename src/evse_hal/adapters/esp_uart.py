@@ -23,8 +23,13 @@ class _EspPWM(PWMController):
         self._c = client
 
     def set_duty(self, duty_percent: float) -> None:
-        # In DC mode on firmware this is ignored; still log intent
-        logger.info("HAL PWM set_duty", extra={"duty_percent": duty_percent})
+        # Only meaningful in firmware manual mode; avoid spamming errors in dc mode
+        st = self._c.get_status(wait_s=0.1)
+        mode = getattr(st, "mode", None)
+        logger.info("HAL PWM set_duty", extra={"duty_percent": duty_percent, "mode": mode})
+        if mode != "manual":
+            # Respect firmware policy in dc mode (fixed 5% / 100%)
+            return
         try:
             self._c.set_pwm(int(duty_percent), enable=True)
         except Exception as e:
