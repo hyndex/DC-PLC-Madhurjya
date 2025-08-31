@@ -172,6 +172,7 @@ Logging
   - `EVSE_LOG_FILE=/path/to/file.log` (optional)
 - UART client logs TX/RX lines at DEBUG under logger `esp.cp`.
 - Orchestrator emits event/periodic logs under `orchestrator`; precharge under `precharge`; API under `api`.
+- Live view: when running the API server (`src/ccs_sim/fastapi_app.py`), use `GET /vehicle/live` to see CP voltage/state, SLAC status (incl. EV MAC if provided), ISO15118 protocol state, and BMS snapshot (target/present voltage/current, SoC).
 
 ### QCA7000 SPI Ethernet on Raspberry Pi
 

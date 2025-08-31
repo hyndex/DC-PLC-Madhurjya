@@ -201,6 +201,27 @@ def vehicle_iso15118():
     }
 
 
+@app.get("/vehicle/live")
+def vehicle_live():
+    """Aggregate live view for quick debugging: CP, SLAC, ISO and BMS."""
+    cp = orch.hal.cp()
+    try:
+        v = float(cp.read_voltage())
+    except Exception:
+        v = None
+    try:
+        st_cp = cp.get_state()
+    except Exception:
+        st_cp = None
+    hlc_bms = hlc.bms_snapshot() or {}
+    return {
+        "cp": {"voltage_v": v, "state": st_cp},
+        "slac": slac_mgr.status(),
+        "iso15118": {"state": (hlc.status() or {}).get("protocol_state")},
+        "bms": hlc_bms,
+    }
+
+
 class HLCStartRequest(BaseModel):
     iface: str = Field("eth0")
     secc_config: Optional[str] = None
