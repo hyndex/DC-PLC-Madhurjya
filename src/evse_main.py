@@ -203,6 +203,18 @@ class EVSECommunicationController(SlacSessionController):
                         session = None
                         session_started_at = 0.0
             else:
+                # Grace window to tolerate brief CP flaps
+                grace_s = float(os.environ.get("CP_DISCONNECT_GRACE_S", "0.5"))
+                if grace_s > 0:
+                    await asyncio.sleep(grace_s)
+                    try:
+                        cp2 = hal.cp().get_state()
+                    except Exception:
+                        cp2 = None
+                    if cp2 in connected_states:
+                        # still connected; continue
+                        await asyncio.sleep(0.1)
+                        continue
                 if secc_task is not None:
                     await _stop_secc("CP state not connected")
                 if session is not None:
@@ -216,6 +228,14 @@ class EVSECommunicationController(SlacSessionController):
                         pass
                     session = None
                     session_started_at = 0.0
+                # Optional: nudge SLAC reset hint on disconnect
+                try:
+                    ms = int(os.environ.get("SLAC_RESTART_ON_DISCONNECT_MS", "0"))
+                    if ms > 0:
+                        getattr(hal, "restart_slac_hint", lambda _ms=None: None)(ms)
+                        logger.info("HAL SLAC restart hint on disconnect", extra={"reset_ms": ms})
+                except Exception:
+                    pass
 
             await asyncio.sleep(0.2)
 

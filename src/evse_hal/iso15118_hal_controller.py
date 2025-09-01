@@ -35,6 +35,9 @@ class HalEVSEController(SimEVSEController):
     def __init__(self, hal: EVSEHardware):
         super().__init__()
         self._hal = hal
+        self._last_set_v: float = 0.0
+        self._last_set_i: float = 0.0
+        self._last_set_ts: float = time.time()
 
     async def set_status(self, status: ServiceStatus) -> None:
         # Could map to LEDs or system state in real hardware
@@ -75,6 +78,9 @@ class HalEVSEController(SimEVSEController):
             charged_energy_reading_wh=int(m.get_energy_Wh()),
             meter_timestamp=time.time(),
         )
+
+    async def service_renegotiation_supported(self) -> bool:  # type: ignore[override]
+        return True
 
     # --- DC parameters ---
     # The default SimEVSEController returns toy values (e.g., 40 V, 40 A ripple),
@@ -155,6 +161,62 @@ class HalEVSEController(SimEVSEController):
                 multiplier=ripple_mul, value=ripple_val, unit=UnitSymbol.AMPERE
             ),
         )
+
+    async def get_evse_present_voltage(self, protocol):  # type: ignore[override]
+        try:
+            v, a = self._hal.supply().get_status()
+        except Exception:
+            v, a = 0.0, 0.0
+        # Update EVSE data context for downstream getters
+        self.evse_data_context.present_voltage = float(v)
+        self.evse_data_context.present_current = float(a)
+        return await super().get_evse_present_voltage(protocol)
+
+    async def get_evse_present_current(self, protocol):  # type: ignore[override]
+        try:
+            v, a = self._hal.supply().get_status()
+        except Exception:
+            v, a = 0.0, 0.0
+        self.evse_data_context.present_voltage = float(v)
+        self.evse_data_context.present_current = float(a)
+        return await super().get_evse_present_current(protocol)
+
+    async def send_charging_command(
+        self,
+        ev_target_voltage: Optional[float],
+        ev_target_current: Optional[float],
+        is_precharge: bool = False,
+        is_session_bpt: bool = False,
+    ):
+        # Enforce simple slew limits to avoid abrupt steps
+        max_dv_per_s = float(os.environ.get("EVSE_DC_MAX_DV_PER_S", "50.0"))
+        max_di_per_s = float(os.environ.get("EVSE_DC_MAX_DI_PER_S", "100.0"))
+        now = time.time()
+        dt = max(1e-3, now - self._last_set_ts)
+        cur_v, cur_i = self._last_set_v, self._last_set_i
+        tgt_v = float(ev_target_voltage or cur_v)
+        tgt_i = float(ev_target_current or cur_i)
+        dv = tgt_v - cur_v
+        di = tgt_i - cur_i
+        max_dv = max_dv_per_s * dt
+        max_di = max_di_per_s * dt
+        if abs(dv) > max_dv:
+            tgt_v = cur_v + max_dv * (1 if dv > 0 else -1)
+        if abs(di) > max_di:
+            tgt_i = cur_i + max_di * (1 if di > 0 else -1)
+        try:
+            self._hal.supply().set_voltage(max(0.0, tgt_v))
+            self._hal.supply().set_current_limit(max(0.0, tgt_i))
+        except Exception:
+            pass
+        self._last_set_v, self._last_set_i, self._last_set_ts = tgt_v, tgt_i, now
+        # Update context for reporting
+        try:
+            v_meas, i_meas = self._hal.supply().get_status()
+            self.evse_data_context.present_voltage = float(v_meas)
+            self.evse_data_context.present_current = float(i_meas)
+        except Exception:
+            pass
 
     async def is_contactor_closed(self) -> Optional[bool]:
         return self._hal.contactor().is_closed()
