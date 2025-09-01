@@ -1,0 +1,33 @@
+2025-09-01 11:11:34,241 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: EVSE-1. Run ID: b'\xc6~\x81kK\xfb\xe2\xfb').
+2025-09-01 11:11:34,242 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: EVSE-1. Run ID: b'\xc6~\x81kK\xfb\xe2\xfb').
+2025-09-01 11:11:34,243 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: EVSE-1. Run ID: b'\xc6~\x81kK\xfb\xe2\xfb').
+2025-09-01 11:11:34,244 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: EVSE-1. Run ID: b'\xc6~\x81kK\xfb\xe2\xfb').
+2025-09-01 11:11:34,244 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: EVSE-1. Run ID: b'\xc6~\x81kK\xfb\xe2\xfb').
+2025-09-01 11:11:34,376 INFO evse.main: SLAC peer info: ev_mac=None nid=None run_id=c6:7e:81:6b:4b:fb:e2:fb
+2025-09-01 11:11:34,377 INFO evse.main: SLAC matched
+2025-09-01 11:11:34,377 INFO evse.main: Launching ISO 15118 SECC
+2025-09-01 11:11:34,378 INFO evse.main: Starting SECC
+2025-09-01 11:11:34,384 INFO iso15118.secc.secc_settings: SECC settings:
+2025-09-01 11:11:34,385 INFO iso15118.secc.secc_settings: NETWORK_INTERFACE             : eth1
+2025-09-01 11:11:34,385 INFO iso15118.secc.secc_settings: LOG_LEVEL                     : INFO
+2025-09-01 11:11:34,385 INFO iso15118.secc.secc_settings: SECC_ENFORCE_TLS              : False
+2025-09-01 11:11:34,386 INFO iso15118.secc.secc_settings: FREE_CHARGING_SERVICE         : False
+2025-09-01 11:11:34,386 INFO iso15118.secc.secc_settings: FREE_CERT_INSTALL_SERVICE     : True
+2025-09-01 11:11:34,386 INFO iso15118.secc.secc_settings: USE_CPO_BACKEND               : False
+2025-09-01 11:11:34,386 INFO iso15118.secc.secc_settings: ALLOW_CERT_INSTALL_SERVICE    : True
+2025-09-01 11:11:34,386 INFO iso15118.secc.secc_settings: PROTOCOLS                     : ['DIN_SPEC_70121', 'ISO_15118_2', 'ISO_15118_20_AC', 'ISO_15118_20_DC']
+2025-09-01 11:11:34,387 INFO iso15118.secc.secc_settings: AUTH_MODES                    : ['EIM', 'PNC']
+2025-09-01 11:11:34,387 INFO iso15118.secc.secc_settings: STANDBY_ALLOWED               : False
+2025-09-01 11:11:34,387 INFO iso15118.secc.secc_settings: PKI_PATH                      : /home/jpi/DC-PLC-Madhurjya/pki
+2025-09-01 11:11:34,387 INFO iso15118.secc.secc_settings: MESSAGE_LOG_JSON              : True
+2025-09-01 11:11:34,388 INFO iso15118.secc.secc_settings: MESSAGE_LOG_EXI               : False
+2025-09-01 11:11:34,388 INFO iso15118.secc.secc_settings: ENABLE_TLS_1_3                : False
+2025-09-01 11:11:34,390 INFO evse.main: EVSE controller=hal
+2025-09-01 11:11:34,391 INFO esp.cp: ESP CP serial connect
+2025-09-01 11:11:34,893 INFO hal.esp: HAL ESP ping
+2025-09-01 11:11:36,099 INFO hal.esp: HAL ESP set_mode(dc)
+2025-09-01 11:11:39,914 INFO iso15118.shared.exi_codec: EXI Codec version: 1.55
+2025-09-01 11:11:39,915 INFO iso15118.secc: Starting 15118 version: 0.31.0
+2025-09-01 11:11:39,915 INFO iso15118.secc.comm_session_handler: Communication session handler started
+2025-09-01 11:11:39,916 INFO iso15118.secc.transport.udp_server: UDP server socket ready
+2025-09-01 11:11:39,917 INFO iso15118.secc.transport.udp_server: UDP server started at address FF02::1%eth1 and port 15118
