@@ -119,7 +119,13 @@ class EVSECommunicationController(SlacSessionController):
 
             # Wait for match or disconnect
             start_wait = asyncio.get_event_loop().time()
-            timeout_s = float(os.environ.get("SLAC_WAIT_TIMEOUT_S", "25"))
+            # Align overall wait with PySLAC init timeout by default to avoid
+            # cancelling the SLAC task too early. Still allow env override.
+            timeout_s = float(
+                os.environ.get(
+                    "SLAC_WAIT_TIMEOUT_S", str(self.slac_config.slac_init_timeout)
+                )
+            )
             while session.state != STATE_MATCHED:
                 await asyncio.sleep(0.5)
                 st = hal.cp().get_state()
@@ -128,12 +134,17 @@ class EVSECommunicationController(SlacSessionController):
                     break
                 # Timeout: attempt a SLAC restart hint if using ESP HAL, then retry
                 if (asyncio.get_event_loop().time() - start_wait) > timeout_s:
-                    logger.warning('SLAC match timeout; attempting restart hint and retry')
+                    logger.warning(
+                        'SLAC match timeout; attempting restart hint and retry',
+                    )
                     try:
                         # Only available on ESP HAL; allow override via env
                         reset_ms = int(os.environ.get('SLAC_RESTART_HINT_MS', '400'))
                         getattr(hal, 'restart_slac_hint', lambda _ms=None: None)(reset_ms)
-                        logger.info('HAL SLAC restart hint requested', extra={'reset_ms': reset_ms})
+                        logger.info(
+                            'HAL SLAC restart hint requested',
+                            extra={'reset_ms': reset_ms, 'iface': iface, 'timeout_s': timeout_s},
+                        )
                     except Exception:
                         pass
                     break
