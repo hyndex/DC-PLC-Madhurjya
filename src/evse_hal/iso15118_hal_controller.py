@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from typing import Optional, List, Union, Dict
+import os
 
 from src.evse_hal.interfaces import EVSEHardware
 from iso15118.secc.controller.simulator import SimEVSEController
@@ -14,6 +15,8 @@ from iso15118.shared.messages.enums import (
     CpState,
     Protocol,
     EnergyTransferModeEnum,
+    IsolationLevel,
+    UnitSymbol,
 )
 from iso15118.shared.messages.iso15118_2.datatypes import MeterInfo as MeterInfoV2
 from iso15118.shared.messages.iso15118_20.common_types import MeterInfo as MeterInfoV20
@@ -71,6 +74,86 @@ class HalEVSEController(SimEVSEController):
             meter_id="HAL-Meter",
             charged_energy_reading_wh=int(m.get_energy_Wh()),
             meter_timestamp=time.time(),
+        )
+
+    # --- DC parameters ---
+    # The default SimEVSEController returns toy values (e.g., 40 V, 40 A ripple),
+    # which can cause real EVs to abort after CPD. Override with realistic limits.
+    async def get_dc_charge_parameters(self):  # type: ignore[override]
+        from iso15118.shared.messages.datatypes import (
+            DCEVSEChargeParameter,
+            DCEVSEStatus,
+            DCEVSEStatusCode,
+            EVSENotification as EVSENotificationV2,
+            PVEVSEMaxPowerLimit,
+            PVEVSEMaxCurrentLimit,
+            PVEVSEMaxVoltageLimit,
+            PVEVSEMinCurrentLimit,
+            PVEVSEMinVoltageLimit,
+            PVEVSEPeakCurrentRipple,
+        )
+
+        def env_float(name: str, default: float) -> float:
+            try:
+                return float(os.environ.get(name, default))
+            except Exception:
+                return default
+
+        # Defaults are conservative but realistic for many DC chargers.
+        max_v = env_float("EVSE_DC_MAX_VOLTAGE_V", 920.0)  # V
+        max_a = env_float("EVSE_DC_MAX_CURRENT_A", 300.0)  # A
+        max_w = env_float("EVSE_DC_MAX_POWER_W", max_v * max_a)  # W
+        min_v = env_float("EVSE_DC_MIN_VOLTAGE_V", 150.0)  # V
+        min_a = env_float("EVSE_DC_MIN_CURRENT_A", 0.0)    # A
+        ripple_a = env_float("EVSE_DC_PEAK_RIPPLE_A", 5.0) # A
+
+        # Choose multipliers to keep value in a compact range
+        def pv(value: float):
+            # Pick multiplier so abs(value) in [1, 999]
+            if value == 0:
+                return 0, 0
+            mul = 0
+            v = abs(value)
+            while v >= 1000:
+                v /= 10.0
+                mul += 1
+            while v and v < 1:
+                v *= 10.0
+                mul -= 1
+            return int(round(v)), mul
+
+        max_w_val, max_w_mul = pv(max_w)
+        max_a_val, max_a_mul = pv(max_a)
+        max_v_val, max_v_mul = pv(max_v)
+        min_a_val, min_a_mul = pv(min_a)
+        min_v_val, min_v_mul = pv(min_v)
+        ripple_val, ripple_mul = pv(ripple_a)
+
+        return DCEVSEChargeParameter(
+            dc_evse_status=DCEVSEStatus(
+                notification_max_delay=100,
+                evse_notification=EVSENotificationV2.NONE,
+                evse_isolation_status=IsolationLevel.VALID,
+                evse_status_code=DCEVSEStatusCode.EVSE_READY,
+            ),
+            evse_maximum_power_limit=PVEVSEMaxPowerLimit(
+                multiplier=max_w_mul, value=max_w_val, unit=UnitSymbol.WATT
+            ),
+            evse_maximum_current_limit=PVEVSEMaxCurrentLimit(
+                multiplier=max_a_mul, value=max_a_val, unit=UnitSymbol.AMPERE
+            ),
+            evse_maximum_voltage_limit=PVEVSEMaxVoltageLimit(
+                multiplier=max_v_mul, value=max_v_val, unit=UnitSymbol.VOLTAGE
+            ),
+            evse_minimum_current_limit=PVEVSEMinCurrentLimit(
+                multiplier=min_a_mul, value=min_a_val, unit=UnitSymbol.AMPERE
+            ),
+            evse_minimum_voltage_limit=PVEVSEMinVoltageLimit(
+                multiplier=min_v_mul, value=min_v_val, unit=UnitSymbol.VOLTAGE
+            ),
+            evse_peak_current_ripple=PVEVSEPeakCurrentRipple(
+                multiplier=ripple_mul, value=ripple_val, unit=UnitSymbol.AMPERE
+            ),
         )
 
     async def is_contactor_closed(self) -> Optional[bool]:

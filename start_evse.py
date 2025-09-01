@@ -3,6 +3,7 @@
 
 import asyncio
 import logging
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,14 @@ logger = logging.getLogger(__name__)
 ROOT = Path(__file__).resolve().parent
 
 try:
+    # Ensure local 'src' (siblings of this file's parent) takes precedence
+    ROOT = Path(__file__).resolve().parent
+    SRC_DIR = ROOT / "src"
+    LOCAL_ISO15118_ROOT = SRC_DIR / "iso15118"
+    if (LOCAL_ISO15118_ROOT / "iso15118" / "__init__.py").is_file():
+        p = str(LOCAL_ISO15118_ROOT)
+        if p not in sys.path:
+            sys.path.insert(0, p)
     from iso15118.secc import SECCHandler  # type: ignore
     from iso15118.secc.controller.simulator import SimEVSEController  # type: ignore
     from iso15118.secc.controller.interface import ServiceStatus  # type: ignore

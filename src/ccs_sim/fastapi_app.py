@@ -7,6 +7,11 @@ import asyncio
 from src.hlc.manager import hlc
 from src.hlc.slac import slac as slac_mgr
 try:
+    from src.util.slac_peer_store import read_peer, write_peer
+except Exception:
+    read_peer = None  # type: ignore
+    write_peer = None  # type: ignore
+try:
     from . import pwm
     from .orchestrator import ChargeOrchestrator
 except ImportError:  # executed from within package root
@@ -152,7 +157,33 @@ def vehicle_bms():
 @app.get("/vehicle/slac")
 def vehicle_slac():
     logger.debug("GET /vehicle/slac")
-    return slac_mgr.status()
+    st = slac_mgr.status()
+    # If API SLAC manager has no info, try to augment from peer store
+    try:
+        if (not st.get("ev_mac")) and read_peer:
+            peer = read_peer()
+            if peer:
+                st.update({
+                    "ev_mac": peer.get("ev_mac"),
+                    "nid": peer.get("nid"),
+                    "run_id": peer.get("run_id"),
+                    "peer_ts": peer.get("ts"),
+                })
+    except Exception:
+        pass
+    return st
+
+@app.get("/slac/peer")
+def slac_peer():
+    """Return last SLAC peer information if available."""
+    try:
+        if read_peer:
+            peer = read_peer()
+        else:
+            peer = None
+    except Exception:
+        peer = None
+    return peer or {"ev_mac": None, "nid": None, "run_id": None, "ts": None}
 
 
 @app.get("/vehicle/iso15118")
@@ -287,6 +318,12 @@ def slac_start_matching():
 async def slac_matched(body: SlacMatchRequest):
     logger.info("POST /slac/matched", extra=body.dict())
     slac_mgr.matched(body.ev_mac, body.nid, body.run_id, body.attenuation_db)
+    # Persist peer info so external clients can read MAC via /slac/peer
+    try:
+        if write_peer:
+            write_peer(body.ev_mac, body.nid, body.run_id)
+    except Exception:
+        pass
     # Start HLC upon match
     await hlc.start(body.iface, body.secc_config, body.cert_store)
     return {"slac": slac_mgr.status(), "hlc": hlc.status()}

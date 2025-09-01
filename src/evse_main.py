@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -26,11 +27,22 @@ from pyslac.session import (
     STATE_MATCHED,
 )
 
+# Ensure local 'src' takes precedence for iso15118 imports
+HERE = Path(__file__).resolve().parent
+# The iso15118 package here lives under a nested src layout: src/iso15118/iso15118
+LOCAL_ISO15118_ROOT = HERE / "iso15118"
+if (LOCAL_ISO15118_ROOT / "iso15118" / "__init__.py").is_file():
+    p = str(LOCAL_ISO15118_ROOT)
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 from iso15118.secc.secc_settings import Config as SeccConfig
 from iso15118.secc.controller.simulator import SimEVSEController
 from iso15118.secc.controller.interface import ServiceStatus
 from iso15118.secc import SECCHandler
 from iso15118.shared.exi_codec import ExificientEXICodec
+from iso15118.shared.network import validate_nic
+from util.standards_check import log_timing_summary
 
 
 logger = logging.getLogger("evse.main")
@@ -68,6 +80,7 @@ class EVSECommunicationController(SlacSessionController):
             session = SlacEvseSession(evse_id, iface, self.slac_config)
             await session.evse_set_key()
             await self._trigger_matching(session)
+            self._log_slac_peer(session)
             logger.info("SLAC match successful, launching ISO 15118 SECC")
             await start_secc(iface, self.secc_config_path, self.certificate_store)
             return
@@ -75,72 +88,136 @@ class EVSECommunicationController(SlacSessionController):
         # HAL mode: use real CP input to drive SLAC and ISO lifecycles
         try:
             from src.evse_hal.registry import create as create_hal
-        except Exception as e:  # pragma: no cover - runtime only
-            logger.error("HAL mode requested but HAL registry unavailable", extra={"error": str(e)})
-            return
+        except Exception as e1:  # pragma: no cover - runtime only
+            try:
+                from evse_hal.registry import create as create_hal  # fallback when run as package root
+            except Exception as e2:
+                logger.error(
+                    "HAL mode requested but HAL registry unavailable",
+                    extra={"error": f"{e1}; {e2}"},
+                )
+                return
 
         adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
-        hal = create_hal(adapter)
+        try:
+            hal = create_hal(adapter)
+        except Exception as e:
+            logger.error("HAL adapter init failed", extra={"adapter": adapter, "error": str(e)})
+            return
         connected_states = {"B", "C", "D"}
         logger.info("HAL mode: waiting for CP states to start SLAC", extra={"adapter": adapter})
 
+        # Lifecycle variables
+        keyed_once = False
+        session: Optional[SlacEvseSession] = None
+        session_started_at: float = 0.0
+        secc_task: Optional[asyncio.Task] = None
+        secc_handler = None  # type: ignore
+        last_cp: Optional[str] = None
+
+        async def _start_secc_bg() -> None:
+            nonlocal secc_task, secc_handler
+            if secc_task is not None:
+                return
+            logger.info("Launching ISO 15118 SECC")
+            secc_handler, secc_task = await launch_secc_background(
+                iface, self.secc_config_path, self.certificate_store
+            )
+
+        async def _stop_secc(reason: str = "CP disconnect") -> None:
+            nonlocal secc_task, secc_handler
+            if secc_task is None:
+                return
+            try:
+                try:
+                    getattr(secc_handler, "close_session", lambda: None)()
+                except Exception:
+                    pass
+                secc_task.cancel()
+                try:
+                    await asyncio.wait_for(secc_task, timeout=2.0)
+                except Exception:
+                    pass
+            finally:
+                secc_task = None
+                secc_handler = None
+                logger.info("SECC stopped", extra={"reason": reason})
+
         while True:
-            # Wait for vehicle (B/C/D)
-            st = hal.cp().get_state()
-            if st not in connected_states:
-                await asyncio.sleep(0.2)
-                continue
+            try:
+                cp = hal.cp().get_state()
+            except Exception:
+                cp = None
 
-            logger.info("Vehicle detected via CP", extra={"cp_state": st})
-            session = SlacEvseSession(evse_id, iface, self.slac_config)
-            await session.evse_set_key()
-            # Feed CP state(s) into SLAC controller
-            await self.process_cp_state(session, "B")
-            await asyncio.sleep(0.2)
-            st = hal.cp().get_state()
-            if st in {"C", "D"}:
-                await self.process_cp_state(session, "C")
+            if cp != last_cp:
+                logger.debug("CP transition", extra={"from": last_cp, "to": cp})
+                last_cp = cp
 
-            # Wait for match or disconnect
-            start_wait = asyncio.get_event_loop().time()
-            timeout_s = float(os.environ.get("SLAC_WAIT_TIMEOUT_S", "25"))
-            while session.state != STATE_MATCHED:
-                await asyncio.sleep(0.5)
-                st = hal.cp().get_state()
-                if st not in connected_states:
-                    logger.warning("CP disconnected before SLAC match; restarting", extra={"cp_state": st})
-                    break
-                # Timeout: attempt a SLAC restart hint if using ESP HAL, then retry
-                if (asyncio.get_event_loop().time() - start_wait) > timeout_s:
-                    logger.warning("SLAC match timeout; attempting restart hint and retry")
+            if cp in connected_states:
+                if session is None:
+                    logger.info("Vehicle detected via CP", extra={"cp_state": cp})
+                    session = SlacEvseSession(evse_id, iface, self.slac_config)
+                    if not keyed_once:
+                        try:
+                            await session.evse_set_key()
+                        except Exception:
+                            pass
+                        keyed_once = True
+                    await self.process_cp_state(session, "B")
+                    await asyncio.sleep(0.2)
+                    cur = hal.cp().get_state()
+                    if cur in {"C", "D"}:
+                        await self.process_cp_state(session, "C")
+                    session_started_at = asyncio.get_event_loop().time()
+
+                if session and session.state == STATE_MATCHED and secc_task is None:
                     try:
-                        # Only available on ESP HAL
-                        getattr(hal, "restart_slac_hint", lambda: None)()
+                        self._log_slac_peer(session)
                     except Exception:
                         pass
-                    break
+                    await _start_secc_bg()
 
-            if session.state == STATE_MATCHED:
-                # Try to extract and log SLAC match details if available
-                try:
-                    ev_mac = getattr(session, "ev_mac", None)
-                    nid = getattr(session, "nid", None)
-                    run_id = getattr(session, "run_id", None)
-                    attenuation = getattr(session, "attenuation_db", None)
-                    logger.info(
-                        "SLAC matched",
-                        extra={
-                            "ev_mac": ev_mac,
-                            "nid": nid,
-                            "run_id": run_id,
-                            "attenuation_db": attenuation,
-                        },
+                if session and session.state != STATE_MATCHED:
+                    elapsed = asyncio.get_event_loop().time() - session_started_at
+                    env_wait = os.environ.get("SLAC_WAIT_TIMEOUT_S")
+                    timeout_s = (
+                        float(env_wait)
+                        if env_wait is not None
+                        else float(self.slac_config.slac_init_timeout or 50.0)
                     )
-                except Exception:
-                    logger.info("SLAC matched (details unavailable)")
-                logger.info("Launching ISO 15118 SECC")
-                await start_secc(iface, self.secc_config_path, self.certificate_store)
-                return
+                    if elapsed > timeout_s:
+                        logger.warning("SLAC match timeout; attempting restart hint and retry")
+                        try:
+                            reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
+                            getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
+                            logger.info(
+                                "HAL SLAC restart hint requested",
+                                extra={"reset_ms": reset_ms, "iface": iface, "timeout_s": timeout_s},
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            await self.process_cp_state(session, "A")
+                        except Exception:
+                            pass
+                        session = None
+                        session_started_at = 0.0
+            else:
+                if secc_task is not None:
+                    await _stop_secc("CP state not connected")
+                if session is not None:
+                    try:
+                        await self.process_cp_state(session, "A")
+                    except Exception:
+                        pass
+                    try:
+                        await session.leave_logical_network()
+                    except Exception:
+                        pass
+                    session = None
+                    session_started_at = 0.0
+
+            await asyncio.sleep(0.2)
 
     async def _trigger_matching(self, session: SlacEvseSession) -> None:
         """Simulate CP state transitions to start SLAC and wait for a match."""
@@ -152,6 +229,72 @@ class EVSECommunicationController(SlacSessionController):
         while session.state != STATE_MATCHED:
             await asyncio.sleep(1)
         # Caller continues to start SECC
+
+    def _log_slac_peer(self, session: SlacEvseSession) -> None:
+        """Best-effort logging of EV MAC/NID/RUN_ID from the PySLAC session.
+
+        PySLAC versions expose different attribute names; probe common ones.
+        """
+        try:
+            # Local import to avoid hard dependency during tests
+            from src.util.slac_peer_store import write_peer  # type: ignore
+        except Exception:
+            write_peer = None  # type: ignore
+        def _first_attr(obj, names):
+            for n in names:
+                try:
+                    v = getattr(obj, n)
+                except Exception:
+                    v = None
+                if v:
+                    return v
+            return None
+
+        ev_mac = _first_attr(session, [
+            "pev_mac",  # PySLAC EV MAC field name
+            "ev_mac",
+            "peer_mac",
+            "ev_mac_str",
+            "peer_mac_str",
+            "ev_mac_addr",
+            "peer_mac_addr",
+        ])
+        nid = _first_attr(session, ["nid", "NID"])  # Network Identifier
+        run_id = _first_attr(session, ["run_id", "RUN_ID"])  # SLAC run ID
+
+        # Normalize bytes to colon-hex for readability
+        def _fmt_mac(val):
+            if val is None:
+                return None
+            try:
+                b = val if isinstance(val, (bytes, bytearray)) else bytes(val)
+                return ":".join(f"{x:02x}" for x in b)
+            except Exception:
+                return str(val)
+
+        ev_mac_s = _fmt_mac(ev_mac)
+        nid_s = _fmt_mac(nid)
+        run_id_s = _fmt_mac(run_id)
+        # Print in message so it shows with text logging
+        logger.info("SLAC peer info: ev_mac=%s nid=%s run_id=%s", ev_mac_s, nid_s, run_id_s)
+        # Also attach as structured extras for JSON logs, if enabled
+        try:
+            logger.debug("SLAC peer info (extra)", extra={
+                "ev_mac": ev_mac_s,
+                "nid": nid_s,
+                "run_id": run_id_s,
+            })
+        except Exception:
+            pass
+
+        # Persist for external readers (e.g., API curl)
+        try:
+            if write_peer:
+                write_peer(ev_mac=str(ev_mac) if ev_mac is not None else None,
+                           nid=str(nid) if nid is not None else None,
+                           run_id=str(run_id) if run_id is not None else None)
+        except Exception:
+            pass
 
 
 def parse_args() -> argparse.Namespace:
@@ -190,6 +333,21 @@ async def start_secc(
     certificate_store: Optional[str],
 ) -> None:
     """Start ISO 15118 SECC bound to *iface*."""
+    # Pre-flight: ensure the interface has an IPv6 link-local address.
+    # This helps avoid sporadic TCP server startup delays/failures.
+    try:
+        # Retry briefly in case IPv6 config is racing after link-up.
+        deadline = asyncio.get_event_loop().time() + 5.0
+        while True:
+            try:
+                validate_nic(iface)
+                break
+            except Exception:
+                if asyncio.get_event_loop().time() > deadline:
+                    break
+                await asyncio.sleep(0.2)
+    except Exception:
+        pass
     if certificate_store:
         os.environ["PKI_PATH"] = certificate_store
 
@@ -197,6 +355,12 @@ async def start_secc(
     config = SeccConfig()
     config.load_envs(secc_config_path)
     config.iface = iface
+    # Keep printed settings consistent with runtime override
+    try:
+        if isinstance(getattr(config, "env_dump", None), dict):
+            config.env_dump["NETWORK_INTERFACE"] = iface
+    except Exception:
+        pass
     try:
         config.print_settings()
     except Exception:
@@ -205,8 +369,13 @@ async def start_secc(
     controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
     if controller_mode == "hal":
         # Lazy import to avoid test-time dependency and keep sim default
-        from src.evse_hal.registry import create as create_hal
-        from src.evse_hal.iso15118_hal_controller import HalEVSEController
+        try:
+            from src.evse_hal.registry import create as create_hal
+            from src.evse_hal.iso15118_hal_controller import HalEVSEController
+        except Exception:
+            # Fallback when executed from within src/ (PYTHONPATH=src)
+            from evse_hal.registry import create as create_hal  # type: ignore
+            from evse_hal.iso15118_hal_controller import HalEVSEController  # type: ignore
 
         adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
         logger.info("EVSE controller=hal", extra={"adapter": adapter})
@@ -215,11 +384,79 @@ async def start_secc(
         logger.info("EVSE controller=sim")
         evse_controller = SimEVSEController()
     await evse_controller.set_status(ServiceStatus.STARTING)
-    await SECCHandler(
+    handler = SECCHandler(
         exi_codec=ExificientEXICodec(),
         evse_controller=evse_controller,
         config=config,
-    ).start(config.iface)
+    )
+    try:
+        # Log consolidated timing summary, now with SECC config available
+        log_timing_summary(slac_config=None, secc_config=config)
+    except Exception:
+        pass
+    await handler.start(config.iface)
+
+
+async def launch_secc_background(
+    iface: str,
+    secc_config_path: Optional[str],
+    certificate_store: Optional[str],
+):
+    """Start the SECC in a background task and return (handler, task).
+
+    Allows external lifecycle control (stop on CP disconnect) while keeping
+    the SECC reusable for new sessions on reconnect.
+    """
+    if certificate_store:
+        os.environ["PKI_PATH"] = certificate_store
+
+    config = SeccConfig()
+    config.load_envs(secc_config_path)
+    config.iface = iface
+    try:
+        if isinstance(getattr(config, "env_dump", None), dict):
+            config.env_dump["NETWORK_INTERFACE"] = iface
+    except Exception:
+        pass
+
+    controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
+    if controller_mode == "hal":
+        try:
+            from src.evse_hal.registry import create as create_hal
+            from src.evse_hal.iso15118_hal_controller import HalEVSEController
+        except Exception:
+            from evse_hal.registry import create as create_hal  # type: ignore
+            from evse_hal.iso15118_hal_controller import HalEVSEController  # type: ignore
+        adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
+        logger.info("EVSE controller=hal", extra={"adapter": adapter})
+        evse_controller = HalEVSEController(create_hal(adapter))
+    else:
+        logger.info("EVSE controller=sim")
+        evse_controller = SimEVSEController()
+    await evse_controller.set_status(ServiceStatus.STARTING)
+
+    # Ensure iface readiness as above (short retry window)
+    try:
+        deadline = asyncio.get_event_loop().time() + 5.0
+        while True:
+            try:
+                validate_nic(iface)
+                break
+            except Exception:
+                if asyncio.get_event_loop().time() > deadline:
+                    break
+                await asyncio.sleep(0.2)
+    except Exception:
+        pass
+
+    handler = SECCHandler(
+        exi_codec=ExificientEXICodec(),
+        evse_controller=evse_controller,
+        config=config,
+    )
+
+    task = asyncio.create_task(handler.start(config.iface))
+    return handler, task
 
 
 def main() -> None:
@@ -241,6 +478,12 @@ def main() -> None:
         secc_config_path=args.secc_config,
         certificate_store=args.cert_store,
     )
+
+    # Print consolidated timing summary once before run
+    try:
+        log_timing_summary(slac_config=slac_config)
+    except Exception:
+        pass
 
     asyncio.run(controller.start(args.evse_id, args.iface))
 
