@@ -160,7 +160,23 @@ class EspCpClient:
             except Exception:
                 logger.debug("UART RX (non-JSON)", extra={"line": line.decode(errors="ignore").strip()})
                 continue
-            logger.debug("UART RX", extra=msg)
+
+            # Handle cases where firmware sends JSON that isn't an object
+            # e.g., a bare string like "pong" or other primitives
+            if isinstance(msg, str):
+                if msg.strip().lower() == "pong":
+                    self._pong.set()
+                else:
+                    logger.debug("UART RX (JSON string)", extra={"value": msg})
+                continue
+            if not isinstance(msg, dict):
+                logger.debug(
+                    "UART RX (JSON non-object)",
+                    extra={"py_type": type(msg).__name__, "value": str(msg)[:120]},
+                )
+                continue
+
+            logger.debug("UART RX", extra={"json": msg})
             mtype = msg.get("type")
             if mtype == "status":
                 mv = int(msg.get("cp_mv", 0))

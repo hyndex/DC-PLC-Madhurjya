@@ -151,23 +151,12 @@ class EVSECommunicationController(SlacSessionController):
                     break
 
             if session.state == STATE_MATCHED:
-                # Try to extract and log SLAC match details if available
+                # Log SLAC peer details in plain text for visibility
                 try:
-                    ev_mac = getattr(session, "ev_mac", None)
-                    nid = getattr(session, "nid", None)
-                    run_id = getattr(session, "run_id", None)
-                    attenuation = getattr(session, "attenuation_db", None)
-                    logger.info(
-                        "SLAC matched",
-                        extra={
-                            "ev_mac": ev_mac,
-                            "nid": nid,
-                            "run_id": run_id,
-                            "attenuation_db": attenuation,
-                        },
-                    )
+                    self._log_slac_peer(session)
                 except Exception:
-                    logger.info("SLAC matched (details unavailable)")
+                    pass
+                logger.info("SLAC matched")
                 logger.info("Launching ISO 15118 SECC")
                 await start_secc(iface, self.secc_config_path, self.certificate_store)
                 return
@@ -214,15 +203,30 @@ class EVSECommunicationController(SlacSessionController):
         nid = _first_attr(session, ["nid", "NID"])  # Network Identifier
         run_id = _first_attr(session, ["run_id", "RUN_ID"])  # SLAC run ID
 
+        # Normalize bytes to colon-hex for readability
+        def _fmt_mac(val):
+            if val is None:
+                return None
+            try:
+                b = val if isinstance(val, (bytes, bytearray)) else bytes(val)
+                return ":".join(f"{x:02x}" for x in b)
+            except Exception:
+                return str(val)
+
+        ev_mac_s = _fmt_mac(ev_mac)
+        nid_s = _fmt_mac(nid)
+        run_id_s = _fmt_mac(run_id)
+        # Print in message so it shows with text logging
+        logger.info("SLAC peer info: ev_mac=%s nid=%s run_id=%s", ev_mac_s, nid_s, run_id_s)
+        # Also attach as structured extras for JSON logs, if enabled
         try:
-            extra = {
-                "ev_mac": str(ev_mac) if ev_mac is not None else None,
-                "nid": str(nid) if nid is not None else None,
-                "run_id": str(run_id) if run_id is not None else None,
-            }
-            logger.info("SLAC peer info", extra=extra)
+            logger.debug("SLAC peer info (extra)", extra={
+                "ev_mac": ev_mac_s,
+                "nid": nid_s,
+                "run_id": run_id_s,
+            })
         except Exception:
-            logger.info("SLAC peer info: ev_mac=%s nid=%s run_id=%s", ev_mac, nid, run_id)
+            pass
 
         # Persist for external readers (e.g., API curl)
         try:
@@ -277,6 +281,12 @@ async def start_secc(
     config = SeccConfig()
     config.load_envs(secc_config_path)
     config.iface = iface
+    # Keep printed settings consistent with runtime override
+    try:
+        if isinstance(getattr(config, "env_dump", None), dict):
+            config.env_dump["NETWORK_INTERFACE"] = iface
+    except Exception:
+        pass
     try:
         config.print_settings()
     except Exception:
@@ -332,8 +342,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
 
 
 
