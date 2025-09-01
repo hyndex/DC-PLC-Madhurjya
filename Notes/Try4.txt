@@ -1,0 +1,43 @@
+
+#################################################
+ ###### Starting PySlac version: 0.8.3 #######
+#################################################
+
+2025-09-01 11:54:10,850 INFO esp.cp: ESP CP serial connect
+2025-09-01 11:54:10,855 INFO hal.esp: HAL ESP ping
+2025-09-01 11:54:10,916 INFO hal.esp: HAL ESP set_mode(dc)
+2025-09-01 11:54:10,916 INFO evse.main: HAL mode: waiting for CP states to start SLAC
+2025-09-01 11:54:10,977 INFO evse.main: Vehicle detected via CP
+2025-09-01 11:54:11,001 INFO slac_session: CM_SET_KEY: Started...
+2025-09-01 11:54:21,013 INFO slac_session: CM_SET_KEY: Finished!
+
+2025-09-01 11:54:40,705 INFO slac_session: Matching ongoing (EVSE ID: EVSE-1. Run ID: b'\xc6~\x81kK\xfb\xe2\xfb').
+2025-09-01 11:54:40,706 INFO evse.main: SLAC matching in progress for EVSE-1
+2025-09-01 11:54:41,491 WARNING slac_session: Frame received is not CM_ATTEN_CHAR.RSP
+2025-09-01 11:54:41,625 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: EVSE-1. Run ID: b'\xc6~\x81kK\xfb\xe2\xfb').
+2025-09-01 11:54:41,732 INFO evse.main: SLAC peer info: ev_mac=00:b0:0c:02:0f:01 nid=43:9b:97:2f:76:e4:00 run_id=c6:7e:81:6b:4b:fb:e2:fb
+2025-09-01 11:54:41,734 INFO evse.main: Launching ISO 15118 SECC
+2025-09-01 11:54:41,743 INFO evse.main: EVSE controller=hal
+2025-09-01 11:54:41,745 INFO esp.cp: ESP CP serial connect
+2025-09-01 11:54:42,246 INFO hal.esp: HAL ESP ping
+2025-09-01 11:54:43,453 INFO hal.esp: HAL ESP set_mode(dc)
+2025-09-01 11:54:47,278 INFO iso15118.shared.exi_codec: EXI Codec version: 1.55
+2025-09-01 11:54:47,279 INFO iso15118.secc: Starting 15118 version: 0.31.0
+2025-09-01 11:54:47,279 INFO iso15118.secc.comm_session_handler: Communication session handler started
+2025-09-01 11:54:47,280 INFO iso15118.secc.transport.udp_server: UDP server socket ready
+2025-09-01 11:54:47,280 INFO iso15118.secc.transport.udp_server: UDP server started at address FF02::1%eth1 and port 15118
+2025-09-01 11:54:47,304 INFO iso15118.secc.comm_session_handler: SDPRequest received: [Security: NO_TLS, Protocol: TCP]
+2025-09-01 11:54:57,307 ERROR iso15118.secc.comm_session_handler: Timeout: Servers failed to startup
+2025-09-01 11:54:57,307 ERROR iso15118.shared.utils: 'TCPServer' object has no attribute 'ipv6_address_host'
+Traceback (most recent call last):
+  File "/home/jpi/DC-PLC-Madhurjya/src/iso15118/iso15118/shared/utils.py", line 126, in wait_for_tasks
+    done_task.result()
+  File "/home/jpi/DC-PLC-Madhurjya/src/iso15118/iso15118/secc/comm_session_handler.py", line 280, in get_from_rcv_queue
+    await self.process_incoming_udp_packet(notification)
+  File "/home/jpi/DC-PLC-Madhurjya/src/iso15118/iso15118/secc/comm_session_handler.py", line 438, in process_incoming_udp_packet
+    sdp_response = await self.process_sdp_request(sdp_request)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jpi/DC-PLC-Madhurjya/src/iso15118/iso15118/secc/comm_session_handler.py", line 410, in process_sdp_request
+    socket.AF_INET6, self.tcp_server.ipv6_address_host
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'TCPServer' object has no attribute 'ipv6_address_host'
