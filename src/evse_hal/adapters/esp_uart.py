@@ -113,11 +113,19 @@ class ESPSerialHardware(EVSEHardware):
         - Return to dc mode (firmware enforces 5% in B/C/D)
         """
         try:
+            # Prefer firmware-level precise pulse if available
+            self._client.restart_slac_hint(reset_ms)
+            logger.info("HAL ESP SLAC restart hint (fw) sent", extra={"reset_ms": reset_ms})
+            return
+        except Exception:
+            pass
+        # Fallback: host-driven toggling
+        try:
             self._client.set_mode("manual")
             self._client.set_pwm(100, enable=True)
             time.sleep(max(0, reset_ms) / 1000.0)
             self._client.set_mode("dc")
-            logger.info("HAL ESP SLAC restart hint sent", extra={"reset_ms": reset_ms})
+            logger.info("HAL ESP SLAC restart hint (host) sent", extra={"reset_ms": reset_ms})
         except Exception as e:
             logger.warning("HAL ESP SLAC restart hint failed", extra={"error": str(e)})
 

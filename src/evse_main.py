@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -26,11 +27,22 @@ from pyslac.session import (
     STATE_MATCHED,
 )
 
+# Ensure local 'src' takes precedence for iso15118 imports
+HERE = Path(__file__).resolve().parent
+# The iso15118 package here lives under a nested src layout: src/iso15118/iso15118
+LOCAL_ISO15118_ROOT = HERE / "iso15118"
+if (LOCAL_ISO15118_ROOT / "iso15118" / "__init__.py").is_file():
+    p = str(LOCAL_ISO15118_ROOT)
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 from iso15118.secc.secc_settings import Config as SeccConfig
 from iso15118.secc.controller.simulator import SimEVSEController
 from iso15118.secc.controller.interface import ServiceStatus
 from iso15118.secc import SECCHandler
 from iso15118.shared.exi_codec import ExificientEXICodec
+from iso15118.shared.network import validate_nic
+from util.standards_check import log_timing_summary
 
 
 logger = logging.getLogger("evse.main")
@@ -321,6 +333,21 @@ async def start_secc(
     certificate_store: Optional[str],
 ) -> None:
     """Start ISO 15118 SECC bound to *iface*."""
+    # Pre-flight: ensure the interface has an IPv6 link-local address.
+    # This helps avoid sporadic TCP server startup delays/failures.
+    try:
+        # Retry briefly in case IPv6 config is racing after link-up.
+        deadline = asyncio.get_event_loop().time() + 5.0
+        while True:
+            try:
+                validate_nic(iface)
+                break
+            except Exception:
+                if asyncio.get_event_loop().time() > deadline:
+                    break
+                await asyncio.sleep(0.2)
+    except Exception:
+        pass
     if certificate_store:
         os.environ["PKI_PATH"] = certificate_store
 
@@ -357,11 +384,17 @@ async def start_secc(
         logger.info("EVSE controller=sim")
         evse_controller = SimEVSEController()
     await evse_controller.set_status(ServiceStatus.STARTING)
-    await SECCHandler(
+    handler = SECCHandler(
         exi_codec=ExificientEXICodec(),
         evse_controller=evse_controller,
         config=config,
-    ).start(config.iface)
+    )
+    try:
+        # Log consolidated timing summary, now with SECC config available
+        log_timing_summary(slac_config=None, secc_config=config)
+    except Exception:
+        pass
+    await handler.start(config.iface)
 
 
 async def launch_secc_background(
@@ -402,6 +435,20 @@ async def launch_secc_background(
         evse_controller = SimEVSEController()
     await evse_controller.set_status(ServiceStatus.STARTING)
 
+    # Ensure iface readiness as above (short retry window)
+    try:
+        deadline = asyncio.get_event_loop().time() + 5.0
+        while True:
+            try:
+                validate_nic(iface)
+                break
+            except Exception:
+                if asyncio.get_event_loop().time() > deadline:
+                    break
+                await asyncio.sleep(0.2)
+    except Exception:
+        pass
+
     handler = SECCHandler(
         exi_codec=ExificientEXICodec(),
         evse_controller=evse_controller,
@@ -431,6 +478,12 @@ def main() -> None:
         secc_config_path=args.secc_config,
         certificate_store=args.cert_store,
     )
+
+    # Print consolidated timing summary once before run
+    try:
+        log_timing_summary(slac_config=slac_config)
+    except Exception:
+        pass
 
     asyncio.run(controller.start(args.evse_id, args.iface))
 
