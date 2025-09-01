@@ -121,10 +121,11 @@ class EVSECommunicationController(SlacSessionController):
             start_wait = asyncio.get_event_loop().time()
             # Align overall wait with PySLAC init timeout by default to avoid
             # cancelling the SLAC task too early. Still allow env override.
-            timeout_s = float(
-                os.environ.get(
-                    "SLAC_WAIT_TIMEOUT_S", str(self.slac_config.slac_init_timeout)
-                )
+            env_wait = os.environ.get("SLAC_WAIT_TIMEOUT_S")
+            timeout_s = (
+                float(env_wait)
+                if env_wait is not None
+                else float(self.slac_config.slac_init_timeout or 50.0)
             )
             while session.state != STATE_MATCHED:
                 await asyncio.sleep(0.5)
