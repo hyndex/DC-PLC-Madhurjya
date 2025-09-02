@@ -218,6 +218,30 @@ An optional ESP32-S3 firmware provides CP PWM generation and ADC sampling, expos
 status/control over a simple JSON‑over‑UART protocol.
 
 - Firmware: `firmware/esp32s3_cp/` (PlatformIO; board: `esp32-s3-devkitc-1`)
+
+### Thermal Management (Derating + Faults)
+
+The HAL EVSE controller implements a fail-safe thermal manager that can derate or stop DC charging based on temperature inputs and voltage sag heuristics. It also updates the EVSE’s advertised max current during the charge loop so the EV naturally tapers.
+
+Environment variables (optional):
+
+- `EVSE_THERMAL_WARN_<SENSOR>_C`: start of derating (C). Sensors: CONNECTOR, CABLE, RECTIFIER, AMBIENT. Defaults: 70/75/85/45.
+- `EVSE_THERMAL_SHUTDOWN_<SENSOR>_C`: cutoff threshold (C). Defaults: 90/95/100/60.
+- `EVSE_THERMAL_DERATE_START_<SENSOR>_C`, `EVSE_THERMAL_DERATE_END_<SENSOR>_C`: override linear derating window; default equals warn/shutdown.
+- `EVSE_THERMAL_COOLDOWN_C`: temperature below which all sensors must cool to clear a fault latch. Default 50.
+- `EVSE_THERMAL_FAULT_HOLD_S`: cooldown hold time before clearing fault. Default 30s.
+- `EVSE_THERMAL_ENABLE_SAG`: enable voltage-sag-based inference. Default 1.
+- `EVSE_THERMAL_SAG_FRAC`: fraction of target voltage considered excessive sag (e.g., 0.07 = 7%). Default 0.07.
+- `EVSE_THERMAL_SAG_MIN_A`: minimum current for sag heuristic to apply. Default 50 A.
+- `EVSE_THERMAL_SAG_DERATE`: fraction to reduce allowed current when sag detected (0..1). Default 0.5.
+
+Live sensor inputs (optional, for integrations/tests):
+
+- `EVSE_THERMAL_SENSOR_<SENSOR>_C`: publish live temperature readings (float). If not set, only sag inference applies.
+
+Behavior:
+- Above any shutdown threshold: charging is cut (contactor open) and a fault is latched until all sensors cool below `EVSE_THERMAL_COOLDOWN_C` for `EVSE_THERMAL_FAULT_HOLD_S`.
+- Between derate start and end: current is linearly reduced; the EV is informed via a lower `EVSEMaxCurrentLimit` in ChargingStatusRes.
 - Protocol: see `docs/esp_cp_uart_protocol.md`
 - Python client: `src/evse_hal/esp_cp_client.py`
 - HAL adapter (CP + PWM over UART, others simulated): set `EVSE_CONTROLLER=hal` and select adapter via `EVSE_HAL_ADAPTER=esp-uart`.

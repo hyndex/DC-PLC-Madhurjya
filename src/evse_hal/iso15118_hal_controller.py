@@ -5,6 +5,7 @@ from typing import Optional, List, Union, Dict
 import os
 
 from src.evse_hal.interfaces import EVSEHardware
+from src.evse_hal.thermal import ThermalManager
 from iso15118.secc.controller.simulator import SimEVSEController
 from iso15118.secc.controller.interface import (
     AuthorizationResponse,
@@ -38,6 +39,10 @@ class HalEVSEController(SimEVSEController):
         self._last_set_v: float = 0.0
         self._last_set_i: float = 0.0
         self._last_set_ts: float = time.time()
+        # Thermal and dynamic derating support
+        self._thermal = ThermalManager()
+        self._rated_dc_max_current_a: float = 300.0
+        self._rated_dc_max_voltage_v: float = 920.0
 
     async def set_status(self, status: ServiceStatus) -> None:
         # Could map to LEDs or system state in real hardware
@@ -135,6 +140,10 @@ class HalEVSEController(SimEVSEController):
         min_v_val, min_v_mul = pv(min_v)
         ripple_val, ripple_mul = pv(ripple_a)
 
+        # Cache rated for dynamic use/advertisement
+        self._rated_dc_max_current_a = float(max_a)
+        self._rated_dc_max_voltage_v = float(max_v)
+
         return DCEVSEChargeParameter(
             dc_evse_status=DCEVSEStatus(
                 notification_max_delay=100,
@@ -217,17 +226,74 @@ class HalEVSEController(SimEVSEController):
             tgt_v = cur_v + max_dv * (1 if dv > 0 else -1)
         if abs(di) > max_di:
             tgt_i = cur_i + max_di * (1 if di > 0 else -1)
+
+        # Query present measurements for thermal and context updates
         try:
-            self._hal.supply().set_voltage(max(0.0, tgt_v))
-            self._hal.supply().set_current_limit(max(0.0, tgt_i))
+            v_meas, i_meas = self._hal.supply().get_status()
+        except Exception:
+            v_meas, i_meas = 0.0, 0.0
+
+        # Thermal derating and fault handling
+        dec = self._thermal.update(
+            rated_current_a=float(self._rated_dc_max_current_a),
+            target_voltage_v=float(tgt_v),
+            target_current_a=float(tgt_i),
+            measured_voltage_v=float(v_meas),
+            measured_current_a=float(i_meas),
+        )
+
+        # Adjust the current limit applied to hardware
+        allowed_i = float(min(tgt_i, dec.allowed_current_a))
+
+        # Update the ISO15118 session limits so EV sees our dynamic capability
+        try:
+            dc_limits = self.evse_data_context.session_limits.dc_limits
+            # Ensure non-negative and don't exceed rated
+            dc_limits.max_charge_current = max(0.0, min(self._rated_dc_max_current_a, allowed_i))
         except Exception:
             pass
+
+        # Apply to hardware
+        try:
+            self._hal.supply().set_voltage(max(0.0, tgt_v))
+            self._hal.supply().set_current_limit(max(0.0, allowed_i))
+        except Exception:
+            pass
+
+        # Safety: if fault latched, ensure contactor is opened
+        if dec.state == "FAULT":
+            try:
+                self._hal.contactor().set_closed(False)
+            except Exception:
+                pass
+            # Hint to CP to return to safe state if possible
+            try:
+                getattr(self._hal, "esp_set_mode", lambda _m=None: None)("manual")
+                getattr(self._hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
+                getattr(self._hal, "esp_set_mode", lambda _m=None: None)("dc")
+            except Exception:
+                pass
+
         self._last_set_v, self._last_set_i, self._last_set_ts = tgt_v, tgt_i, now
         # Update context for reporting
         try:
-            v_meas, i_meas = self._hal.supply().get_status()
             self.evse_data_context.present_voltage = float(v_meas)
             self.evse_data_context.present_current = float(i_meas)
+        except Exception:
+            pass
+        # Log thermal decisions on notable events
+        try:
+            if dec.state != "OK":
+                logger.warning(
+                    "Thermal decision",
+                    extra={
+                        "state": dec.state,
+                        "allowed_a": round(dec.allowed_current_a, 2),
+                        "hottest": dec.hottest_sensor,
+                        "temp_c": dec.hottest_temp_c,
+                        "reason": dec.reason,
+                    },
+                )
         except Exception:
             pass
 
