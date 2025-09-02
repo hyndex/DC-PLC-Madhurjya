@@ -126,6 +126,60 @@ for Plug & Charge are generated with
 [`scripts/generate_certs.sh`](scripts/generate_certs.sh) and stored under
 `pki/` by default.
 
+### Robustness Controls (optional)
+
+To make sessions more resilient to transient PLC corruption and packet loss, a few
+environment variables can be set in `secc.env`:
+
+- `V2G_DUPLICATE_RESEND_WINDOW_S`: Time window to treat byte‑identical requests as duplicates and resend the last response (default `2.0`).
+- `V2G_DUPLICATE_RESEND_MAX`: Max number of duplicate resends within the window (default `3`).
+- `V2G_DUPLICATE_RESEND_ENABLED`: Enable/disable duplicate‑resend behavior (default `1` → enabled).
+- `V2G_MAX_DECODE_ERRORS`: Number of EXI decode/validation errors tolerated before aborting the session (default `2`).
+- `V2G_DROP_TX_PROB`: Simulation only. Probability [0.0–1.0] to drop outgoing responses to test EV retransmission behavior (default `0.0`).
+- `V2G_MAX_EXI_BYTES`: Cap raw EXI payload length in bytes (default `262144`). Set `0` to disable.
+- `V2G_MAX_EXI_JSON_BYTES`: Cap decoded EXI JSON length in bytes (default `1048576`). Set `0` to disable.
+
+These controls do not change protocol semantics and are safe defaults. Increase/decrease per site as needed based on PLC link quality.
+
+### EVCC Fault‑Injection Helper
+
+Use the helper to inject malformed frames or duplicates against a running SECC:
+
+```
+python scripts/evcc_fault_injector.py --host 127.0.0.1 --port 65000 --mode corrupt-exi --count 3 --size 64
+python scripts/evcc_fault_injector.py --host 127.0.0.1 --port 65000 --mode duplicate --payload-hex DEADBEEF
+```
+
+Options:
+- `--mode`: `corrupt-exi` (valid V2GTP header, random payload), `duplicate` (send same frame repeatedly), `bad-header` (invalid header).
+- `--protocol`: `iso2` or `v20` (default `iso2`), `--payload-type` (default `0x8001`).
+- `--payload-hex` or `--size` to define EXI payload content.
+- `--count` and `--interval` to repeat/intersperse traffic.
+
+Note: Duplicate‑resend works best when SECC has already sent at least one response in the session (so it has a last response to resend).
+
+### EVCC Minimal Handshake
+
+Drive a basic ISO 15118-2 handshake (SAP → SessionSetup → ServiceDiscovery) against a running SECC. Includes options to inject a duplicate ServiceDiscovery request and a corrupted frame after SAP.
+
+```
+python scripts/evcc_min_flow.py --host <SECC_IP> --port <SECC_TCP_PORT> \
+  --duplicate-sd --corrupt-after-sap
+```
+
+This validates:
+- End-to-end EXI encode/decode over TCP
+- Duplicate request handling (resend of last response)
+- Tolerance to corrupted frames (decode error path)
+- SECC timeout handling (use `--pause-before-sd 3.0` to exceed sequence timeout if configured low)
+
+### Metrics Export
+
+On session stop, the SECC logs a single JSON line with counters and can optionally emit them via UDP for scraping:
+
+- `V2G_METRICS_UDP`: `host:port` to emit one JSON datagram per session (optional).
+- Counters include: `rx_decode_errors`, `rx_validation_errors`, `rx_invalid_v2gtp`, `dup_resent_count`, `dup_resend_enabled`, `dup_window_s`, `dup_resend_max`, `tx_drop_prob`.
+
 ## Troubleshooting and Hardware Notes
 
 * Ensure the selected interface (default ``eth0``) exists and is

@@ -78,11 +78,21 @@ def log_timing_summary(slac_config=None, secc_config=None) -> None:
                 "V2G_EVCC_COMM_SETUP_TIMEOUT_CAP_S": os.environ.get("V2G_EVCC_COMM_SETUP_TIMEOUT_CAP_S"),
                 "V2G_TIMEOUT_GRACE_S": os.environ.get("V2G_TIMEOUT_GRACE_S"),
                 "V2G_TIMEOUT_GRACE_MAX": os.environ.get("V2G_TIMEOUT_GRACE_MAX"),
+                "V2G_MAX_EXI_BYTES": os.environ.get("V2G_MAX_EXI_BYTES"),
+                "V2G_MAX_EXI_JSON_BYTES": os.environ.get("V2G_MAX_EXI_JSON_BYTES"),
+                "V2G_DUPLICATE_RESEND_ENABLED": os.environ.get("V2G_DUPLICATE_RESEND_ENABLED"),
+                "V2G_DUPLICATE_RESEND_WINDOW_S": os.environ.get("V2G_DUPLICATE_RESEND_WINDOW_S"),
+                "V2G_DUPLICATE_RESEND_MAX": os.environ.get("V2G_DUPLICATE_RESEND_MAX"),
+                "V2G_MAX_DECODE_ERRORS": os.environ.get("V2G_MAX_DECODE_ERRORS"),
+                "V2G_DROP_TX_PROB": os.environ.get("V2G_DROP_TX_PROB"),
+                "V2G_METRICS_UDP": os.environ.get("V2G_METRICS_UDP"),
                 "SLAC_WAIT_TIMEOUT_S": os.environ.get("SLAC_WAIT_TIMEOUT_S"),
                 "SLAC_MAX_ATTEMPTS": os.environ.get("SLAC_MAX_ATTEMPTS"),
                 "SLAC_RETRY_BACKOFF_S": os.environ.get("SLAC_RETRY_BACKOFF_S"),
                 "SLAC_RESTART_HINT_MS": os.environ.get("SLAC_RESTART_HINT_MS"),
                 "SLAC_RESTART_ON_DISCONNECT_MS": os.environ.get("SLAC_RESTART_ON_DISCONNECT_MS"),
+                "SECC_CURRENT_DEMAND_TIMEOUT_S": os.environ.get("SECC_CURRENT_DEMAND_TIMEOUT_S"),
+                "SECC_CP_DISCONNECT_IMMEDIATE_CUTOFF_S": os.environ.get("SECC_CP_DISCONNECT_IMMEDIATE_CUTOFF_S"),
             }
             # Only print those that are set/non-empty
             caps = {k: v for k, v in caps.items() if v}

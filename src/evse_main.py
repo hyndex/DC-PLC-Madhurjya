@@ -242,7 +242,26 @@ class EVSECommunicationController(SlacSessionController):
                             # Optional: mark a transient error status if SECC controller available later
                             # Block further attempts until CP disconnect resets the counter
             else:
-                # Grace window to tolerate brief CP flaps
+                # Safety first: immediately open contactor on CP disconnect
+                # (host-side cutoff). Default 100 ms to align with IEC 61851.
+                try:
+                    cutoff_s = float(os.environ.get("SECC_CP_DISCONNECT_IMMEDIATE_CUTOFF_S", "0.1"))
+                except Exception:
+                    cutoff_s = 0.1
+                if cutoff_s > 0:
+                    try:
+                        hal.contactor().set_closed(False)
+                        # Attempt to drive CP to a safe state as a hardware hint
+                        getattr(hal, "esp_set_mode", lambda _m=None: None)("manual")
+                        getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
+                    except Exception:
+                        pass
+                    # Short delay to satisfy timing without unduly delaying logic
+                    try:
+                        await asyncio.sleep(min(cutoff_s, 0.2))
+                    except Exception:
+                        pass
+                # Grace window to tolerate brief CP flaps before tearing down SECC
                 grace_s = float(os.environ.get("CP_DISCONNECT_GRACE_S", "0.5"))
                 if grace_s > 0:
                     await asyncio.sleep(grace_s)

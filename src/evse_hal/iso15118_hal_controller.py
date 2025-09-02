@@ -230,7 +230,24 @@ class HalEVSEController(SimEVSEController):
         return CpState.C2 if state in ("C", "D") else CpState.B1
 
     async def stop_charger(self) -> None:
-        self._hal.contactor().set_closed(False)
+        # Open contactor to cut DC power immediately
+        try:
+            self._hal.contactor().set_closed(False)
+        except Exception:
+            pass
+        # Best-effort pilot-line based shutdown: drive CP to a safe state
+        # Prefer firmware-native controls if available (ESP adapter exposes esp_set_mode/esp_set_pwm)
+        try:
+            getattr(self._hal, "esp_set_mode", lambda _m=None: None)("manual")
+            getattr(self._hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
+            # Attempt to return to dc mode; ignore failures
+            getattr(self._hal, "esp_set_mode", lambda _m=None: None)("dc")
+        except Exception:
+            # Fallback: try generic PWM interface (may be ignored in dc mode)
+            try:
+                self._hal.pwm().set_duty(100.0)
+            except Exception:
+                pass
 
     async def set_present_protocol_state(self, state: State):
         # Call parent for logging
