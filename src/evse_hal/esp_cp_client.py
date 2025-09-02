@@ -61,11 +61,32 @@ class EspCpClient:
         self._err_streak = 0
 
     def connect(self) -> None:
+        # Close any previous handle before reopening to avoid leaks/locks
         try:
-            self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
+            self.close()
+        except Exception:
+            pass
+        try:
+            # Prefer exclusive open and write_timeout where supported
+            try:
+                self._ser = serial.Serial(
+                    self._port,
+                    self._baud,
+                    timeout=self._timeout,
+                    write_timeout=self._timeout,
+                    exclusive=True,  # type: ignore[arg-type]
+                )
+            except TypeError:
+                self._ser = serial.Serial(
+                    self._port,
+                    self._baud,
+                    timeout=self._timeout,
+                    write_timeout=self._timeout,
+                )
         except Exception as e:
             logger.error("ESP CP serial open failed", extra={"port": self._port, "error": str(e)})
             raise
+        time.sleep(0.05)
         self._stop.clear()
         logger.info("ESP CP serial connect", extra={"port": self._port, "baud": self._baud})
         self._rx_thread = threading.Thread(target=self._rx_loop, name="esp-cp-rx", daemon=True)
@@ -155,16 +176,25 @@ class EspCpClient:
                 raise RuntimeError("Serial not connected")
         line = json.dumps(obj, separators=(",", ":")) + "\n"
         try:
+            assert self._ser is not None
             self._ser.write(line.encode("utf-8"))
-        except Exception:
-            # One retry after reconnect
+            logger.debug("UART TX", extra={"line": line.strip()})
+            return
+        except Exception as e:
+            # One retry after hard reconnect; swallow on failure to avoid crashing callers
+            logger.debug("UART TX error, reconnecting", extra={"error": str(e)})
+            try:
+                self.close()
+            except Exception:
+                pass
             try:
                 self.connect()
+                assert self._ser is not None
                 self._ser.write(line.encode("utf-8"))
-            except Exception as e:
-                logger.warning("UART TX failed", extra={"error": str(e)})
-                raise
-        logger.debug("UART TX", extra={"line": line.strip()})
+                logger.debug("UART TX", extra={"line": line.strip()})
+            except Exception as e2:
+                logger.warning("UART TX failed after reconnect", extra={"error": str(e2)})
+                return
 
     def _rx_loop(self) -> None:
         assert self._ser is not None
