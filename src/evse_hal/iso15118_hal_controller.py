@@ -167,6 +167,13 @@ class HalEVSEController(SimEVSEController):
             v, a = self._hal.supply().get_status()
         except Exception:
             v, a = 0.0, 0.0
+        # Optional fault injection: scale measurements to simulate mismatch
+        try:
+            sv = float(os.environ.get("EVSE_FAULT_SCALE_V", "1.0"))
+            si = float(os.environ.get("EVSE_FAULT_SCALE_I", "1.0"))
+            v, a = v * sv, a * si
+        except Exception:
+            pass
         # Update EVSE data context for downstream getters
         self.evse_data_context.present_voltage = float(v)
         self.evse_data_context.present_current = float(a)
@@ -177,6 +184,12 @@ class HalEVSEController(SimEVSEController):
             v, a = self._hal.supply().get_status()
         except Exception:
             v, a = 0.0, 0.0
+        try:
+            sv = float(os.environ.get("EVSE_FAULT_SCALE_V", "1.0"))
+            si = float(os.environ.get("EVSE_FAULT_SCALE_I", "1.0"))
+            v, a = v * sv, a * si
+        except Exception:
+            pass
         self.evse_data_context.present_voltage = float(v)
         self.evse_data_context.present_current = float(a)
         return await super().get_evse_present_current(protocol)

@@ -148,6 +148,22 @@ Control Pilot robustness (HAL)
 - `CP_DEBOUNCE_S`: Debounce window for CP state changes (seconds). New CP states A/B/C/D must remain stable for this duration before the HAL reports them. Emergency states `E`/`F` bypass debounce for immediate fail‑safe reaction. Default `0.05` (50 ms).
 - `SECC_CP_DISCONNECT_IMMEDIATE_CUTOFF_S`: Immediate contactor open on CP disconnect at the host level (seconds). Default `0.1` (100 ms). Set to `0` to disable host‑enforced cutoff.
 
+### Power Delivery Mismatch Detection
+
+To detect and mitigate power delivery mismatches (EV request vs EVSE delivery), tune the following in `secc.env`:
+
+- `SECC_PRECHARGE_TOL_V`: Precharge voltage tolerance in volts (default `20.0`).
+- `SECC_PRECHARGE_TIMEOUT_S`: Max time to reach precharge target (default `10.0`).
+- `SECC_STEADY_V_TOL_FRAC`: Allowed steady-state voltage deviation fraction (default `0.05`).
+- `SECC_STEADY_I_TOL_FRAC`: Allowed steady-state current deviation fraction (default `0.05`).
+- `SECC_MISMATCH_GRACE_S`: Grace period before warning on mismatch (default `0.5`).
+- `SECC_MISMATCH_ABORT_S`: Abort after persistent mismatch beyond tolerance (default `2.0`).
+- `SECC_MIN_CURRENT_FOR_CHECK_A`: Skip current mismatch checks below this current to avoid noise (default `2.0`).
+
+Behavior:
+- During PreCharge, if the EVSE cannot reach the EV’s requested voltage within tolerance and before timeout, the SECC aborts safely without closing the contactor.
+- During CurrentDemand, the SECC compares measured EVSE voltage/current against EV targets each loop. Persistent deviations result in a controlled stop to protect the EV and EVSE. Logged counters summarize any warnings/aborts.
+
 ### EVCC Fault‑Injection Helper
 
 Use the helper to inject malformed frames or duplicates against a running SECC:
