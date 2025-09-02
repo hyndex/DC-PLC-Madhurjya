@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from src.evse_hal.interfaces import (
+from ..interfaces import (
     CPReader,
     ContactorDriver,
     DCPowerSupply,
@@ -14,8 +14,8 @@ from src.evse_hal.interfaces import (
     Meter,
     PWMController,
 )
-from src.evse_hal.esp_periph_client import EspPeriphClient, MeterSample
-from src.evse_hal.lock import CableLockSim
+from ..esp_periph_client import EspPeriphClient, MeterSample
+from ..lock import CableLockSim
 
 
 logger = logging.getLogger("hal.esp.periph")

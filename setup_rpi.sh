@@ -83,6 +83,7 @@ apt-get install -y \
   iproute2 \
   iputils-ping \
   net-tools \
+  tcpdump \
   default-jre-headless \
   rustc \
   cargo \
@@ -99,7 +100,8 @@ modprobe tun || true
 
 echo "Configuring SPI and QCA7000 overlay..."
 IRQ_PIN=${IRQ_PIN:-25}
-SPI_SPEED=${SPI_SPEED:-4000000}
+# Default to 12 MHz for qcaspi; lower speeds can increase "Bad signature" occurrences
+SPI_SPEED=${SPI_SPEED:-12000000}
 
 # Detect boot config path
 BOOTCFG="/boot/firmware/config.txt"
@@ -135,6 +137,9 @@ else
     echo "qca7000 overlay with desired params already present"
   fi
 fi
+
+echo "Installing PLC soft-reset helper..."
+install -m 0755 "${REPO_ROOT}/scripts/plc_soft_reset.sh" /usr/local/sbin/plc_soft_reset.sh
 
 echo "Creating post-boot verification and network setup script..."
 cat >/usr/local/sbin/plc_post_boot.sh <<'POST'
@@ -233,6 +238,9 @@ else
   fi
 fi
 
+LOG "Performing PLC soft reset (qcaspi rebind) ..."
+/usr/local/sbin/plc_soft_reset.sh || true
+
 LOG "Interface details:"
 ip -s addr show "$IFACE" || true
 LOG "Pinging broadcast to stimulate traffic (may fail on some networks)"
@@ -240,6 +248,23 @@ ping -c1 -W1 255.255.255.255 || true
 LOG "Done."
 POST
 chmod +x /usr/local/sbin/plc_post_boot.sh
+
+echo "Creating systemd unit to run post-boot PLC setup..."
+cat >/etc/systemd/system/plc-post.service <<'UNIT'
+[Unit]
+Description=PLC post-boot setup (qcaspi + network)
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/plc_post_boot.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable plc-post.service || true
 
 echo "Creating systemd oneshot to run post-boot script..."
 cat >/etc/systemd/system/plc-post-boot.service <<'UNIT'

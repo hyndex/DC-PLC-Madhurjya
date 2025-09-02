@@ -6,7 +6,7 @@ import time
 import logging
 from typing import Optional, Tuple
 
-from src.evse_hal.interfaces import (
+from ..interfaces import (
     CPReader,
     ContactorDriver,
     DCPowerSupply,
@@ -14,9 +14,9 @@ from src.evse_hal.interfaces import (
     Meter,
     PWMController,
 )
-from src.evse_hal.esp_cp_client import EspCpClient
-from src.evse_hal.adapters.sim import SimHardware
-from src.evse_hal.lock import CableLockSim
+from ..esp_cp_client import EspCpClient
+from .sim import SimHardware
+from ..lock import CableLockSim
 
 logger = logging.getLogger("hal.esp")
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Type
 
-from src.evse_hal.interfaces import EVSEHardware
+from .interfaces import EVSEHardware
 
 
 def _load_adapter(key: str) -> Type[EVSEHardware]:
@@ -14,15 +14,15 @@ def _load_adapter(key: str) -> Type[EVSEHardware]:
     """
     k = key.lower()
     if k == "sim":
-        from src.evse_hal.adapters.sim import SimHardware  # local import
+        from .adapters.sim import SimHardware  # local import
 
         return SimHardware
     if k == "esp-uart":
-        from src.evse_hal.adapters.esp_uart import ESPSerialHardware  # local import
+        from .adapters.esp_uart import ESPSerialHardware  # local import
 
         return ESPSerialHardware
     if k in ("esp-periph", "esp-periph-uart"):
-        from src.evse_hal.adapters.esp_periph_uart import ESPPeriphHardware  # local import
+        from .adapters.esp_periph_uart import ESPPeriphHardware  # local import
 
         return ESPPeriphHardware
     raise ValueError(f"Unknown EVSE hardware adapter '{key}'")

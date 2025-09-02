@@ -124,6 +124,14 @@ class EVSECommunicationController(SlacSessionController):
         except Exception:
             slac_retry_backoff_s = 1.5
         slac_attempts = 0
+        # Backoff between CM_SET_KEY attempts
+        try:
+            setkey_backoff_s = float(os.environ.get("SLAC_SETKEY_RETRY_BACKOFF_S", "0.5"))
+        except Exception:
+            setkey_backoff_s = 0.5
+        last_setkey_ts: float = 0.0
+        # Log SLAC peer at first sight of EV MAC even before MATCHED
+        ev_peer_logged = False
 
         async def _start_secc_bg() -> None:
             nonlocal secc_task, secc_handler
@@ -241,6 +249,8 @@ class EVSECommunicationController(SlacSessionController):
                     getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
                 except Exception:
                     pass
+                # Allow fresh SetKey on next connection
+                keyed_once = False
 
             elif cp in connected_states:
                 if session is None:
@@ -285,11 +295,20 @@ class EVSECommunicationController(SlacSessionController):
                     logger.info("Vehicle detected via CP", extra={"cp_state": cp})
                     session = SlacEvseSession(evse_id, iface, self.slac_config)
                     if not keyed_once:
-                        try:
-                            await session.evse_set_key()
-                        except Exception:
-                            pass
-                        keyed_once = True
+                        # Avoid hammering SetKey; apply a small backoff between attempts
+                        now = asyncio.get_event_loop().time()
+                        if (now - last_setkey_ts) >= max(0.0, setkey_backoff_s):
+                            last_setkey_ts = now
+                            try:
+                                await session.evse_set_key()
+                                keyed_once = True
+                                logger.info("CM_SET_KEY succeeded")
+                            except Exception as e:
+                                # Keep keyed_once False so we retry on next loop
+                                logger.warning(
+                                    "CM_SET_KEY failed; will retry",
+                                    extra={"error": str(e)},
+                                )
                     await self.process_cp_state(session, "B")
                     await asyncio.sleep(0.2)
                     cur = hal.cp().get_state()
@@ -305,6 +324,13 @@ class EVSECommunicationController(SlacSessionController):
                     await _start_secc_bg()
 
                 if session and session.state != STATE_MATCHED:
+                    # If EV MAC is known (after SLAC_PARM), log once early
+                    try:
+                        if not ev_peer_logged and getattr(session, "pev_mac", None):
+                            self._log_slac_peer(session)
+                            ev_peer_logged = True
+                    except Exception:
+                        pass
                     elapsed = asyncio.get_event_loop().time() - session_started_at
                     env_wait = os.environ.get("SLAC_WAIT_TIMEOUT_S")
                     timeout_s = (
@@ -398,6 +424,7 @@ class EVSECommunicationController(SlacSessionController):
                     session_started_at = 0.0
                     # Reset SLAC attempts on disconnect (fresh start on next plug-in)
                     slac_attempts = 0
+                    keyed_once = False
                 # Optional: nudge SLAC reset hint on disconnect
                 try:
                     ms = int(os.environ.get("SLAC_RESTART_ON_DISCONNECT_MS", "0"))

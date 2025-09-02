@@ -4,8 +4,8 @@ import time
 from typing import Optional, List, Union, Dict
 import os
 
-from src.evse_hal.interfaces import EVSEHardware
-from src.evse_hal.thermal import ThermalManager
+from .interfaces import EVSEHardware
+from .thermal import ThermalManager
 from iso15118.secc.controller.simulator import SimEVSEController
 from iso15118.secc.controller.interface import (
     AuthorizationResponse,
@@ -372,6 +372,11 @@ class HalEVSEController(SimEVSEController):
         except Exception:
             ctx = None
         snapshot = None
+        # Derive a concise state name for easier filtering (e.g., CableCheck, PreCharge, CurrentDemand)
+        try:
+            state_name = getattr(state, "__class__", type(state)).__name__
+        except Exception:
+            state_name = str(state)
         if ctx is not None:
             try:
                 snapshot = {
@@ -388,6 +393,7 @@ class HalEVSEController(SimEVSEController):
             "ISO15118 state",
             extra={
                 "state": str(state),
+                "iso_state": state_name,
                 **({"bms": snapshot} if snapshot else {}),
             },
         )

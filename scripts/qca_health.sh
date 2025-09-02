@@ -32,6 +32,7 @@ for n in /sys/class/net/*; do
     echo "- $i"
     echo "  ethtool -i:"; ethtool -i "$i" || true
     echo "  ip -s link:"; ip -s link show "$i" || true
+    echo "  ethtool -S (driver stats):"; ethtool -S "$i" || true
   fi
 done
 if [ "$found" -eq 0 ]; then
@@ -40,4 +41,3 @@ fi
 
 echo
 echo "[qca-health] Done."
-

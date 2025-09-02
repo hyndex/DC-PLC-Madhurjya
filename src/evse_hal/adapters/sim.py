@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-from src.evse_hal.interfaces import (
+from ..interfaces import (
     CPReader,
     ContactorDriver,
     DCPowerSupply,
@@ -11,10 +11,10 @@ from src.evse_hal.interfaces import (
     Meter,
     PWMController,
 )
-from src.ccs_sim import pwm as sim_pwm
-from src.ccs_sim.precharge import DCPowerSupplySim
-from src.ccs_sim.emeter import EnergyMeterSim
-from src.evse_hal.lock import CableLockSim
+from ccs_sim import pwm as sim_pwm
+from ccs_sim.precharge import DCPowerSupplySim
+from ccs_sim.emeter import EnergyMeterSim
+from ..lock import CableLockSim
 
 
 class _SimPWM(PWMController):
