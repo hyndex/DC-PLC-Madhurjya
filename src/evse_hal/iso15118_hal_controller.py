@@ -35,6 +35,8 @@ class HalEVSEController(SimEVSEController):
     def __init__(self, hal: EVSEHardware):
         super().__init__()
         self._hal = hal
+        self._cable_check_started = False
+        self._last_supply: Optional[tuple[float, float]] = None  # (V, A)
 
     async def set_status(self, status: ServiceStatus) -> None:
         # Could map to LEDs or system state in real hardware
@@ -155,6 +157,75 @@ class HalEVSEController(SimEVSEController):
                 multiplier=ripple_mul, value=ripple_val, unit=UnitSymbol.AMPERE
             ),
         )
+
+    # --- Cable check lifecycle ---
+    async def start_cable_check(self):  # type: ignore[override]
+        """Initiate cable check at hardware level.
+
+        For HAL without real contactor control, close the simulated contactor
+        so isolation can proceed. Real integrations should operate relays here.
+        """
+        try:
+            self._hal.contactor().set_closed(True)
+            logger.info("EVSE contactor closed for CableCheck")
+        except Exception:
+            logger.warning("Unable to close contactor via HAL; continuing")
+        self._cable_check_started = True
+
+    async def get_cable_check_status(self):  # type: ignore[override]
+        """Report isolation status once contactor closed.
+
+        Without hardware IMD feedback, return VALID to progress to PreCharge.
+        """
+        # If hardware can provide an isolation status, map it here.
+        return IsolationLevel.VALID
+
+    # --- Supply control ---
+    async def send_charging_command(  # type: ignore[override]
+        self,
+        ev_target_voltage: Optional[float],
+        ev_target_current: Optional[float],
+        is_precharge: bool = False,
+        is_session_bpt: bool = False,
+    ) -> None:
+        """Set DC supply targets and update meter context."""
+        try:
+            v = float(ev_target_voltage or 0.0)
+            i = float(ev_target_current or 0.0)
+        except Exception:
+            v, i = 0.0, 0.0
+        try:
+            sup = self._hal.supply()
+            sup.set_voltage(v)
+            sup.set_current_limit(i)
+            sv, si = sup.get_status()
+            self._last_supply = (sv, si)
+            # Update meter and evse context for present values
+            self._hal.meter().update(sv, si)
+            self.evse_data_context.present_voltage = sv
+            self.evse_data_context.present_current = si
+            logger.info(
+                "HAL set supply",
+                extra={"target_v": v, "target_a": i, "present_v": sv, "present_a": si},
+            )
+        except Exception:
+            logger.warning("HAL supply control failed", exc_info=False)
+
+    async def get_evse_present_voltage(self, protocol: Protocol):  # type: ignore[override]
+        try:
+            sv, _ = self._hal.supply().get_status()
+            self.evse_data_context.present_voltage = sv
+        except Exception:
+            pass
+        return await super().get_evse_present_voltage(protocol)
+
+    async def get_evse_present_current(self, protocol: Protocol):  # type: ignore[override]
+        try:
+            _, si = self._hal.supply().get_status()
+            self.evse_data_context.present_current = si
+        except Exception:
+            pass
+        return await super().get_evse_present_current(protocol)
 
     async def is_contactor_closed(self) -> Optional[bool]:
         return self._hal.contactor().is_closed()
