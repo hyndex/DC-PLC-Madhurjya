@@ -104,6 +104,7 @@ class EVSECommunicationController(SlacSessionController):
             logger.error("HAL adapter init failed", extra={"adapter": adapter, "error": str(e)})
             return
         connected_states = {"B", "C", "D"}
+        emergency_states = {"E", "F"}
         logger.info("HAL mode: waiting for CP states to start SLAC", extra={"adapter": adapter})
 
         # Lifecycle variables
@@ -152,6 +153,55 @@ class EVSECommunicationController(SlacSessionController):
                 secc_handler = None
                 logger.info("SECC stopped", extra={"reason": reason})
 
+        async def _ensure_locked_before_plc() -> bool:
+            """If a cable lock exists, enforce lock before PLC starts.
+
+            Returns True if either locked or no lock present/required.
+            """
+            # Discover optional cable lock driver
+            lock = getattr(hal, "cable_lock", None)
+            if callable(lock):
+                lock = lock()
+            if not lock:
+                return True
+            # Config: enforce lock by default if lock hardware is present
+            enforce = os.environ.get("CABLE_LOCK_ENFORCE", "1").strip() not in ("0", "false", "no")
+            if not enforce:
+                return True
+            # Already locked?
+            is_locked = getattr(lock, "is_locked", lambda: None)()
+            if is_locked:
+                return True
+            try:
+                lock.lock()
+            except Exception:
+                # If lock actuation fails and enforcement is strict, do not proceed
+                return False
+            # Verify lock state with timeout
+            try:
+                verify_s = float(os.environ.get("CABLE_LOCK_VERIFY_TIMEOUT_S", "1.0"))
+            except Exception:
+                verify_s = 1.0
+            deadline = asyncio.get_event_loop().time() + max(0.0, verify_s)
+            while asyncio.get_event_loop().time() < deadline:
+                ok = getattr(lock, "is_locked", lambda: True)()
+                if ok:
+                    return True
+                await asyncio.sleep(0.02)
+            return False
+
+        async def _unlock_cable_best_effort(reason: str) -> None:
+            lock = getattr(hal, "cable_lock", None)
+            if callable(lock):
+                lock = lock()
+            allow = os.environ.get("CABLE_UNLOCK_ON_FAULT", "1").strip() not in ("0", "false", "no")
+            if lock and allow:
+                try:
+                    lock.unlock()
+                    logger.info("Cable unlocked", extra={"reason": reason})
+                except Exception:
+                    pass
+
         while True:
             try:
                 cp = hal.cp().get_state()
@@ -162,7 +212,37 @@ class EVSECommunicationController(SlacSessionController):
                 logger.debug("CP transition", extra={"from": last_cp, "to": cp})
                 last_cp = cp
 
-            if cp in connected_states:
+            # Emergency states: cut power and unlock immediately
+            if cp in emergency_states:
+                try:
+                    hal.contactor().set_closed(False)
+                except Exception:
+                    pass
+                await _unlock_cable_best_effort("cp_emergency")
+                # Stop SECC quickly
+                if secc_task is not None:
+                    await _stop_secc("CP emergency state")
+                # Reset any SLAC session state
+                if session is not None:
+                    try:
+                        await self.process_cp_state(session, "A")
+                    except Exception:
+                        pass
+                    try:
+                        await session.leave_logical_network()
+                    except Exception:
+                        pass
+                    session = None
+                    session_started_at = 0.0
+                    slac_attempts = 0
+                # Hint firmware CP to safe if available
+                try:
+                    getattr(hal, "esp_set_mode", lambda _m=None: None)("manual")
+                    getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
+                except Exception:
+                    pass
+
+            elif cp in connected_states:
                 if session is None:
                     if slac_attempts >= max_slac_attempts:
                         # Exhausted attempts; wait for CP disconnect or manual retry
@@ -173,6 +253,35 @@ class EVSECommunicationController(SlacSessionController):
                             )
                         await asyncio.sleep(0.5)
                         continue
+                    # Ensure plug is fully seated and (optionally) locked before PLC
+                    # Small stability wait for CP to avoid starting on a glitch
+                    try:
+                        stable_s = float(os.environ.get("CP_STABLE_BEFORE_START_S", "0.1"))
+                    except Exception:
+                        stable_s = 0.1
+                    if stable_s > 0:
+                        t0 = asyncio.get_event_loop().time()
+                        ok = True
+                        while asyncio.get_event_loop().time() - t0 < stable_s:
+                            try:
+                                if hal.cp().get_state() not in connected_states:
+                                    ok = False
+                                    break
+                            except Exception:
+                                ok = False
+                                break
+                            await asyncio.sleep(0.02)
+                        if not ok:
+                            await asyncio.sleep(0.05)
+                            continue
+
+                    # Try to engage cable lock if present/enforced
+                    locked_ok = await _ensure_locked_before_plc()
+                    if not locked_ok:
+                        logger.warning("Cable lock not confirmed; deferring PLC start")
+                        await asyncio.sleep(0.2)
+                        continue
+
                     logger.info("Vehicle detected via CP", extra={"cp_state": cp})
                     session = SlacEvseSession(evse_id, iface, self.slac_config)
                     if not keyed_once:
@@ -255,6 +364,8 @@ class EVSECommunicationController(SlacSessionController):
                         getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
                     except Exception:
                         pass
+                    # Unlock promptly so user can remove connector
+                    await _unlock_cable_best_effort("cp_disconnect")
                     # Short delay to satisfy timing without unduly delaying logic
                     try:
                         await asyncio.sleep(min(cutoff_s, 0.2))
@@ -296,7 +407,22 @@ class EVSECommunicationController(SlacSessionController):
                 except Exception:
                     pass
 
-            await asyncio.sleep(0.2)
+            # Adaptive polling: faster while connected/charging to cut latency
+            base_sleep = 0.2
+            try:
+                fast_connected = float(os.environ.get("CP_POLL_CONNECTED_S", "0.05"))
+            except Exception:
+                fast_connected = 0.05
+            try:
+                fastest_emergency = float(os.environ.get("CP_POLL_EMERGENCY_S", "0.02"))
+            except Exception:
+                fastest_emergency = 0.02
+            if cp in emergency_states:
+                await asyncio.sleep(max(0.0, fastest_emergency))
+            elif cp in connected_states or (secc_task is not None):
+                await asyncio.sleep(max(0.0, fast_connected))
+            else:
+                await asyncio.sleep(base_sleep)
 
     async def _trigger_matching(self, session: SlacEvseSession) -> None:
         """Simulate CP state transitions to start SLAC and wait for a match."""

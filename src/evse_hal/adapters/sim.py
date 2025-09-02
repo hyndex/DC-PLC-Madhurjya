@@ -14,6 +14,7 @@ from src.evse_hal.interfaces import (
 from src.ccs_sim import pwm as sim_pwm
 from src.ccs_sim.precharge import DCPowerSupplySim
 from src.ccs_sim.emeter import EnergyMeterSim
+from src.evse_hal.lock import CableLockSim
 
 
 class _SimPWM(PWMController):
@@ -99,6 +100,7 @@ class SimHardware(EVSEHardware):
     _cont: _SimContactor
     _sup: _SimSupply
     _meter: _SimMeter
+    _lock: CableLockSim
 
     def __init__(self) -> None:
         self._pwm = _SimPWM()
@@ -106,6 +108,7 @@ class SimHardware(EVSEHardware):
         self._cont = _SimContactor()
         self._sup = _SimSupply()
         self._meter = _SimMeter()
+        self._lock = CableLockSim()
 
     def pwm(self) -> PWMController:
         return self._pwm
@@ -121,3 +124,7 @@ class SimHardware(EVSEHardware):
 
     def meter(self) -> Meter:
         return self._meter
+
+    # Optional cable lock API for HAL consumers
+    def cable_lock(self) -> CableLockSim:
+        return self._lock

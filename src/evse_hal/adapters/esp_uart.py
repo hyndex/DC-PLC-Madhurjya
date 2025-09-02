@@ -16,6 +16,7 @@ from src.evse_hal.interfaces import (
 )
 from src.evse_hal.esp_cp_client import EspCpClient
 from src.evse_hal.adapters.sim import SimHardware
+from src.evse_hal.lock import CableLockSim
 
 logger = logging.getLogger("hal.esp")
 
@@ -135,6 +136,7 @@ class ESPSerialHardware(EVSEHardware):
     _pwm: _EspPWM
     _cp: _EspCP
     _fallback: SimHardware
+    _lock: CableLockSim
 
     def __init__(self, port: Optional[str] = None) -> None:
         self._client = EspCpClient(port=port or os.environ.get("ESP_CP_PORT"))
@@ -155,6 +157,8 @@ class ESPSerialHardware(EVSEHardware):
         self._cp = _EspCP(self._client)
         # reuse sim for the rest to keep plumbing simple
         self._fallback = SimHardware()
+        # Optional cable lock: use a simulated lock by default (real HW can override)
+        self._lock = CableLockSim()
 
     def pwm(self) -> PWMController:
         return self._pwm
@@ -208,3 +212,7 @@ class ESPSerialHardware(EVSEHardware):
 
     def esp_set_pwm(self, duty: int, enable: bool = True) -> None:
         self._client.set_pwm(int(duty), enable=enable)
+
+    # Optional cable lock API for HAL consumers
+    def cable_lock(self) -> CableLockSim:
+        return self._lock

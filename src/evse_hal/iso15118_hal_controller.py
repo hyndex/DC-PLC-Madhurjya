@@ -266,6 +266,16 @@ class HalEVSEController(SimEVSEController):
                 self._hal.contactor().set_closed(False)
             except Exception:
                 pass
+            # Unlock promptly on fault so the user can remove connector
+            try:
+                if os.environ.get("CABLE_UNLOCK_ON_FAULT", "1").strip().lower() not in ("0", "false", "no"):
+                    lock = getattr(self._hal, "cable_lock", None)
+                    if callable(lock):
+                        lock = lock()
+                    if lock:
+                        getattr(lock, "unlock", lambda: None)()
+            except Exception:
+                pass
             # Hint to CP to return to safe state if possible
             try:
                 getattr(self._hal, "esp_set_mode", lambda _m=None: None)("manual")
@@ -324,6 +334,16 @@ class HalEVSEController(SimEVSEController):
         # Open contactor to cut DC power immediately
         try:
             self._hal.contactor().set_closed(False)
+        except Exception:
+            pass
+        # Unlock connector promptly on stop/fault to let user remove plug
+        try:
+            if os.environ.get("CABLE_UNLOCK_ON_FAULT", "1").strip().lower() not in ("0", "false", "no"):
+                lock = getattr(self._hal, "cable_lock", None)
+                if callable(lock):
+                    lock = lock()
+                if lock:
+                    getattr(lock, "unlock", lambda: None)()
         except Exception:
             pass
         # Best-effort pilot-line based shutdown: drive CP to a safe state
