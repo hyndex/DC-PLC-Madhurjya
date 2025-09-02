@@ -342,6 +342,34 @@ static void process_line(String &line) {
     resp["type"] = "pong";
     serializeJson(resp, SerialPi);
     SerialPi.print('\n');
+  } else if (scmd == "restart_slac_hint") {
+    // Briefly drive 100% (X1) then return to dc mode
+    uint32_t ms = doc["ms"] | 400;
+    if (ms < 50) ms = 50; if (ms > 2000) ms = 2000;
+    OpMode prev = g_mode;
+    g_mode = OpMode::MANUAL;
+    g_pwm_enabled = true;
+    g_pwm_duty_pct = 100;
+    apply_pwm_manual();
+    delay(ms);
+    g_mode = OpMode::DC_AUTO;
+    apply_dc_auto_output(g_last_cp_state);
+    StaticJsonDocument<96> resp;
+    resp["type"] = "ok";
+    resp["cmd"] = "restart_slac_hint";
+    serializeJson(resp, SerialPi);
+    SerialPi.print('\n');
+    send_status_json();
+    Serial.print("["); Serial.print(millis()); Serial.print("] [I] restart_slac_hint applied (ms="); Serial.print(ms); Serial.println(")");
+    (void)prev;
+  } else if (scmd == "reset") {
+    StaticJsonDocument<64> resp;
+    resp["type"] = "ok";
+    resp["cmd"] = "reset";
+    serializeJson(resp, SerialPi);
+    SerialPi.print('\n');
+    delay(50);
+    ESP.restart();
   } else {
     StaticJsonDocument<96> resp;
     resp["type"] = "error";

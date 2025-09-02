@@ -54,9 +54,14 @@ class EspCpClient:
         self._lock = threading.Lock()
         self._last: Optional[CPStatus] = None
         self._pong = threading.Event()
+        self._err_streak = 0
 
     def connect(self) -> None:
-        self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
+        try:
+            self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
+        except Exception as e:
+            logger.error("ESP CP serial open failed", extra={"port": self._port, "error": str(e)})
+            raise
         self._stop.clear()
         logger.info("ESP CP serial connect", extra={"port": self._port, "baud": self._baud})
         self._rx_thread = threading.Thread(target=self._rx_loop, name="esp-cp-rx", daemon=True)
@@ -138,10 +143,23 @@ class EspCpClient:
 
     # ----- Internals -----
     def _send(self, obj: Dict[str, Any]) -> None:
-        if not self._ser:
-            raise RuntimeError("Serial not connected")
+        if not self._ser or not getattr(self._ser, "is_open", False):
+            # Attempt a quick reconnect
+            try:
+                self.connect()
+            except Exception:
+                raise RuntimeError("Serial not connected")
         line = json.dumps(obj, separators=(",", ":")) + "\n"
-        self._ser.write(line.encode("utf-8"))
+        try:
+            self._ser.write(line.encode("utf-8"))
+        except Exception:
+            # One retry after reconnect
+            try:
+                self.connect()
+                self._ser.write(line.encode("utf-8"))
+            except Exception as e:
+                logger.warning("UART TX failed", extra={"error": str(e)})
+                raise
         logger.debug("UART TX", extra={"line": line.strip()})
 
     def _rx_loop(self) -> None:
@@ -151,7 +169,21 @@ class EspCpClient:
             try:
                 line = ser.readline()
             except Exception:
-                time.sleep(0.05)
+                self._err_streak += 1
+                if self._err_streak >= 10:
+                    try:
+                        if self._ser:
+                            try:
+                                self._ser.close()
+                            except Exception:
+                                pass
+                        self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
+                        ser = self._ser
+                        logger.info("ESP CP serial reconnected")
+                        self._err_streak = 0
+                    except Exception:
+                        pass
+                time.sleep(0.1)
                 continue
             if not line:
                 continue
@@ -193,3 +225,18 @@ class EspCpClient:
                     self._last = CPStatus(cp_mv=mv, state=st, pwm=pwm, ts=time.time(), mode=mode, cp_mv_robust=mv_r)
             elif mtype == "pong":
                 self._pong.set()
+            elif mtype == "ok":
+                # Acknowledge simple ok responses (e.g., restart_slac_hint / reset)
+                pass
+
+    # --- Convenience / extended commands ---
+    def restart_slac_hint(self, reset_ms: int = 400) -> None:
+        """Ask firmware to emit a short X1 pulse then return to dc mode."""
+        self._send({"cmd": "restart_slac_hint", "ms": int(reset_ms)})
+
+    def reset(self) -> None:
+        """Request firmware reboot (link will drop)."""
+        try:
+            self._send({"cmd": "reset"})
+        except Exception:
+            pass
