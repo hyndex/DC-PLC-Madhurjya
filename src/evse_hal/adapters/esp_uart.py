@@ -41,13 +41,33 @@ class _EspCP(CPReader):
     def __init__(self, client: EspCpClient) -> None:
         self._c = client
         self._last_state: Optional[str] = None
+        # Debounce control-pilot state transitions to mitigate noise/glitches.
+        # Default to 50 ms for non-emergency transitions. Allow override via env.
+        try:
+            self._debounce_s: float = float(os.environ.get("CP_DEBOUNCE_S", "0.05"))
+        except Exception:
+            self._debounce_s = 0.05
+        # Internal tracking for raw vs debounced state
+        self._raw_state: Optional[str] = None
+        self._raw_since: float = 0.0
+        self._debounced_state: Optional[str] = None
+        self._debounced_since: float = 0.0
 
     def read_voltage(self) -> float:
         st = self._c.get_status(wait_s=0.2)
         if st:
-            self._last_state = st.state
+            # Update debouncer and last known state based on status
+            self._update_states_from_status(st)
             v = st.cp_mv / 1000.0
-            logger.debug("HAL CP read", extra={"voltage_v": v, "state": st.state, "mode": getattr(st, "mode", None)})
+            logger.debug(
+                "HAL CP read",
+                extra={
+                    "voltage_v": v,
+                    "raw_state": st.state,
+                    "debounced_state": self._debounced_state,
+                    "mode": getattr(st, "mode", None),
+                },
+            )
             return v
         return 0.0
 
@@ -58,8 +78,55 @@ class _EspCP(CPReader):
     def get_state(self) -> Optional[str]:
         st = self._c.get_status(wait_s=0.05)
         if st:
-            self._last_state = st.state
-        return self._last_state
+            self._update_states_from_status(st)
+        return self._debounced_state or self._last_state
+
+    # --- Internals ---
+    def _update_states_from_status(self, st) -> None:
+        now = time.time()
+        raw = (st.state or "").strip().upper()[:1] or None
+        if raw != self._raw_state:
+            self._raw_state = raw
+            self._raw_since = now
+        # Initialize on first run
+        if self._debounced_state is None and raw is not None:
+            self._debounced_state = raw
+            self._debounced_since = now
+            self._last_state = raw
+            logger.info("CP state (init)", extra={"state": raw})
+            return
+        # Emergency states E/F: apply no debounce for fail-safe reaction
+        if raw in ("E", "F") and raw != self._debounced_state:
+            prev = self._debounced_state
+            self._debounced_state = raw
+            self._debounced_since = now
+            self._last_state = raw
+            logger.warning(
+                "CP emergency state",
+                extra={"from": prev, "to": raw, "cp_mv": st.cp_mv, "mode": getattr(st, "mode", None)},
+            )
+            return
+        # For normal transitions A/B/C/D, require stability for debounce_s
+        if raw is not None and raw != self._debounced_state:
+            stable = max(0.0, now - self._raw_since)
+            if stable >= max(0.0, self._debounce_s):
+                prev = self._debounced_state
+                self._debounced_state = raw
+                self._debounced_since = now
+                self._last_state = raw
+                logger.info(
+                    "CP state",
+                    extra={
+                        "from": prev,
+                        "to": raw,
+                        "stable_ms": int(stable * 1000),
+                        "cp_mv": st.cp_mv,
+                        "mode": getattr(st, "mode", None),
+                    },
+                )
+        else:
+            # Maintain last state
+            self._last_state = self._debounced_state or raw
 
 
 @dataclass

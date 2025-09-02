@@ -144,6 +144,10 @@ Protocol selection (SAP)
 
 These controls do not change protocol semantics and are safe defaults. Increase/decrease per site as needed based on PLC link quality.
 
+Control Pilot robustness (HAL)
+- `CP_DEBOUNCE_S`: Debounce window for CP state changes (seconds). New CP states A/B/C/D must remain stable for this duration before the HAL reports them. Emergency states `E`/`F` bypass debounce for immediate fail‑safe reaction. Default `0.05` (50 ms).
+- `SECC_CP_DISCONNECT_IMMEDIATE_CUTOFF_S`: Immediate contactor open on CP disconnect at the host level (seconds). Default `0.1` (100 ms). Set to `0` to disable host‑enforced cutoff.
+
 ### EVCC Fault‑Injection Helper
 
 Use the helper to inject malformed frames or duplicates against a running SECC:

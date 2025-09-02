@@ -225,9 +225,21 @@ class HalEVSEController(SimEVSEController):
         return not self._hal.contactor().is_closed()
 
     async def get_cp_state(self) -> CpState:
-        # Approximate mapping; real hardware would inspect CP voltage waveform
-        state = self._hal.cp().get_state() or "B"
-        return CpState.C2 if state in ("C", "D") else CpState.B1
+        # Map HAL CP letter state to ISO 15118 CpState with emergency awareness
+        st = (self._hal.cp().get_state() or "B").upper()
+        if st == "A":
+            return CpState.A1
+        if st == "B":
+            return CpState.B1
+        if st == "C":
+            return CpState.C2
+        if st == "D":
+            return CpState.D2
+        if st == "E":
+            return CpState.E
+        if st == "F":
+            return CpState.F
+        return CpState.UNKNOWN
 
     async def stop_charger(self) -> None:
         # Open contactor to cut DC power immediately
