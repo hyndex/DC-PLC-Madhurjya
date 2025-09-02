@@ -46,7 +46,11 @@ class EspCpClient:
     ) -> None:
         # Prefer Raspberry Pi's stable alias when not specified
         self._port = port or os.environ.get("ESP_CP_PORT", "/dev/serial0")
-        self._baud = baud
+        # Allow overriding baud via env for mismatched firmware settings
+        try:
+            self._baud = int(os.environ.get("ESP_CP_BAUD", str(baud)))
+        except Exception:
+            self._baud = baud
         self._timeout = timeout_s
         self._ser: Optional[serial.Serial] = None
         self._rx_thread: Optional[threading.Thread] = None
@@ -187,10 +191,33 @@ class EspCpClient:
                 continue
             if not line:
                 continue
+            # Decode tolerantly and try to extract JSON objects embedded in noisy logs
+            txt = line.decode("utf-8", errors="ignore").strip()
+            # Handle bare pong messages early
+            if txt.strip().lower() == "pong" or "\"pong\"" == txt.strip().lower():
+                self._pong.set()
+                continue
+            # Strip potential BOMs
+            txt = txt.lstrip("\ufeff")
+            msg = None
             try:
-                msg = json.loads(line.decode("utf-8").strip())
+                msg = json.loads(txt)
             except Exception:
-                logger.debug("UART RX (non-JSON)", extra={"line": line.decode(errors="ignore").strip()})
+                # Try to find a JSON object within the line (e.g., prefixed logs)
+                start = txt.find("{")
+                end = txt.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    candidate = txt[start : end + 1]
+                    try:
+                        msg = json.loads(candidate)
+                    except Exception:
+                        msg = None
+            if msg is None:
+                # As a last resort, look for a quoted string pong inside the line
+                if "pong" in txt.lower():
+                    self._pong.set()
+                    continue
+                logger.debug("UART RX (non-JSON)", extra={"line": txt[:240]})
                 continue
 
             # Handle cases where firmware sends JSON that isn't an object
