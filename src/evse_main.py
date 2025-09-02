@@ -114,6 +114,16 @@ class EVSECommunicationController(SlacSessionController):
         secc_task: Optional[asyncio.Task] = None
         secc_handler = None  # type: ignore
         last_cp: Optional[str] = None
+        # SLAC init retry control per plug-in
+        try:
+            max_slac_attempts = int(os.environ.get("SLAC_MAX_ATTEMPTS", "2"))
+        except Exception:
+            max_slac_attempts = 2
+        try:
+            slac_retry_backoff_s = float(os.environ.get("SLAC_RETRY_BACKOFF_S", "1.5"))
+        except Exception:
+            slac_retry_backoff_s = 1.5
+        slac_attempts = 0
 
         async def _start_secc_bg() -> None:
             nonlocal secc_task, secc_handler
@@ -155,6 +165,15 @@ class EVSECommunicationController(SlacSessionController):
 
             if cp in connected_states:
                 if session is None:
+                    if slac_attempts >= max_slac_attempts:
+                        # Exhausted attempts; wait for CP disconnect or manual retry
+                        if int(asyncio.get_event_loop().time() * 10) % 10 == 0:
+                            logger.warning(
+                                "SLAC attempts exhausted (max=%d); holding until CP disconnect",
+                                max_slac_attempts,
+                            )
+                        await asyncio.sleep(0.5)
+                        continue
                     logger.info("Vehicle detected via CP", extra={"cp_state": cp})
                     session = SlacEvseSession(evse_id, iface, self.slac_config)
                     if not keyed_once:
@@ -186,7 +205,12 @@ class EVSECommunicationController(SlacSessionController):
                         else float(self.slac_config.slac_init_timeout or 50.0)
                     )
                     if elapsed > timeout_s:
-                        logger.warning("SLAC match timeout; attempting restart hint and retry")
+                        slac_attempts += 1
+                        logger.warning(
+                            "SLAC match timeout (attempt %d/%d); applying restart hint",
+                            slac_attempts,
+                            max_slac_attempts,
+                        )
                         try:
                             reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
                             getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
@@ -196,12 +220,27 @@ class EVSECommunicationController(SlacSessionController):
                             )
                         except Exception:
                             pass
+                        # Gracefully reset SLAC state on the current session
                         try:
                             await self.process_cp_state(session, "A")
                         except Exception:
                             pass
                         session = None
                         session_started_at = 0.0
+                        # If attempts remain, back off briefly before next try
+                        if slac_attempts < max_slac_attempts:
+                            try:
+                                await asyncio.sleep(slac_retry_backoff_s)
+                            except Exception:
+                                pass
+                        else:
+                            # Too many failures; surface an error and wait for user action or replug
+                            logger.error(
+                                "SLAC initialization failed after %d attempts; waiting for CP disconnect/retry",
+                                slac_attempts,
+                            )
+                            # Optional: mark a transient error status if SECC controller available later
+                            # Block further attempts until CP disconnect resets the counter
             else:
                 # Grace window to tolerate brief CP flaps
                 grace_s = float(os.environ.get("CP_DISCONNECT_GRACE_S", "0.5"))
@@ -228,6 +267,8 @@ class EVSECommunicationController(SlacSessionController):
                         pass
                     session = None
                     session_started_at = 0.0
+                    # Reset SLAC attempts on disconnect (fresh start on next plug-in)
+                    slac_attempts = 0
                 # Optional: nudge SLAC reset hint on disconnect
                 try:
                     ms = int(os.environ.get("SLAC_RESTART_ON_DISCONNECT_MS", "0"))
