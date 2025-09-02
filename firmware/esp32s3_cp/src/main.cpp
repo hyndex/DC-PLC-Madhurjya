@@ -30,6 +30,18 @@
 // Use UART1 for the Pi link to keep USB-CDC (Serial) for logs
 HardwareSerial SerialPi(1);
 
+// ---- Peripheral JSON-RPC state ----
+struct Meter { float v; float i; float p; float e; };
+enum ModePeriph { MODE_SIM = 0, MODE_HW = 1 };
+static ModePeriph g_periph_mode = MODE_SIM;
+static bool g_contactor_cmd = false;
+static bool g_contactor_aux = false;
+static uint32_t g_armed_until_ms = 0;
+static bool g_meter_stream = false;
+static bool g_temps_stream = false;
+static uint32_t g_last_ping_ms = 0;
+static uint32_t g_up0_ms = 0;
+
 // State
 enum class OpMode : uint8_t { MANUAL = 0, DC_AUTO = 1 };
 static volatile OpMode g_mode = OpMode::DC_AUTO;  // default: DC fast charging helper
@@ -299,86 +311,89 @@ static void apply_dc_auto_output(char st) {
 }
 
 static void process_line(String &line) {
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<768> doc;
   DeserializationError err = deserializeJson(doc, line);
   if (err) {
-    // Respond with error
     StaticJsonDocument<128> resp;
     resp["type"] = "error";
     resp["msg"] = String("bad_json:") + err.c_str();
     serializeJson(resp, SerialPi);
     SerialPi.print('\n');
-    Serial.print("["); Serial.print(millis()); Serial.print("] [E] Bad JSON: ");
-    Serial.println(err.c_str());
+    Serial.print("["); Serial.print(millis()); Serial.print("] [E] Bad JSON: "); Serial.println(err.c_str());
     return;
   }
 
+  // JSON-RPC path (peripheral)
+  const char* mtype = doc["type"] | "";
+  if (strcmp(mtype, "req") == 0) {
+    uint32_t id = doc["id"] | 0;
+    const char* method = doc["method"] | "";
+    if (!method[0]) {
+      StaticJsonDocument<128> errj; errj["code"] = -32600; errj["message"] = "invalid_request";
+      StaticJsonDocument<192> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["error"] = errj;
+      serializeJson(out, SerialPi); SerialPi.print('\n'); return;
+    }
+    // sys.ping
+    if (!strcmp(method, "sys.ping")) {
+      g_last_ping_ms = millis();
+      StaticJsonDocument<256> res; res["up_ms"] = millis()-g_up0_ms; res["mode"]=(g_periph_mode==MODE_SIM)?"sim":"hw"; res.createNestedObject("temps")["mcu"] = temperatureRead();
+      StaticJsonDocument<256> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=res;
+      serializeJson(out, SerialPi); SerialPi.print('\n'); return;
+    }
+    if (!strcmp(method, "sys.info")) {
+      StaticJsonDocument<384> res; res["fw"]="esp-cp-periph/0.2.0"; res["proto"]=1; res["mode"]=(g_periph_mode==MODE_SIM)?"sim":"hw";
+      JsonArray caps = res.createNestedArray("capabilities"); caps.add("cp"); caps.add("contactor"); caps.add("temps.gun_a"); caps.add("temps.gun_b"); caps.add("meter");
+      StaticJsonDocument<512> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=res;
+      serializeJson(out, SerialPi); SerialPi.print('\n'); return;
+    }
+    if (!strcmp(method, "sys.arm")) {
+      g_armed_until_ms = millis() + 1500;
+      StaticJsonDocument<96> res; res["armed_until_ms"]=g_armed_until_ms; StaticJsonDocument<192> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=res; serializeJson(out, SerialPi); SerialPi.print('\n'); return;
+    }
+    if (!strcmp(method, "sys.set_mode")) {
+      const char* m = doc["params"]["mode"] | "sim"; g_periph_mode = (!strcmp(m,"hw"))? MODE_HW : MODE_SIM; StaticJsonDocument<96> res; res["mode"]= (g_periph_mode==MODE_SIM)?"sim":"hw"; StaticJsonDocument<192> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=res; serializeJson(out, SerialPi); SerialPi.print('\n'); return;
+    }
+    if (!strcmp(method, "contactor.check")) {
+      StaticJsonDocument<256> res; res["commanded"]=g_contactor_cmd; bool aux=(g_contactor_aux==g_contactor_cmd); res["aux_ok"]=aux; res["coil_ma"]= g_contactor_cmd ? 120.0 : 0.0; res["reason"]= aux?"ok":"mismatch"; StaticJsonDocument<256> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=res; serializeJson(out, SerialPi); SerialPi.print('\n'); return;
+    }
+    if (!strcmp(method, "contactor.set")) {
+      if ((int32_t)(millis() - g_armed_until_ms) > 0) { StaticJsonDocument<128> errj; errj["code"]=1001; errj["message"]="not_armed"; StaticJsonDocument<192> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["error"]=errj; serializeJson(out, SerialPi); SerialPi.print('\n'); return; }
+      bool on = doc["params"]["on"] | false; g_contactor_cmd = on; delay(40); g_contactor_aux = on; delay(60); bool aux_ok=(g_contactor_aux==g_contactor_cmd);
+      if (!aux_ok && on) { g_contactor_cmd=false; g_contactor_aux=false; StaticJsonDocument<128> errj; errj["code"]=1002; errj["message"]="aux_mismatch"; StaticJsonDocument<192> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["error"]=errj; serializeJson(out, SerialPi); SerialPi.print('\n'); return; }
+      StaticJsonDocument<128> res; res["ok"]=true; res["aux_ok"]=aux_ok; res["took_ms"]=60; StaticJsonDocument<192> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=res; serializeJson(out, SerialPi); SerialPi.print('\n'); return;
+    }
+    if (!strcmp(method, "temps.read")) {
+      StaticJsonDocument<256> res; JsonObject t = res.createNestedObject("temps"); t.createNestedObject("gun_a")["c"] = 32.0 + (g_contactor_aux? 12.0:0.5); t.createNestedObject("gun_b")["c"] = 31.5 + (g_contactor_aux? 11.0:0.3);
+      StaticJsonDocument<256> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=res; serializeJson(out, SerialPi); SerialPi.print('\n'); return;
+    }
+    if (!strcmp(method, "meter.read")) {
+      static float e=0.0f; float on=g_contactor_aux?1.0f:0.0f; float v=415.0f; float i= on*50.0f; float p=v*i/1000.0f; e += p*0.001f; StaticJsonDocument<256> res; res["v"]=v; res["i"]=i; res["p"]=p; res["e"]=e; StaticJsonDocument<256> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=res; serializeJson(out, SerialPi); SerialPi.print('\n'); return;
+    }
+    if (!strcmp(method, "meter.stream_start")) { g_meter_stream = true; StaticJsonDocument<64> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=JsonObject(); serializeJson(out, SerialPi); SerialPi.print('\n'); return; }
+    if (!strcmp(method, "meter.stream_stop"))  { g_meter_stream = false; StaticJsonDocument<64> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=JsonObject(); serializeJson(out, SerialPi); SerialPi.print('\n'); return; }
+    if (!strcmp(method, "temps.stream_start")) { g_temps_stream = true; StaticJsonDocument<64> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=JsonObject(); serializeJson(out, SerialPi); SerialPi.print('\n'); return; }
+    if (!strcmp(method, "temps.stream_stop"))  { g_temps_stream = false; StaticJsonDocument<64> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["result"]=JsonObject(); serializeJson(out, SerialPi); SerialPi.print('\n'); return; }
+    // unknown JSON-RPC
+    StaticJsonDocument<128> errj; errj["code"]= -32601; errj["message"]= "unknown_method"; StaticJsonDocument<192> out; out["type"]="res"; out["id"]=id; out["ts"]=millis(); out["error"]=errj; serializeJson(out, SerialPi); SerialPi.print('\n'); return;
+  }
+
+  // Legacy CP command path
   const char* cmd = doc["cmd"] | "";
   if (!cmd[0]) {
-    StaticJsonDocument<96> resp;
-    resp["type"] = "error";
-    resp["msg"] = "missing_cmd";
-    serializeJson(resp, SerialPi);
-    SerialPi.print('\n');
-    Serial.print("["); Serial.print(millis()); Serial.println("] [E] Missing cmd field");
-    return;
+    StaticJsonDocument<96> resp; resp["type"] = "error"; resp["msg"] = "missing_cmd"; serializeJson(resp, SerialPi); SerialPi.print('\n'); Serial.print("["); Serial.print(millis()); Serial.println("] [E] Missing cmd field"); return;
   }
-
   String scmd(cmd);
-  Serial.print("["); Serial.print(millis()); Serial.print("] [D] RX cmd: ");
-  Serial.println(scmd);
-  if (scmd == "set_pwm") {
-    handle_cmd_set_pwm(doc.as<JsonObject>());
-  } else if (scmd == "enable_pwm") {
-    handle_cmd_enable_pwm(doc.as<JsonObject>());
-  } else if (scmd == "set_freq") {
-    handle_cmd_set_freq(doc.as<JsonObject>());
-  } else if (scmd == "set_mode") {
-    handle_cmd_set_mode(doc.as<JsonObject>());
-  } else if (scmd == "get_status") {
-    send_status_json();
-  } else if (scmd == "ping") {
-    StaticJsonDocument<64> resp;
-    resp["type"] = "pong";
-    serializeJson(resp, SerialPi);
-    SerialPi.print('\n');
-  } else if (scmd == "restart_slac_hint") {
-    // Briefly drive 100% (X1) then return to dc mode
-    uint32_t ms = doc["ms"] | 400;
-    if (ms < 50) ms = 50; if (ms > 2000) ms = 2000;
-    OpMode prev = g_mode;
-    g_mode = OpMode::MANUAL;
-    g_pwm_enabled = true;
-    g_pwm_duty_pct = 100;
-    apply_pwm_manual();
-    delay(ms);
-    g_mode = OpMode::DC_AUTO;
-    apply_dc_auto_output(g_last_cp_state);
-    StaticJsonDocument<96> resp;
-    resp["type"] = "ok";
-    resp["cmd"] = "restart_slac_hint";
-    serializeJson(resp, SerialPi);
-    SerialPi.print('\n');
-    send_status_json();
-    Serial.print("["); Serial.print(millis()); Serial.print("] [I] restart_slac_hint applied (ms="); Serial.print(ms); Serial.println(")");
-    (void)prev;
-  } else if (scmd == "reset") {
-    StaticJsonDocument<64> resp;
-    resp["type"] = "ok";
-    resp["cmd"] = "reset";
-    serializeJson(resp, SerialPi);
-    SerialPi.print('\n');
-    delay(50);
-    ESP.restart();
-  } else {
-    StaticJsonDocument<96> resp;
-    resp["type"] = "error";
-    resp["msg"] = "unknown_cmd";
-    serializeJson(resp, SerialPi);
-    SerialPi.print('\n');
-    Serial.print("["); Serial.print(millis()); Serial.print("] [E] Unknown cmd: ");
-    Serial.println(scmd);
-  }
+  Serial.print("["); Serial.print(millis()); Serial.print("] [D] RX cmd: "); Serial.println(scmd);
+  if (scmd == "set_pwm")      { handle_cmd_set_pwm(doc.as<JsonObject>()); }
+  else if (scmd == "enable_pwm") { handle_cmd_enable_pwm(doc.as<JsonObject>()); }
+  else if (scmd == "set_freq")   { handle_cmd_set_freq(doc.as<JsonObject>()); }
+  else if (scmd == "set_mode")   { handle_cmd_set_mode(doc.as<JsonObject>()); }
+  else if (scmd == "get_status") { send_status_json(); }
+  else if (scmd == "ping")      { StaticJsonDocument<64> resp; resp["type"]="pong"; serializeJson(resp, SerialPi); SerialPi.print('\n'); }
+  else if (scmd == "restart_slac_hint") {
+    uint32_t ms = doc["ms"] | 400; if (ms < 50) ms = 50; if (ms > 2000) ms = 2000; OpMode prev = g_mode; g_mode = OpMode::MANUAL; g_pwm_enabled = true; g_pwm_duty_pct = 100; apply_pwm_manual(); delay(ms); g_mode = OpMode::DC_AUTO; apply_dc_auto_output(g_last_cp_state); StaticJsonDocument<96> resp; resp["type"]="ok"; resp["cmd"]="restart_slac_hint"; serializeJson(resp, SerialPi); SerialPi.print('\n'); send_status_json(); (void)prev; }
+  else if (scmd == "reset")     { StaticJsonDocument<64> resp; resp["type"]="ok"; resp["cmd"]="reset"; serializeJson(resp, SerialPi); SerialPi.print('\n'); delay(50); ESP.restart(); }
+  else { StaticJsonDocument<96> resp; resp["type"]="error"; resp["msg"]="unknown_cmd"; serializeJson(resp, SerialPi); SerialPi.print('\n'); Serial.print("["); Serial.print(millis()); Serial.print("] [E] Unknown cmd: "); Serial.println(scmd); }
 }
 
 void setup() {
@@ -389,6 +404,7 @@ void setup() {
 
   // UART to Raspberry Pi
   SerialPi.begin(115200, SERIAL_8N1, ESP_UART_RX, ESP_UART_TX);
+  g_up0_ms = millis();
 
   // Configure ADC and PWM
   pinMode(CP_1_READ_PIN, INPUT);
@@ -507,5 +523,23 @@ void loop() {
       // prevent runaway lines
       if (line.length() < 240) line += c; else line = "";
     }
+  }
+
+  // Peripheral streams
+  static uint32_t last_periph_tick = 0;
+  if (now - last_periph_tick >= 1000) {
+    last_periph_tick = now;
+    if (g_meter_stream) {
+      static float e=0.0f; float on=g_contactor_aux?1.0f:0.0f; float v=415.0f; float i=on*50.0f; float p=v*i/1000.0f; e += p*0.001f; StaticJsonDocument<192> pld; pld["v"]=v; pld["i"]=i; pld["p"]=p; pld["e"]=e; StaticJsonDocument<256> evt; evt["type"]="evt"; evt["ts"]=now; evt["id"]=0; evt["method"]="evt:meter.tick"; evt["result"]=pld; serializeJson(evt, SerialPi); SerialPi.print('\n');
+    }
+    if (g_temps_stream) {
+      StaticJsonDocument<192> pld; pld.createNestedObject("gun_a")["c"] = 32.0 + (g_contactor_aux?12.0:0.5); pld.createNestedObject("gun_b")["c"] = 31.5 + (g_contactor_aux?11.0:0.3); StaticJsonDocument<256> evt; evt["type"]="evt"; evt["ts"]=now; evt["id"]=0; evt["method"]="evt:temps.tick"; evt["result"]=pld; serializeJson(evt, SerialPi); SerialPi.print('\n');
+    }
+  }
+
+  // Keepalive failsafe for contactor
+  if ((now - g_last_ping_ms) > 6000 && g_contactor_cmd) {
+    g_contactor_cmd = false; g_contactor_aux = false;
+    StaticJsonDocument<96> evt; evt["type"]="evt"; evt["ts"]=now; evt["id"]=0; evt["method"]="evt:failsafe.keepalive"; JsonObject res = evt.createNestedObject("result"); res["forced"] = "contactor_off"; serializeJson(evt, SerialPi); SerialPi.print('\n');
   }
 }

@@ -544,3 +544,36 @@ Contributions are welcome! Please read the [contributing guidelines](CONTRIBUTIN
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for more information.
+## Hardware Adapters
+
+The EVSE HAL supports pluggable backends:
+
+- sim: All functions simulated in-process (default).
+- esp-uart: Uses an ESP32-S3 CP helper over UART for Control Pilot (PWM + ADC). Other devices remain simulated.
+- esp-periph: Adds a JSON-RPC peripheral coprocessor (ESP32-S3) over UART for contactor, temperature, and meter while keeping CP/PWM via the existing ESP CP helper (if available) or sim fallback.
+
+Select an adapter at runtime:
+
+```
+export EVSE_CONTROLLER=hal
+export EVSE_HAL_ADAPTER=esp-periph   # or esp-uart or sim
+# CP UART for esp-uart or esp-periph with CP support
+export ESP_CP_PORT=/dev/serial0
+# Peripheral coprocessor UART for esp-periph
+export ESP_PERIPH_PORT=/dev/ttyUSB0
+python3 start_evse.py --iface eth0 --controller hal
+```
+
+### ESP Peripheral Coprocessor (JSON-RPC)
+
+The peripheral offloads GPIO-heavy, time-critical operations (contactor coil with aux prove-out, gun temperatures, meter sampling). It exposes a small JSON-RPC API over a newline-delimited UART.
+
+- Keepalive: The Pi sends `sys.ping` periodically (client defaults to 1.5 s). ESP fails safe to contactor OFF on missed keepalives.
+- Arming: `contactor.set` requires a preceding `sys.arm` within ~1.5 s. The client auto-arms.
+- Simulation Mode: Switch via `sys.set_mode` without changing the Pi logic.
+
+Quick demo without the full EVSE stack:
+
+```
+python3 scripts/esp_periph_demo.py --port /dev/ttyUSB0
+```

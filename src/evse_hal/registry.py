@@ -21,13 +21,17 @@ def _load_adapter(key: str) -> Type[EVSEHardware]:
         from src.evse_hal.adapters.esp_uart import ESPSerialHardware  # local import
 
         return ESPSerialHardware
+    if k in ("esp-periph", "esp-periph-uart"):
+        from src.evse_hal.adapters.esp_periph_uart import ESPPeriphHardware  # local import
+
+        return ESPPeriphHardware
     raise ValueError(f"Unknown EVSE hardware adapter '{key}'")
 
 
 def create(name: str = "sim") -> EVSEHardware:
     """Create an EVSE hardware adapter instance by name.
 
-    Known names: 'sim', 'esp-uart'
+    Known names: 'sim', 'esp-uart', 'esp-periph'
     """
     cls = _load_adapter(name)
     return cls()
