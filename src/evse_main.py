@@ -192,7 +192,9 @@ class EVSECommunicationController(SlacSessionController):
                     if elapsed > timeout_s:
                         logger.warning("SLAC match timeout; attempting restart hint and retry")
                         try:
-                            reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
+                            # Per ISO 15118-3 [T_step_EF >= 4 s], use a conservative
+                            # default of 4500 ms unless overridden via env.
+                            reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "4500"))
                             getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
                             logger.info(
                                 "HAL SLAC restart hint requested",
