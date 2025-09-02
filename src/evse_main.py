@@ -28,7 +28,11 @@ from pyslac.session import (
 )
 
 # Ensure local 'src' takes precedence for iso15118 imports
+# Ensure local 'src' (this file's parent) is importable for intra-repo modules
 HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
 # The iso15118 package here lives under a nested src layout: src/iso15118/iso15118
 LOCAL_ISO15118_ROOT = HERE / "iso15118"
 if (LOCAL_ISO15118_ROOT / "iso15118" / "__init__.py").is_file():
