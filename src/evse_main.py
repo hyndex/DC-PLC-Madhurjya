@@ -41,7 +41,6 @@ from iso15118.secc.controller.simulator import SimEVSEController
 from iso15118.secc.controller.interface import ServiceStatus
 from iso15118.secc import SECCHandler
 from iso15118.shared.exi_codec import ExificientEXICodec
-from iso15118.shared.network import validate_nic
 from util.standards_check import log_timing_summary
 
 
@@ -416,6 +415,7 @@ async def start_secc(
     # Pre-flight: ensure the interface has an IPv6 link-local address.
     # This helps avoid sporadic TCP server startup delays/failures.
     try:
+        from iso15118.shared.network import validate_nic
         # Retry briefly in case IPv6 config is racing after link-up.
         deadline = asyncio.get_event_loop().time() + 5.0
         while True:
@@ -517,6 +517,7 @@ async def launch_secc_background(
 
     # Ensure iface readiness as above (short retry window)
     try:
+        from iso15118.shared.network import validate_nic
         deadline = asyncio.get_event_loop().time() + 5.0
         while True:
             try:
