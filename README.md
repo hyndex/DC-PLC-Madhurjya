@@ -76,6 +76,39 @@ python src/evse_main.py --evse-id <EVSE_ID>
 Troubleshooting tips and a flow diagram of the process are available in
 [docs/plug_and_play.md](docs/plug_and_play.md).
 
+### System Hardening + Env (Wi‑Fi kept)
+
+For a hardened runtime with Bluetooth/Avahi/CUPS/ModemManager disabled, a
+deterministic interface fallback (eth0→eth1→en*→wlan0), and a managed project
+.env you can update and re‑export, use:
+
+```
+# Create .env with smart defaults and generate an export script
+scripts/evse_setup.sh env init
+scripts/evse_setup.sh env export
+source scripts/export_env.sh    # export into current shell
+
+# Detect a better primary interface and update .env
+scripts/evse_setup.sh iface update-env
+
+# Harden services (keeps Wi‑Fi stack; web servers kept by default)
+sudo scripts/evse_setup.sh services
+# Options:
+#   --disable-web     also disable nginx/apache/lighttpd
+#   --keep-serial     keep serial-getty (not recommended; it can lock the ESP UART)
+
+# Or do it all in one go (Linux): init env, export, deps, venv, harden, port check
+sudo scripts/evse_setup.sh all
+```
+
+Notes:
+- The hardening step disables: bluetooth, hciuart (RPi), avahi‑daemon, ModemManager,
+  CUPS, common serial getties (ttyAMA0/ttyS0/ttyUSB0), and common web servers
+  (nginx/apache2/lighttpd). Wi‑Fi and core networking are preserved.
+- The script is idempotent and safe to re‑run. It prints active TCP listeners
+  afterwards so you can verify no unexpected services are holding ports.
+- To persist environment globally for new shells: `sudo scripts/evse_setup.sh env apply-global`.
+
 ## Boot Process
 
 The system brings up a charging session in the following stages:
