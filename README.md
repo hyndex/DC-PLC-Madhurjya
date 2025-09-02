@@ -139,6 +139,9 @@ environment variables can be set in `secc.env`:
 - `V2G_MAX_EXI_BYTES`: Cap raw EXI payload length in bytes (default `262144`). Set `0` to disable.
 - `V2G_MAX_EXI_JSON_BYTES`: Cap decoded EXI JSON length in bytes (default `1048576`). Set `0` to disable.
 
+Protocol selection (SAP)
+- `SECC_SAP_PREFER_EV_PRIORITY`: If `1` (default), the SECC honors the EV’s priority list from SupportedAppProtocol. If `0`, the SECC prefers its configured protocol order (`PROTOCOLS` in `secc.env`), which can improve fail‑safety by selecting DIN 70121 first when both DIN and ISO 15118 are offered.
+
 These controls do not change protocol semantics and are safe defaults. Increase/decrease per site as needed based on PLC link quality.
 
 ### EVCC Fault‑Injection Helper

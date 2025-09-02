@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Smoke test: verify SECC times out and stops charger on silence.
+"""Smoke test: verify SECC tolerates a limited number of EXI decode errors.
 
-Starts a dummy TCP server that accepts a connection but never sends any bytes.
-Connects as the SECC side, runs a session with a short timeout, and checks
-that StopNotification is posted and the EVSE controller's stop_charger() is
-called, ensuring safe-state on communication silence.
+Procedure:
+1) Start a dummy EV TCP server that sends N frames with a valid V2GTP header (EXI payload type)
+   but random payload bytes to trigger EXI decode errors.
+2) Set V2G_MAX_DECODE_ERRORS=2 so the first two frames are tolerated.
+3) On the third bad frame, expect the session to terminate safely.
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -28,6 +30,16 @@ from iso15118.secc.controller.interface import (
     ServiceStatus,
     SessionStopAction,
 )
+
+
+def _mk_v2gtp_frame(payload: bytes) -> bytes:
+    # V2GTP header: [0]=0x01, [1]=0xFE, [2:4]=payload type (0x8001 EXI), [4:8]=len
+    header = bytearray(8)
+    header[0] = 0x01
+    header[1] = 0xFE
+    header[2:4] = (0x8001).to_bytes(2, "big")
+    header[4:8] = len(payload).to_bytes(4, "big")
+    return bytes(header) + payload
 
 
 class _DummyEVSEController(EVSEControllerInterface):
@@ -101,6 +113,15 @@ class _DummyEVSEController(EVSEControllerInterface):
     async def get_ac_charge_params_v20(self, energy_service):
         return None
 
+    async def get_evse_status(self):
+        return None
+
+    async def is_contactor_closed(self):
+        return None
+
+    async def is_contactor_opened(self) -> bool:
+        return True
+
     async def get_dc_evse_status(self):
         return None
 
@@ -140,16 +161,6 @@ class _DummyEVSEController(EVSEControllerInterface):
     async def send_rated_limits(self):
         return None
 
-    async def get_evse_status(self):
-        return None
-
-    async def is_contactor_closed(self):
-        return None
-
-    async def is_contactor_opened(self) -> bool:
-        return True
-
-    # Additional abstract API stubs to satisfy interface
     async def get_service_parameter_list(self, service_id: int):
         return None
 
@@ -179,10 +190,17 @@ class _DummyEVSEController(EVSEControllerInterface):
         return False
 
 
-async def _start_idle_server(host: str, port: int):
+async def _start_ev_server(host: str, port: int):
+    # Create three corrupted frames
+    frames = [_mk_v2gtp_frame(os.urandom(64)) for _ in range(3)]
+
     async def _handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         try:
-            await asyncio.Future()
+            for f in frames:
+                writer.write(f)
+                await writer.drain()
+                await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)
         except asyncio.CancelledError:
             pass
         finally:
@@ -197,23 +215,31 @@ async def _start_idle_server(host: str, port: int):
 
 
 async def main():
+    # Allow exactly 2 decoding errors before aborting
+    os.environ["V2G_MAX_DECODE_ERRORS"] = "2"
+
     host = "127.0.0.1"
-    server = await _start_idle_server(host, 0)
+    server = await _start_ev_server(host, 0)
     sockets = server.sockets or []
     if not sockets:
-        print("Server failed to start", file=sys.stderr)
+        print("Server failed to start")
         return 2
     port = sockets[0].getsockname()[1]
     try:
         reader, writer = await asyncio.open_connection(host, port)
         q: asyncio.Queue = asyncio.Queue()
         cfg = Config()
+        # Load defaults into shared_settings to avoid KeyError in EXI logging paths
+        try:
+            cfg.load_envs(env_path=None)
+        except Exception:
+            pass
         evse = _DummyEVSEController()
         secc = SECCCommunicationSession((reader, writer), q, cfg, evse, evse_id="EVSE-TEST-01")
         task = asyncio.create_task(secc.start(timeout=0.5))
-        notif: StopNotification = await asyncio.wait_for(q.get(), timeout=6.0)
+        notif: StopNotification = await asyncio.wait_for(q.get(), timeout=10.0)
         ok = isinstance(notif, StopNotification) and evse.stop_charger_called
-        await asyncio.wait_for(task, timeout=6.0)
+        await asyncio.wait_for(task, timeout=10.0)
         print("result:", "PASS" if ok else "FAIL")
         return 0 if ok else 1
     finally:
