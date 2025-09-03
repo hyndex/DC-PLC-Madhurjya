@@ -44,7 +44,8 @@ async def main() -> int:
             hp = HomePlugHeader.from_bytes(data)
         except Exception:
             continue
-        if eth.eth_type != ETH_TYPE_HPAV:
+        # pyslac header uses 'ether_type' naming
+        if getattr(eth, 'ether_type', None) != ETH_TYPE_HPAV:
             continue
         ev_mac = ":".join(f"{b:02x}" for b in eth.src_mac)
         print("[sniff] HPAV frame from EV MAC:", ev_mac)

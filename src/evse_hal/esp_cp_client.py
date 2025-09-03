@@ -211,8 +211,20 @@ class EspCpClient:
             logger.debug("UART RX", extra={"json": msg})
             mtype = msg.get("type")
             if mtype == "status":
-                mv = int(msg.get("cp_mv", 0))
-                mv_r = int(msg.get("cp_mv_robust", mv))
+                try:
+                    mv = int(msg.get("cp_mv", 0))
+                except Exception:
+                    try:
+                        mv = int(float(msg.get("cp_mv", 0)))
+                    except Exception:
+                        mv = 0
+                try:
+                    mv_r = int(msg.get("cp_mv_robust", mv))
+                except Exception:
+                    try:
+                        mv_r = int(float(msg.get("cp_mv_robust", mv)))
+                    except Exception:
+                        mv_r = mv
                 st = str(msg.get("state", "A"))[:1]
                 mode = str(msg.get("mode", "dc"))
                 pwm_obj = msg.get("pwm", {}) or {}

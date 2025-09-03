@@ -30,7 +30,8 @@ detect_plc_iface() {
 
 # Detect ESP serial port (USB or onboard alias)
 detect_esp_port() {
-  for p in /dev/ttyACM* /dev/ttyUSB* /dev/serial0 /dev/ttyAMA0; do
+  # Prefer Pi's primary UART first because firmware JSON control is on UART, not USB CDC
+  for p in /dev/serial0 /dev/ttyAMA0 /dev/ttyACM* /dev/ttyUSB*; do
     [ -e "$p" ] && echo "$p" && return 0
   done
   echo /dev/serial0
@@ -65,7 +66,8 @@ PY
 echo "[e2e] Starting HAL orchestrator (logs -> $LOG) ..."
 sudo -E env \
   EVSE_CONTROLLER=hal \
-  EVSE_HAL_ADAPTER=esp-uart \
+  EVSE_HAL_ADAPTER=esp-periph \
+  ESP_PERIPH_PORT="$ESP_PORT" \
   ESP_CP_PORT="$ESP_PORT" \
   EVSE_LOG_LEVEL=INFO \
   EVSE_LOG_FORMAT=json \
@@ -73,7 +75,7 @@ sudo -E env \
   SLAC_MAX_ATTEMPTS=3 \
   SLAC_WAIT_TIMEOUT_S=50 \
   SLAC_RESTART_HINT_MS=400 \
-  CP_DEBOUNCE_S=0.05 \
+  CP_DEBOUNCE_S=0.10 \
   PYTHONPATH="$ROOT_DIR/src:$ROOT_DIR/src/iso15118:$ROOT_DIR/src/pyslac" \
   "$PYBIN" "$ROOT_DIR/src/evse_main.py" --evse-id EVSE-1 --iface "$PLC_IFACE" &
 EVSE_PID=$!
@@ -86,8 +88,8 @@ sudo -E env PYTHONPATH="$ROOT_DIR/src/pyslac" "$PYBIN" "$ROOT_DIR/scripts/sniff_
 SNIF_RC=$?
 set -e
 
-echo "[e2e] Allowing SECC to progress for 120s ..."
-sleep 120 || true
+echo "[e2e] Allowing SECC to progress for 240s ..."
+sleep 240 || true
 
 echo "[e2e] Stopping HAL orchestrator ..."
 kill "$EVSE_PID" 2>/dev/null || true

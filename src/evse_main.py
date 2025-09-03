@@ -249,6 +249,11 @@ class EVSECommunicationController(SlacSessionController):
                     getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
                 except Exception:
                     pass
+                # Restore dc mode so CP reports 5% duty when reconnected
+                try:
+                    getattr(hal, "esp_set_mode", lambda _m=None: None)("dc")
+                except Exception:
+                    pass
                 # Allow fresh SetKey on next connection
                 keyed_once = False
 
@@ -395,6 +400,11 @@ class EVSECommunicationController(SlacSessionController):
                     # Short delay to satisfy timing without unduly delaying logic
                     try:
                         await asyncio.sleep(min(cutoff_s, 0.2))
+                    except Exception:
+                        pass
+                    # Restore dc mode so EV sees 5% duty once reconnected
+                    try:
+                        getattr(hal, "esp_set_mode", lambda _m=None: None)("dc")
                     except Exception:
                         pass
                 # Grace window to tolerate brief CP flaps before tearing down SECC
@@ -553,8 +563,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--controller",
         choices=["sim", "hal"],
-        default="sim",
-        help="EVSE controller backend: 'sim' (default) or 'hal' (pluggable hardware)",
+        help="EVSE controller backend: 'sim' or 'hal' (defaults to ENV EVSE_CONTROLLER or 'sim')",
     )
     return parser.parse_args()
 
@@ -702,7 +711,8 @@ def main() -> None:
     setup_logging()
     args = parse_args()
     # Mirror CLI controller choice to environment for downstream components
-    if args.controller:
+    # Only override if explicitly provided on the CLI.
+    if args.controller is not None:
         os.environ["EVSE_CONTROLLER"] = args.controller
     slac_config = SlacConfig()
     slac_config.load_envs(args.slac_config)
