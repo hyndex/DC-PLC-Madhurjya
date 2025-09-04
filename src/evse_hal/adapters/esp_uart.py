@@ -94,7 +94,10 @@ class _EspCP(CPReader):
             self._debounced_state = raw
             self._debounced_since = now
             self._last_state = raw
-            logger.info("CP state (init)", extra={"state": raw})
+            try:
+                logger.info(f"CP state (init) {raw}")
+            except Exception:
+                logger.info("CP state (init)", extra={"state": raw})
             return
         # Emergency states E/F: apply no debounce for fail-safe reaction
         if raw in ("E", "F") and raw != self._debounced_state:
@@ -102,10 +105,13 @@ class _EspCP(CPReader):
             self._debounced_state = raw
             self._debounced_since = now
             self._last_state = raw
-            logger.warning(
-                "CP emergency state",
-                extra={"from": prev, "to": raw, "cp_mv": st.cp_mv, "mode": getattr(st, "mode", None)},
-            )
+            try:
+                logger.warning(f"CP emergency {prev}->{raw} mv={st.cp_mv} mode={getattr(st,'mode',None)}")
+            except Exception:
+                logger.warning(
+                    "CP emergency state",
+                    extra={"from": prev, "to": raw, "cp_mv": st.cp_mv, "mode": getattr(st, "mode", None)},
+                )
             return
         # For normal transitions A/B/C/D, require stability for debounce_s
         if raw is not None and raw != self._debounced_state:
@@ -115,16 +121,19 @@ class _EspCP(CPReader):
                 self._debounced_state = raw
                 self._debounced_since = now
                 self._last_state = raw
-                logger.info(
-                    "CP state",
-                    extra={
-                        "from": prev,
-                        "to": raw,
-                        "stable_ms": int(stable * 1000),
-                        "cp_mv": st.cp_mv,
-                        "mode": getattr(st, "mode", None),
-                    },
-                )
+                try:
+                    logger.info(f"CP state {prev}->{raw} mv={st.cp_mv} stable_ms={int(stable*1000)}")
+                except Exception:
+                    logger.info(
+                        "CP state",
+                        extra={
+                            "from": prev,
+                            "to": raw,
+                            "stable_ms": int(stable * 1000),
+                            "cp_mv": st.cp_mv,
+                            "mode": getattr(st, "mode", None),
+                        },
+                    )
         else:
             # Maintain last state
             self._last_state = self._debounced_state or raw

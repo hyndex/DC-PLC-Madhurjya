@@ -210,6 +210,7 @@ static void send_status_json() {
   pwm["enabled"] = g_pwm_enabled;
   pwm["duty"] = g_pwm_duty_pct;
   pwm["hz"] = g_pwm_freq_hz;
+  pwm["out"] = g_last_output_duty_pct; // effective output duty percentage
 
   serializeJson(doc, SerialPi);
   SerialPi.print('\n');
@@ -494,6 +495,7 @@ void loop() {
     pwm["enabled"] = g_pwm_enabled;
     pwm["duty"] = g_pwm_duty_pct;
     pwm["hz"] = g_pwm_freq_hz;
+    pwm["out"] = g_last_output_duty_pct; // effective output duty percentage
     serializeJson(doc, SerialPi);
     SerialPi.print('\n');
     serializeJson(doc, Serial);

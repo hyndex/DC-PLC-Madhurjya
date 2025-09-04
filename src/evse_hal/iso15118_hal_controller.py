@@ -7,10 +7,25 @@ import os
 from .interfaces import EVSEHardware
 from .thermal import ThermalManager
 from iso15118.secc.controller.simulator import SimEVSEController
-from iso15118.secc.controller.interface import (
-    AuthorizationResponse,
-    ServiceStatus,
-)
+try:
+    from iso15118.secc.controller.interface import (
+        AuthorizationResponse,
+        ServiceStatus,
+    )
+except Exception:  # pragma: no cover - allow tests to stub minimal interface
+    from dataclasses import dataclass
+
+    @dataclass
+    class AuthorizationResponse:  # type: ignore
+        # Use a loose type to avoid importing iso15118 enums in test stubs
+        authorization_status: object
+
+    class ServiceStatus(str):  # type: ignore
+        READY = "ready"
+        STARTING = "starting"
+        STOPPING = "stopping"
+        ERROR = "error"
+        BUSY = "busy"
 from iso15118.shared.messages.enums import (
     AuthorizationStatus,
     CpState,

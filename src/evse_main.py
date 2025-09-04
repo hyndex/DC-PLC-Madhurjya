@@ -29,22 +29,25 @@ if str(_SRC_DIR) not in sys.path:
 # Make local PySLAC importable without requiring external installation
 try:
     from pyslac.environment import Config as SlacConfig
-    from pyslac.session import (
-        SlacEvseSession,
-        SlacSessionController,
-        STATE_MATCHED,
-    )
+    # PySLAC exposes state constants in enums; some test stubs only provide a subset.
+    from pyslac.session import SlacEvseSession, SlacSessionController  # type: ignore
+    try:
+        # Prefer import from enums when available
+        from pyslac.enums import STATE_MATCHED  # type: ignore
+    except Exception:  # pragma: no cover - test stubs
+        # Fallback when tests stub pyslac.session only
+        from pyslac.session import STATE_MATCHED  # type: ignore
 except ModuleNotFoundError:
     _PYSLAC_BASE = _SRC_DIR / "pyslac"
     if (_PYSLAC_BASE / "pyslac" / "__init__.py").is_file():
         sys.path.insert(0, str(_PYSLAC_BASE))
     # Retry import after adjusting path; if it fails again, let it raise
     from pyslac.environment import Config as SlacConfig
-    from pyslac.session import (
-        SlacEvseSession,
-        SlacSessionController,
-        STATE_MATCHED,
-    )
+    from pyslac.session import SlacEvseSession, SlacSessionController  # type: ignore
+    try:
+        from pyslac.enums import STATE_MATCHED  # type: ignore
+    except Exception:  # pragma: no cover - test stubs
+        from pyslac.session import STATE_MATCHED  # type: ignore
 
 # Ensure local 'src' takes precedence for iso15118 imports
 HERE = Path(__file__).resolve().parent
@@ -107,7 +110,7 @@ class EVSECommunicationController(SlacSessionController):
         controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
         if controller_mode != "hal":
             session = SlacEvseSession(evse_id, iface, self.slac_config)
-            await session.evse_set_key()
+            # Defer CM_SET_KEY until after SLAC starts to maximize compatibility
             await self._trigger_matching(session)
             self._log_slac_peer(session)
             logger.info("SLAC match successful, launching ISO 15118 SECC")
@@ -164,6 +167,16 @@ class EVSECommunicationController(SlacSessionController):
         last_setkey_ts: float = 0.0
         # Log SLAC peer at first sight of EV MAC even before MATCHED
         ev_peer_logged = False
+        # Gentle nudge control to coax PEV to restart SLAC sooner when stuck at B
+        try:
+            first_nudge_s = float(os.environ.get("SLAC_FIRST_NUDGE_S", "6.0"))
+        except Exception:
+            first_nudge_s = 6.0
+        try:
+            nudge_every_s = float(os.environ.get("SLAC_NUDGE_EVERY_S", "12.0"))
+        except Exception:
+            nudge_every_s = 12.0
+        last_nudge_ts: float = 0.0
 
         async def _start_secc_bg() -> None:
             nonlocal secc_task, secc_handler
@@ -375,6 +388,24 @@ class EVSECommunicationController(SlacSessionController):
                     await _start_secc_bg()
 
                 if session and session.state != STATE_MATCHED:
+                    # No-op here; CM_SET_KEY already handled above with backoff
+                    # Proactive nudge if we appear stuck in CP=B after initial setup
+                    try:
+                        now = asyncio.get_event_loop().time()
+                        if cp == "B" and session_started_at > 0 and (now - session_started_at) >= max(0.0, first_nudge_s):
+                            if (now - last_nudge_ts) >= max(0.0, nudge_every_s):
+                                try:
+                                    reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
+                                except Exception:
+                                    reset_ms = 400
+                                try:
+                                    getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
+                                    last_nudge_ts = now
+                                    logger.info("HAL SLAC proactive nudge", extra={"reset_ms": reset_ms})
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
                     # Keep SLAC session informed of steady-state CP even if it hasn't changed recently
                     try:
                         slac_cp = (
