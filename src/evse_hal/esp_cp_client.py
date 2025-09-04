@@ -29,6 +29,11 @@ class CPStatus:
 
 
 logger = logging.getLogger("esp.cp")
+# Gate very chatty UART I/O debug logs behind an env flag
+try:
+    _DEBUG_IO = os.environ.get("ESP_CP_DEBUG_IO", "").strip().lower() not in ("", "0", "false", "no")
+except Exception:
+    _DEBUG_IO = False
 
 
 class EspCpClient:
@@ -52,20 +57,48 @@ class EspCpClient:
         self._rx_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._conn_lock = threading.RLock()
         self._last: Optional[CPStatus] = None
         self._pong = threading.Event()
         self._err_streak = 0
+        self._last_reconnect_ts = 0.0
 
     def connect(self) -> None:
-        try:
-            self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
-        except Exception as e:
-            logger.error("ESP CP serial open failed", extra={"port": self._port, "error": str(e)})
-            raise
-        self._stop.clear()
-        logger.info("ESP CP serial connect", extra={"port": self._port, "baud": self._baud})
-        self._rx_thread = threading.Thread(target=self._rx_loop, name="esp-cp-rx", daemon=True)
-        self._rx_thread.start()
+        """(Re)connect the serial port and ensure a single RX thread is running.
+
+        Safe for concurrent callers. Stops any existing RX thread before starting
+        a new one to avoid duplicate readers.
+        """
+        with self._conn_lock:
+            # Stop old RX thread if present
+            try:
+                self._stop.set()
+                if self._rx_thread and self._rx_thread.is_alive():
+                    self._rx_thread.join(timeout=1.0)
+            except Exception:
+                pass
+            self._rx_thread = None
+            # Close old serial if open
+            try:
+                if self._ser and getattr(self._ser, "is_open", False):
+                    try:
+                        self._ser.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            # Open fresh serial
+            try:
+                self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
+            except Exception as e:
+                logger.error("ESP CP serial open failed", extra={"port": self._port, "error": str(e)})
+                self._ser = None
+                raise
+            # Start single RX thread
+            self._stop.clear()
+            logger.info("ESP CP serial connect", extra={"port": self._port, "baud": self._baud})
+            self._rx_thread = threading.Thread(target=self._rx_loop, name="esp-cp-rx", daemon=True)
+            self._rx_thread.start()
 
     def close(self) -> None:
         self._stop.set()
@@ -77,11 +110,23 @@ class EspCpClient:
 
     # ----- Public API -----
     def get_status(self, wait_s: float = 0.5) -> Optional[CPStatus]:
-        """Return latest status, optionally waiting for up to wait_s seconds for a fresh one."""
+        """Return latest status, optionally waiting for up to wait_s seconds.
+
+        Avoid spamming the UART: only poll if cached status is older than a small threshold.
+        """
         deadline = time.time() + wait_s
         last_ts = self._last.ts if self._last else 0.0
-        # Ask for on-demand refresh
-        self._send({"cmd": "get_status"})
+        # Ask for on-demand refresh only if stale. Default threshold ~0.35s (firmware emits ~5Hz)
+        try:
+            poll_threshold = float(os.environ.get("ESP_CP_STALE_S", "0.35"))
+        except Exception:
+            poll_threshold = 0.35
+        if (not self._last) or ((time.time() - last_ts) > poll_threshold):
+            try:
+                self._send({"cmd": "get_status"})
+            except Exception:
+                # If TX fails, we'll return the last cached status
+                pass
         while time.time() < deadline:
             with self._lock:
                 cur = self._last
@@ -136,15 +181,28 @@ class EspCpClient:
         return None
 
     def ping(self, timeout: float = 0.5) -> bool:
-        """Check duplex connectivity with a ping/pong."""
-        self._pong.clear()
-        self._send({"cmd": "ping"})
-        return self._pong.wait(timeout)
+        """Check duplex by requesting a fresh status and waiting for it."""
+        try:
+            last_ts = self._last.ts if self._last else 0.0
+        except Exception:
+            last_ts = 0.0
+        try:
+            self._send({"cmd": "get_status"})
+        except Exception:
+            return False
+        deadline = time.time() + max(0.1, timeout)
+        while time.time() < deadline:
+            with self._lock:
+                cur = self._last
+            if cur and cur.ts > last_ts:
+                return True
+            time.sleep(0.02)
+        return False
 
     # ----- Internals -----
     def _send(self, obj: Dict[str, Any]) -> None:
         if not self._ser or not getattr(self._ser, "is_open", False):
-            # Attempt a quick reconnect
+            # Attempt a quick reconnect (single-threaded)
             try:
                 self.connect()
             except Exception:
@@ -153,14 +211,17 @@ class EspCpClient:
         try:
             self._ser.write(line.encode("utf-8"))
         except Exception:
-            # One retry after reconnect
+            # One retry after a clean reconnect
             try:
                 self.connect()
+                if not self._ser:
+                    raise RuntimeError("Serial not connected after reconnect")
                 self._ser.write(line.encode("utf-8"))
             except Exception as e:
                 logger.warning("UART TX failed", extra={"error": str(e)})
                 raise
-        logger.debug("UART TX", extra={"line": line.strip()})
+        if _DEBUG_IO:
+            logger.debug("UART TX", extra={"line": line.strip()})
 
     def _rx_loop(self) -> None:
         assert self._ser is not None
@@ -171,18 +232,24 @@ class EspCpClient:
             except Exception:
                 self._err_streak += 1
                 if self._err_streak >= 10:
-                    try:
-                        if self._ser:
+                    # Cooldown to avoid thrashing
+                    now = time.time()
+                    if now - self._last_reconnect_ts >= 1.0:
+                        with self._conn_lock:
                             try:
-                                self._ser.close()
+                                if self._ser and getattr(self._ser, "is_open", False):
+                                    try:
+                                        self._ser.close()
+                                    except Exception:
+                                        pass
+                                self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
+                                ser = self._ser
+                                logger.info("ESP CP serial reconnected")
+                                self._err_streak = 0
+                                self._last_reconnect_ts = now
                             except Exception:
+                                # Leave err_streak accumulated; we'll try again later
                                 pass
-                        self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
-                        ser = self._ser
-                        logger.info("ESP CP serial reconnected")
-                        self._err_streak = 0
-                    except Exception:
-                        pass
                 time.sleep(0.1)
                 continue
             if not line:
@@ -190,7 +257,8 @@ class EspCpClient:
             try:
                 msg = json.loads(line.decode("utf-8").strip())
             except Exception:
-                logger.debug("UART RX (non-JSON)", extra={"line": line.decode(errors="ignore").strip()})
+                if _DEBUG_IO:
+                    logger.debug("UART RX (non-JSON)", extra={"line": line.decode(errors="ignore").strip()})
                 continue
 
             # Handle cases where firmware sends JSON that isn't an object
@@ -199,16 +267,18 @@ class EspCpClient:
                 if msg.strip().lower() == "pong":
                     self._pong.set()
                 else:
-                    logger.debug("UART RX (JSON string)", extra={"value": msg})
+                    if _DEBUG_IO:
+                        logger.debug("UART RX (JSON string)", extra={"value": msg})
                 continue
             if not isinstance(msg, dict):
-                logger.debug(
-                    "UART RX (JSON non-object)",
-                    extra={"py_type": type(msg).__name__, "value": str(msg)[:120]},
-                )
+                if _DEBUG_IO:
+                    logger.debug(
+                        "UART RX (JSON non-object)",
+                        extra={"py_type": type(msg).__name__, "value": str(msg)[:120]},
+                    )
                 continue
-
-            logger.debug("UART RX", extra={"json": msg})
+            if _DEBUG_IO:
+                logger.debug("UART RX", extra={"json": msg})
             mtype = msg.get("type")
             if mtype == "status":
                 try:

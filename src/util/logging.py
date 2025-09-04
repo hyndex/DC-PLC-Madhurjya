@@ -85,5 +85,24 @@ def setup_logging(default_level: str | int = "INFO") -> None:
 
     root.addHandler(handler)
 
+    # Optional tee: write structured JSON logs to a file while keeping terminal text
+    try:
+        tee_json_path = os.environ.get("EVSE_LOG_JSON_TEE")
+        if tee_json_path:
+            fh = logging.FileHandler(tee_json_path)
+            fh.addFilter(SafeRecordFilter())
+            fh.setFormatter(JSONFormatter())
+            root.addHandler(fh)
+    except Exception:
+        # Logging must not crash the app; ignore tee setup errors
+        pass
 
+    # Per-logger level overrides to avoid flooding
+    try:
+        # Quiet the very verbose ESP CP logger by default unless overridden
+        esp_cp_level_name = os.environ.get("EVSE_ESP_CP_LOG_LEVEL", "INFO").upper()
+        esp_cp_level = getattr(logging, esp_cp_level_name, logging.INFO)
+        logging.getLogger("esp.cp").setLevel(esp_cp_level)
+    except Exception:
+        pass
 

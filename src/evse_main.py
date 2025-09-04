@@ -20,12 +20,31 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from pyslac.environment import Config as SlacConfig
-from pyslac.session import (
-    SlacEvseSession,
-    SlacSessionController,
-    STATE_MATCHED,
-)
+# Ensure local 'src' (this directory) is importable so subpackages like
+# 'util' can be imported as top-level modules when running as a module
+_SRC_DIR = Path(__file__).resolve().parent
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+
+# Make local PySLAC importable without requiring external installation
+try:
+    from pyslac.environment import Config as SlacConfig
+    from pyslac.session import (
+        SlacEvseSession,
+        SlacSessionController,
+        STATE_MATCHED,
+    )
+except ModuleNotFoundError:
+    _PYSLAC_BASE = _SRC_DIR / "pyslac"
+    if (_PYSLAC_BASE / "pyslac" / "__init__.py").is_file():
+        sys.path.insert(0, str(_PYSLAC_BASE))
+    # Retry import after adjusting path; if it fails again, let it raise
+    from pyslac.environment import Config as SlacConfig
+    from pyslac.session import (
+        SlacEvseSession,
+        SlacSessionController,
+        STATE_MATCHED,
+    )
 
 # Ensure local 'src' takes precedence for iso15118 imports
 HERE = Path(__file__).resolve().parent
@@ -36,12 +55,23 @@ if (LOCAL_ISO15118_ROOT / "iso15118" / "__init__.py").is_file():
     if p not in sys.path:
         sys.path.insert(0, p)
 
+# Ensure local PySLAC (src/pyslac/pyslac) is importable without requiring PYTHONPATH
+LOCAL_PYSLAC_ROOT = HERE / "pyslac"
+if (LOCAL_PYSLAC_ROOT / "pyslac" / "__init__.py").is_file():
+    p = str(LOCAL_PYSLAC_ROOT)
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 from iso15118.secc.secc_settings import Config as SeccConfig
 from iso15118.secc.controller.simulator import SimEVSEController
 from iso15118.secc.controller.interface import ServiceStatus
 from iso15118.secc import SECCHandler
 from iso15118.shared.exi_codec import ExificientEXICodec
-from util.standards_check import log_timing_summary
+try:
+    from util.standards_check import log_timing_summary
+except Exception:
+    # Fallback when 'src' is used as package root
+    from src.util.standards_check import log_timing_summary  # type: ignore
 
 
 logger = logging.getLogger("evse.main")
@@ -114,6 +144,8 @@ class EVSECommunicationController(SlacSessionController):
         secc_task: Optional[asyncio.Task] = None
         secc_handler = None  # type: ignore
         last_cp: Optional[str] = None
+        # Track last CP letter forwarded to PySLAC so we propagate transitions
+        last_slac_cp_forwarded: Optional[str] = None
         # SLAC init retry control per plug-in
         try:
             max_slac_attempts = int(os.environ.get("SLAC_MAX_ATTEMPTS", "2"))
@@ -219,6 +251,16 @@ class EVSECommunicationController(SlacSessionController):
             if cp != last_cp:
                 logger.debug("CP transition", extra={"from": last_cp, "to": cp})
                 last_cp = cp
+                # If a SLAC session is active, forward CP transitions promptly
+                if session is not None and cp is not None:
+                    # Map HAL letters to SLAC controller states (D treated as C)
+                    slac_cp = "C" if cp in {"C", "D"} else (cp if cp in {"A", "B"} else None)
+                    if slac_cp and slac_cp != last_slac_cp_forwarded:
+                        try:
+                            await self.process_cp_state(session, slac_cp)
+                            last_slac_cp_forwarded = slac_cp
+                        except Exception:
+                            pass
 
             # Emergency states: cut power and unlock immediately
             if cp in emergency_states:
@@ -299,6 +341,8 @@ class EVSECommunicationController(SlacSessionController):
 
                     logger.info("Vehicle detected via CP", extra={"cp_state": cp})
                     session = SlacEvseSession(evse_id, iface, self.slac_config)
+                    # Reset forwarded CP marker for the new session
+                    last_slac_cp_forwarded = None
                     if not keyed_once:
                         # Avoid hammering SetKey; apply a small backoff between attempts
                         now = asyncio.get_event_loop().time()
@@ -315,10 +359,12 @@ class EVSECommunicationController(SlacSessionController):
                                     extra={"error": str(e)},
                                 )
                     await self.process_cp_state(session, "B")
+                    last_slac_cp_forwarded = "B"
                     await asyncio.sleep(0.2)
                     cur = hal.cp().get_state()
                     if cur in {"C", "D"}:
                         await self.process_cp_state(session, "C")
+                        last_slac_cp_forwarded = "C"
                     session_started_at = asyncio.get_event_loop().time()
 
                 if session and session.state == STATE_MATCHED and secc_task is None:
@@ -329,6 +375,16 @@ class EVSECommunicationController(SlacSessionController):
                     await _start_secc_bg()
 
                 if session and session.state != STATE_MATCHED:
+                    # Keep SLAC session informed of steady-state CP even if it hasn't changed recently
+                    try:
+                        slac_cp = (
+                            "C" if cp in {"C", "D"} else (cp if cp in {"A", "B"} else None)
+                        )
+                        if session is not None and slac_cp and slac_cp != last_slac_cp_forwarded:
+                            await self.process_cp_state(session, slac_cp)
+                            last_slac_cp_forwarded = slac_cp
+                    except Exception:
+                        pass
                     # If EV MAC is known (after SLAC_PARM), log once early
                     try:
                         if not ev_peer_logged and getattr(session, "pev_mac", None):

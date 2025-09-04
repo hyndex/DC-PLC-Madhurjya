@@ -213,6 +213,9 @@ static void send_status_json() {
 
   serializeJson(doc, SerialPi);
   SerialPi.print('\n');
+  // Also mirror to USB CDC for hosts connected via USB
+  serializeJson(doc, Serial);
+  Serial.print('\n');
 }
 
 static void handle_cmd_set_pwm(JsonObject obj) {
@@ -480,7 +483,7 @@ void loop() {
       Serial.print(prev); Serial.print(" -> "); Serial.print(st);
       Serial.print(" at "); Serial.print(mv); Serial.print(" mV (robust="); Serial.print(mv_robust); Serial.println(" mV)");
     }
-    // Report after applying
+    // Report after applying (mirror to both Pi UART and USB CDC)
     StaticJsonDocument<256> doc;
     doc["type"] = "status";
     doc["cp_mv"] = mv;
@@ -493,6 +496,8 @@ void loop() {
     pwm["hz"] = g_pwm_freq_hz;
     serializeJson(doc, SerialPi);
     SerialPi.print('\n');
+    serializeJson(doc, Serial);
+    Serial.print('\n');
   }
 
   // Periodic USB human-readable log (throttled)
