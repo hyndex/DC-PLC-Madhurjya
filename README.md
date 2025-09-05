@@ -76,6 +76,68 @@ python src/evse_main.py --evse-id <EVSE_ID>
 Troubleshooting tips and a flow diagram of the process are available in
 [docs/plug_and_play.md](docs/plug_and_play.md).
 
+### End-to-End Quickstart (ESP32‑S3 CP + HAL + ISO 15118)
+
+This is the shortest complete path from firmware to a running SECC with logs that include BMS demands and EVSE measurements per message.
+
+1) Build and flash the ESP32‑S3 CP firmware
+
+```bash
+# Build
+python3 -m platformio run -d firmware/esp32s3_cp
+# Flash (adjust port for your OS, e.g., /dev/ttyACM0, /dev/cu.usbmodem*)
+python3 -m platformio run -d firmware/esp32s3_cp -t upload --upload-port /dev/ttyACM0
+```
+
+Notes:
+- Radios (Wi‑Fi/BLE) are disabled at boot in firmware to reduce ADC jitter.
+- Robust top‑K ADC sampling + hysteresis are enabled. Tunables below.
+
+2) Prepare Python env on the Pi/host
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+python3 -m pip install -r requirements.txt -r requirements-submodules.txt
+# Local pyslac editable install (no external pip needed)
+python3 -m pip install -e src/pyslac --no-deps
+```
+
+3) Set runtime parameters and run in HAL mode
+
+```bash
+export EVSE_CONTROLLER=hal
+export EVSE_HAL_ADAPTER=esp-uart          # or esp-periph when using the peripheral coprocessor
+export ESP_CP_PORT=/dev/serial0           # or /dev/ttyAMA0, /dev/ttyUSB0
+export EVSE_LOG_FORMAT=json               # optional: structured logs with BMS/EVSE snapshots
+
+# Optional: point to certificates dir if not default
+# export PKI_PATH=$(pwd)/pki
+
+python src/evse_main.py \
+  --evse-id EVSE-1 \
+  --iface eth0 \
+  --slac-config slac.env \
+  --secc-config secc.env \
+  --controller hal
+```
+
+What you’ll see:
+- SLAC match on `--iface` then “Launching ISO 15118 SECC”.
+- Per‑message ISO logs (`hlc` logger) with fields:
+  - `iso_state` (e.g., CableCheck, PreCharge, CurrentDemand)
+  - `bms`: `present_soc`, `target_voltage`, `target_current`, session limits
+  - `evse`: `present_voltage`, `present_current`, `set_voltage`, `set_current`
+
+4) Optional smoke checks
+
+```bash
+# SECC timeout safe‑stop smoke test
+python scripts/secc_timeout_smoke.py
+
+# Simulated end‑to‑end charging (no hardware power electronics)
+python src/ccs_sim/orchestrator.py
+```
+
 ### System Hardening + Env (Wi‑Fi kept)
 
 For a hardened runtime with Bluetooth/Avahi/CUPS/ModemManager disabled, a
@@ -251,6 +313,34 @@ An optional ESP32-S3 firmware provides CP PWM generation and ADC sampling, expos
 status/control over a simple JSON‑over‑UART protocol.
 
 - Firmware: `firmware/esp32s3_cp/` (PlatformIO; board: `esp32-s3-devkitc-1`)
+
+Build/flash:
+
+```bash
+python3 -m platformio run -d firmware/esp32s3_cp
+python3 -m platformio run -d firmware/esp32s3_cp -t upload --upload-port /dev/ttyACM0
+```
+
+Runtime behavior:
+- CP is driven at 1 kHz. In DC‑AUTO mode: 5% duty in B/C/D; 100% in A/E/F.
+- ADC sampler uses a top‑K average and band hysteresis to stabilize voltage state detection.
+- Wi‑Fi/BLE is disabled during setup to reduce ADC jitter; if you must enable Wi‑Fi later, add power‑save off (`esp_wifi_set_ps(WIFI_PS_NONE)`).
+
+Firmware tunables (set via `build_flags` or `#define`):
+- `CP_TOPK_IN_BURST` (default 8): samples averaged for robust peak in a burst.
+- `CP_SAMPLE_COUNT` (default 256): samples per burst; 192–320 typical.
+- `CP_SAMPLE_DELAY_US` (default 10): inter‑sample delay; 8–12 typical.
+- `CP_1_ADC_HYSTERESIS` (default 100 mV): bump to 150 mV if near boundaries.
+
+Example PlatformIO override (append to `build_flags` in `firmware/esp32s3_cp/platformio.ini`):
+
+```
+build_flags =
+  -DCP_TOPK_IN_BURST=8
+  -DCP_SAMPLE_COUNT=256
+  -DCP_SAMPLE_DELAY_US=10
+  -DCP_1_ADC_HYSTERESIS=150
+```
 
 ### Thermal Management (Derating + Faults)
 

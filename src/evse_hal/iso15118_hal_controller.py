@@ -387,6 +387,7 @@ class HalEVSEController(SimEVSEController):
         except Exception:
             ctx = None
         snapshot = None
+        evse_snapshot = None
         # Derive a concise state name for easier filtering (e.g., CableCheck, PreCharge, CurrentDemand)
         try:
             state_name = getattr(state, "__class__", type(state)).__name__
@@ -394,22 +395,41 @@ class HalEVSEController(SimEVSEController):
             state_name = str(state)
         if ctx is not None:
             try:
+                dc_limits = getattr(getattr(ctx, "session_limits", None), "dc_limits", None)
+                max_curr = getattr(dc_limits, "max_charge_current", None) if dc_limits else None
+                max_volt = getattr(dc_limits, "max_voltage", None) if dc_limits else None
                 snapshot = {
                     "present_soc": getattr(ctx, "present_soc", None),
                     "present_voltage": getattr(ctx, "present_voltage", None),
                     "target_voltage": getattr(ctx, "target_voltage", None),
                     "target_current": getattr(ctx, "target_current", None),
-                    "max_current_limit": getattr(ctx, "max_current_limit", None),
+                    # Session DC limits (if available)
+                    "max_current_limit": max_curr,
+                    "max_charge_current": max_curr,
+                    "max_voltage": max_volt,
                     "evcc_id": getattr(ctx, "evcc_id", None),
                 }
             except Exception:
                 snapshot = None
+        # Also emit the EVSE side snapshot (measured and last commanded)
+        try:
+            evse_snapshot = {
+                "present_voltage": getattr(self.evse_data_context, "present_voltage", None),
+                "present_current": getattr(self.evse_data_context, "present_current", None),
+                "set_voltage": round(float(self._last_set_v), 3),
+                "set_current": round(float(self._last_set_i), 3),
+                "rated_max_current": round(float(self._rated_dc_max_current_a), 3),
+                "rated_max_voltage": round(float(self._rated_dc_max_voltage_v), 3),
+            }
+        except Exception:
+            evse_snapshot = None
         logger.info(
             "ISO15118 state",
             extra={
                 "state": str(state),
                 "iso_state": state_name,
                 **({"bms": snapshot} if snapshot else {}),
+                **({"evse": evse_snapshot} if evse_snapshot else {}),
             },
         )
         # Publish to HLC manager if available
