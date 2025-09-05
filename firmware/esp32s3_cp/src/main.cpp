@@ -3,6 +3,10 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+// Reduce RF/digital noise impact on ADC by disabling radios
+#include <WiFi.h>
+#include "esp_wifi.h"
+#include "esp_bt.h"
 
 // ----- PWM Configuration for the Control Pilot -----
 #define CP_1_PWM_PIN 38
@@ -22,6 +26,14 @@
 #define CP_1_ADC_THRESHOLD_0  1250
 // Hysteresis in mV to avoid rapid state flapping near thresholds
 #define CP_1_ADC_HYSTERESIS   100
+
+// Robust max-of-burst uses an average of the top K samples (reduces spikes)
+#ifndef CP_TOPK_IN_BURST
+#define CP_TOPK_IN_BURST 8   // 4..12 is fine; 8 is a good balance
+#endif
+// Optionally widen hysteresis if you still see edges near thresholds
+// #undef CP_1_ADC_HYSTERESIS
+// #define CP_1_ADC_HYSTERESIS 150
 
 // ----- UART Pins (to Raspberry Pi) -----
 #define ESP_UART_RX 44
@@ -52,6 +64,7 @@ static volatile uint32_t g_pwm_freq_hz = CP_1_PWM_FREQUENCY;
 static uint32_t g_last_status_ms = 0;
 static char g_last_cp_state = 'A';
 static int g_last_cp_mv = 0;
+static int g_last_cp_mv_robust = 0;
 static uint16_t g_last_output_duty_pct = 100; // effective output duty applied on CP line
 static uint32_t g_last_usb_log_ms = 0;
 static int g_last_cp_mv_min = 0;
@@ -63,6 +76,21 @@ static uint8_t g_mv_max_hist_idx = 0;
 static char g_pending_state = 'A';
 static uint8_t g_pending_count = 0;
 static uint32_t g_sample_phase_us = 0; // desynchronize burst sampling vs PWM
+
+// Disable Wi-Fi and BLE to reduce ADC jitter on ESP32-S3
+static void disable_radios() {
+  // Wi-Fi off
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+  esp_wifi_stop();
+
+  // BLE off (ESP32-S3 has BLE)
+  if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED) {
+    esp_bt_controller_disable();
+  }
+  // Free BLE controller memory so no background tasks remain
+  esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+}
 
 // USB log cadence (ms)
 #ifndef USB_LOG_PERIOD_MS
@@ -104,22 +132,62 @@ static void read_cp_mv_stats(int &min_mv, int &max_mv, int &avg_mv, size_t sampl
   if (samples == 0) samples = 1;
   int64_t acc = 0;
   int minv = INT32_MAX;
-  int maxv = INT32_MIN;
+  int maxtrue = INT32_MIN;
+
+  // Maintain a small ascending array of the top-K values (approximate 95th percentile)
+  int topk[CP_TOPK_IN_BURST];
+  uint8_t tk = 0;
+
+  auto insert_topk = [&](int v) {
+    if (tk < CP_TOPK_IN_BURST) {
+      topk[tk++] = v;
+      // keep ascending
+      for (int i = tk - 1; i > 0 && topk[i] < topk[i - 1]; --i) {
+        int t = topk[i]; topk[i] = topk[i - 1]; topk[i - 1] = t;
+      }
+    } else if (v > topk[0]) {
+      topk[0] = v;
+      // bubble the first element up to restore ascending order
+      for (int i = 0; i + 1 < CP_TOPK_IN_BURST && topk[i] > topk[i + 1]; ++i) {
+        int t = topk[i]; topk[i] = topk[i + 1]; topk[i + 1] = t;
+      }
+    }
+  };
+
   // Small phase offset to avoid aliasing with PWM period
   if (g_sample_phase_us) delayMicroseconds(g_sample_phase_us);
+
   for (size_t i = 0; i < samples; ++i) {
-    // Warm-up read improves stability on ESP32 ADC
+    // "Warm-up" dummy read helps on ESP32 ADC
     (void)analogRead(CP_1_READ_PIN);
     delayMicroseconds(CP_SAMPLE_DELAY_US);
-    int v = analogReadMilliVolts(CP_1_READ_PIN);
+    const int v = analogReadMilliVolts(CP_1_READ_PIN);
+
     acc += v;
-    if (v < minv) minv = v;
-    if (v > maxv) maxv = v;
+    if (v < minv)     minv = v;
+    if (v > maxtrue)  maxtrue = v;
+    insert_topk(v);
   }
-  min_mv = (minv == INT32_MAX) ? 0 : minv;
-  max_mv = (maxv == INT32_MIN) ? 0 : maxv;
-  avg_mv = (int)(acc / (int64_t)samples);
-  // Advance phase (prime to 1000us for 1kHz PWM); keep small
+
+  // Compute robust "max": average of top ~25% elements, minimum of 2
+  int robust_max = 0;
+  if (tk == 0) {
+    robust_max = (maxtrue == INT32_MIN) ? 0 : maxtrue;
+  } else {
+    int start = tk - (tk / 4);        // top quartile
+    if (start > tk - 2) start = tk - 2; // at least 2 samples
+    if (start < 0)      start = 0;
+
+    int64_t sum = 0; int n = 0;
+    for (int i = start; i < tk; ++i) { sum += topk[i]; ++n; }
+    robust_max = (n > 0) ? (int)(sum / n) : topk[tk - 1];
+  }
+
+  min_mv  = (minv == INT32_MAX) ? 0 : minv;
+  max_mv  = robust_max;                          // robust, not raw max
+  avg_mv  = (int)(acc / (int64_t)samples);
+
+  // Advance phase (prime to 1000us for 1kHz PWM)
   g_sample_phase_us = (g_sample_phase_us + 17) % 1000;
 }
 
@@ -189,22 +257,13 @@ static int robust_max_mv() {
 }
 
 static void send_status_json() {
-  int smin = 0, smax = 0, savg = 0;
-  read_cp_mv_stats(smin, smax, savg);
-  // Update history for robust calculation
-  g_mv_max_hist[g_mv_max_hist_idx] = smax;
-  if (g_mv_max_hist_count < (uint8_t)(sizeof(g_mv_max_hist)/sizeof(g_mv_max_hist[0]))) {
-    g_mv_max_hist_count++;
-  }
-  g_mv_max_hist_idx = (g_mv_max_hist_idx + 1) % (uint8_t)(sizeof(g_mv_max_hist)/sizeof(g_mv_max_hist[0]));
-  const int mv_robust = robust_max_mv();
-  const int mv = smax; // cp_mv = immediate peak
-  const char st = cp_state_from_mv(mv_robust);
+  const int mv = g_last_cp_mv;
+  const int mv_robust = g_last_cp_mv_robust;
   StaticJsonDocument<256> doc;
   doc["type"] = "status";
   doc["cp_mv"] = mv;
   doc["cp_mv_robust"] = mv_robust;
-  doc["state"] = String(st);
+  doc["state"] = String(g_last_cp_state);
   doc["mode"] = (g_mode == OpMode::DC_AUTO) ? "dc" : "manual";
   JsonObject pwm = doc.createNestedObject("pwm");
   pwm["enabled"] = g_pwm_enabled;
@@ -403,6 +462,8 @@ static void process_line(String &line) {
 void setup() {
   // USB-CDC for debug
   Serial.begin(115200);
+  // Turn off radios early to minimize ADC jitter
+  disable_radios();
   while (!Serial && millis() < 1500) { /* wait for USB */ }
   Serial.println("ESP32-S3 CP Helper booting...");
 
@@ -438,7 +499,7 @@ void loop() {
     const int mv_robust = robust_max_mv();
     const int mv = smax; // report immediate peak; use robust for state
     const char prev = g_last_cp_state;
-    const char cand = cp_state_from_mv(mv_robust);
+    const char cand = cp_state_with_hysteresis(mv_robust, prev);
     // Treat sudden very-low max (missed plateau) as transient if previously connected
     bool transient_low = is_connected_state(prev) && (smax < (CP_1_ADC_THRESHOLD_0 - 150));
     // Debounce: require multiple confirmations unless strongly in new band
@@ -476,6 +537,7 @@ void loop() {
       g_last_output_duty_pct = g_pwm_enabled ? g_pwm_duty_pct : 100;
     }
     g_last_cp_mv = mv;
+    g_last_cp_mv_robust = mv_robust;
     g_last_cp_mv_min = smin;
     g_last_cp_mv_avg = savg;
     // Event: CP state transition
