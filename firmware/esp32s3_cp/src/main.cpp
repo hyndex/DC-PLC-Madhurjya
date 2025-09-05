@@ -15,7 +15,7 @@
 #define CP_1_READ_PIN 1
 #define CP_1_ADC_CHANNEL 0
 // Thresholds in mV for states A..F (A=highest voltage)
-#define CP_1_ADC_THRESHOLD_12 2300
+#define CP_1_ADC_THRESHOLD_12 2400
 #define CP_1_ADC_THRESHOLD_9  2000
 #define CP_1_ADC_THRESHOLD_6  1700
 #define CP_1_ADC_THRESHOLD_3  1450
