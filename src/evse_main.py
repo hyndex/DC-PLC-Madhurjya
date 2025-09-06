@@ -150,10 +150,11 @@ class EVSECommunicationController(SlacSessionController):
         # Track last CP letter forwarded to PySLAC so we propagate transitions
         last_slac_cp_forwarded: Optional[str] = None
         # SLAC init retry control per plug-in
+        # Allow more retries by default for field robustness
         try:
-            max_slac_attempts = int(os.environ.get("SLAC_MAX_ATTEMPTS", "2"))
+            max_slac_attempts = int(os.environ.get("SLAC_MAX_ATTEMPTS", "5"))
         except Exception:
-            max_slac_attempts = 2
+            max_slac_attempts = 5
         try:
             slac_retry_backoff_s = float(os.environ.get("SLAC_RETRY_BACKOFF_S", "1.5"))
         except Exception:
@@ -460,13 +461,39 @@ class EVSECommunicationController(SlacSessionController):
                             except Exception:
                                 pass
                         else:
-                            # Too many failures; surface an error and wait for user action or replug
-                            logger.error(
-                                "SLAC initialization failed after %d attempts; waiting for CP disconnect/retry",
-                                slac_attempts,
-                            )
-                            # Optional: mark a transient error status if SECC controller available later
-                            # Block further attempts until CP disconnect resets the counter
+                            # Too many failures; optionally auto-restart matching without requiring a disconnect
+                            auto_restart = os.environ.get("SLAC_AUTO_RESTART", "1").strip().lower() not in ("0", "false", "no")
+                            if auto_restart and (cp in connected_states):
+                                logger.warning(
+                                    "SLAC failed after %d attempts; auto-restarting after backoff",
+                                    slac_attempts,
+                                )
+                                # Proactive nudge before retrying
+                                try:
+                                    reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
+                                except Exception:
+                                    reset_ms = 400
+                                try:
+                                    getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
+                                    logger.info("HAL SLAC proactive nudge (auto-restart)", extra={"reset_ms": reset_ms})
+                                except Exception:
+                                    pass
+                                # Reset attempt counter and wait before next try
+                                slac_attempts = 0
+                                try:
+                                    await asyncio.sleep(max(0.2, slac_retry_backoff_s))
+                                except Exception:
+                                    pass
+                                session_started_at = 0.0
+                                session = None
+                                continue
+                            else:
+                                # Surface an error and wait for CP disconnect/replug
+                                logger.error(
+                                    "SLAC initialization failed after %d attempts; waiting for CP disconnect/retry",
+                                    slac_attempts,
+                                )
+                                # Block further attempts until CP disconnect resets the counter
             else:
                 # Safety first: immediately open contactor on CP disconnect
                 # (host-side cutoff). Default 100 ms to align with IEC 61851.
