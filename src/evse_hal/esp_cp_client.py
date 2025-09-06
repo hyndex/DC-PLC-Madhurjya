@@ -322,3 +322,33 @@ class EspCpClient:
             self._send({"cmd": "reset"})
         except Exception:
             pass
+
+    # --- Threshold calibration / tuning ---
+    def set_thresholds(
+        self,
+        t12: int | None = None,
+        t9: int | None = None,
+        t6: int | None = None,
+        t3: int | None = None,
+        t0: int | None = None,
+        hys: int | None = None,
+    ) -> None:
+        """Update ADC thresholds/hysteresis at runtime without reflashing.
+
+        Any parameter left as None is not changed.
+        """
+        payload: Dict[str, Any] = {"cmd": "cp.set_thresholds"}
+        if t12 is not None: payload["t12"] = int(t12)
+        if t9  is not None: payload["t9"]  = int(t9)
+        if t6  is not None: payload["t6"]  = int(t6)
+        if t3  is not None: payload["t3"]  = int(t3)
+        if t0  is not None: payload["t0"]  = int(t0)
+        if hys is not None: payload["hys"] = int(hys)
+        self._send(payload)
+
+    def auto_calibrate(self) -> None:
+        """Ask firmware to measure idle +12V and derive thresholds.
+
+        Precondition: EVSE is in state A (no EV), CP line held at +12V.
+        """
+        self._send({"cmd": "cp.auto_cal"})

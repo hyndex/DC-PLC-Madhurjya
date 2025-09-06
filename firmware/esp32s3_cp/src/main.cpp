@@ -19,17 +19,19 @@
 #define CP_1_READ_PIN 1
 #define CP_1_ADC_CHANNEL 0
 // Thresholds in mV for states A..F (A=highest voltage)
-#define CP_1_ADC_THRESHOLD_12 2400
-#define CP_1_ADC_THRESHOLD_9  2000
-#define CP_1_ADC_THRESHOLD_6  1700
-#define CP_1_ADC_THRESHOLD_3  1450
-#define CP_1_ADC_THRESHOLD_0  1250
+// Adjusted to match observed scaling (A≈3000 mV, B≈2400 mV)
+#define CP_1_ADC_THRESHOLD_12 2700   // A/B boundary ~ 2.7V
+#define CP_1_ADC_THRESHOLD_9  2200   // B/C boundary ~ 2.2V
+#define CP_1_ADC_THRESHOLD_6  1600   // C/D boundary ~ 1.6V
+#define CP_1_ADC_THRESHOLD_3   900   // D/E boundary ~ 0.9V
+#define CP_1_ADC_THRESHOLD_0   300   // E/F boundary ~ 0.3V
 // Hysteresis in mV to avoid rapid state flapping near thresholds
-#define CP_1_ADC_HYSTERESIS   100
+#define CP_1_ADC_HYSTERESIS   120
 
-// Robust max-of-burst uses an average of the top K samples (reduces spikes)
+// Robust plateau estimator over a burst: keep a larger top-K window,
+// then compute a trimmed mean from the high side to avoid edge overshoot.
 #ifndef CP_TOPK_IN_BURST
-#define CP_TOPK_IN_BURST 8   // 4..12 is fine; 8 is a good balance
+#define CP_TOPK_IN_BURST 24   // larger K improves robustness against edge spikes
 #endif
 // Optionally widen hysteresis if you still see edges near thresholds
 // #undef CP_1_ADC_HYSTERESIS
@@ -76,6 +78,14 @@ static uint8_t g_mv_max_hist_idx = 0;
 static char g_pending_state = 'A';
 static uint8_t g_pending_count = 0;
 static uint32_t g_sample_phase_us = 0; // desynchronize burst sampling vs PWM
+
+// Runtime-adjustable thresholds (initialized from compile-time defaults)
+static int g_th_12 = CP_1_ADC_THRESHOLD_12;
+static int g_th_9  = CP_1_ADC_THRESHOLD_9;
+static int g_th_6  = CP_1_ADC_THRESHOLD_6;
+static int g_th_3  = CP_1_ADC_THRESHOLD_3;
+static int g_th_0  = CP_1_ADC_THRESHOLD_0;
+static int g_hys   = CP_1_ADC_HYSTERESIS;
 
 // Disable Wi-Fi and BLE to reduce ADC jitter on ESP32-S3
 static void disable_radios() {
@@ -169,17 +179,26 @@ static void read_cp_mv_stats(int &min_mv, int &max_mv, int &avg_mv, size_t sampl
     insert_topk(v);
   }
 
-  // Compute robust "max": average of top ~25% elements, minimum of 2
+  // Compute robust plateau estimate: trimmed mean of the upper tail,
+  // excluding the top-most outliers (edge overshoot) and the lower half.
   int robust_max = 0;
   if (tk == 0) {
     robust_max = (maxtrue == INT32_MIN) ? 0 : maxtrue;
   } else {
-    int start = tk - (tk / 4);        // top quartile
-    if (start > tk - 2) start = tk - 2; // at least 2 samples
-    if (start < 0)      start = 0;
+    // Drop the bottom ~1/2 of values (keep upper half)
+    int start = tk / 2;
+    // Exclude the top N outliers to avoid sampling right on the PWM rising edge
+    int hi_exclude = (tk >= 6) ? 2 : 1; // for small tk, still drop at least one
+    int end = tk - hi_exclude;          // [start, end)
+    if (end <= start) {
+      // Fallback: keep last 2-3 elements when tk is very small
+      start = (tk > 3) ? (tk - 3) : 0;
+      end = tk - 1;
+      if (end <= start) { start = 0; end = tk; }
+    }
 
     int64_t sum = 0; int n = 0;
-    for (int i = start; i < tk; ++i) { sum += topk[i]; ++n; }
+    for (int i = start; i < end; ++i) { sum += topk[i]; ++n; }
     robust_max = (n > 0) ? (int)(sum / n) : topk[tk - 1];
   }
 
@@ -192,11 +211,11 @@ static void read_cp_mv_stats(int &min_mv, int &max_mv, int &avg_mv, size_t sampl
 }
 
 static char cp_state_from_mv(int mv) {
-  if (mv >= CP_1_ADC_THRESHOLD_12) return 'A';
-  if (mv >= CP_1_ADC_THRESHOLD_9)  return 'B';
-  if (mv >= CP_1_ADC_THRESHOLD_6)  return 'C';
-  if (mv >= CP_1_ADC_THRESHOLD_3)  return 'D';
-  if (mv >= CP_1_ADC_THRESHOLD_0)  return 'E';
+  if (mv >= g_th_12) return 'A';
+  if (mv >= g_th_9)  return 'B';
+  if (mv >= g_th_6)  return 'C';
+  if (mv >= g_th_3)  return 'D';
+  if (mv >= g_th_0)  return 'E';
   return 'F';
 }
 
@@ -204,27 +223,27 @@ static char cp_state_with_hysteresis(int mv, char last) {
   // If current mv is clearly within a target band beyond hysteresis, switch; otherwise hold last
   switch (last) {
     case 'A':
-      if (mv < CP_1_ADC_THRESHOLD_12 - CP_1_ADC_HYSTERESIS) return cp_state_from_mv(mv);
+      if (mv < g_th_12 - g_hys) return cp_state_from_mv(mv);
       return 'A';
     case 'B':
-      if (mv >= CP_1_ADC_THRESHOLD_12 + CP_1_ADC_HYSTERESIS) return 'A';
-      if (mv < CP_1_ADC_THRESHOLD_9 - CP_1_ADC_HYSTERESIS) return cp_state_from_mv(mv);
+      if (mv >= g_th_12 + g_hys) return 'A';
+      if (mv < g_th_9 - g_hys) return cp_state_from_mv(mv);
       return 'B';
     case 'C':
-      if (mv >= CP_1_ADC_THRESHOLD_9 + CP_1_ADC_HYSTERESIS) return 'B';
-      if (mv < CP_1_ADC_THRESHOLD_6 - CP_1_ADC_HYSTERESIS) return cp_state_from_mv(mv);
+      if (mv >= g_th_9 + g_hys) return 'B';
+      if (mv < g_th_6 - g_hys) return cp_state_from_mv(mv);
       return 'C';
     case 'D':
-      if (mv >= CP_1_ADC_THRESHOLD_6 + CP_1_ADC_HYSTERESIS) return 'C';
-      if (mv < CP_1_ADC_THRESHOLD_3 - CP_1_ADC_HYSTERESIS) return cp_state_from_mv(mv);
+      if (mv >= g_th_6 + g_hys) return 'C';
+      if (mv < g_th_3 - g_hys) return cp_state_from_mv(mv);
       return 'D';
     case 'E':
-      if (mv >= CP_1_ADC_THRESHOLD_3 + CP_1_ADC_HYSTERESIS) return 'D';
-      if (mv < CP_1_ADC_THRESHOLD_0 - CP_1_ADC_HYSTERESIS) return 'F';
+      if (mv >= g_th_3 + g_hys) return 'D';
+      if (mv < g_th_0 - g_hys) return 'F';
       return 'E';
     case 'F':
     default:
-      if (mv >= CP_1_ADC_THRESHOLD_0 + CP_1_ADC_HYSTERESIS) return 'E';
+      if (mv >= g_th_0 + g_hys) return 'E';
       return 'F';
   }
 }
@@ -232,12 +251,12 @@ static char cp_state_with_hysteresis(int mv, char last) {
 // Return whether mv is comfortably inside the voltage band for 'st'
 static bool mv_strong_in_state(int mv, char st) {
   switch (st) {
-    case 'A': return mv >= (CP_1_ADC_THRESHOLD_12 + CP_1_ADC_HYSTERESIS);
-    case 'B': return mv >= (CP_1_ADC_THRESHOLD_9 + CP_1_ADC_HYSTERESIS) && mv < (CP_1_ADC_THRESHOLD_12 - CP_1_ADC_HYSTERESIS);
-    case 'C': return mv >= (CP_1_ADC_THRESHOLD_6 + CP_1_ADC_HYSTERESIS) && mv < (CP_1_ADC_THRESHOLD_9 - CP_1_ADC_HYSTERESIS);
-    case 'D': return mv >= (CP_1_ADC_THRESHOLD_3 + CP_1_ADC_HYSTERESIS) && mv < (CP_1_ADC_THRESHOLD_6 - CP_1_ADC_HYSTERESIS);
-    case 'E': return mv >= (CP_1_ADC_THRESHOLD_0 + CP_1_ADC_HYSTERESIS) && mv < (CP_1_ADC_THRESHOLD_3 - CP_1_ADC_HYSTERESIS);
-    case 'F': default: return mv < (CP_1_ADC_THRESHOLD_0 - CP_1_ADC_HYSTERESIS);
+    case 'A': return mv >= (g_th_12 + g_hys);
+    case 'B': return mv >= (g_th_9 + g_hys) && mv < (g_th_12 - g_hys);
+    case 'C': return mv >= (g_th_6 + g_hys) && mv < (g_th_9 - g_hys);
+    case 'D': return mv >= (g_th_3 + g_hys) && mv < (g_th_6 - g_hys);
+    case 'E': return mv >= (g_th_0 + g_hys) && mv < (g_th_3 - g_hys);
+    case 'F': default: return mv < (g_th_0 - g_hys);
   }
 }
 
@@ -270,6 +289,8 @@ static void send_status_json() {
   pwm["duty"] = g_pwm_duty_pct;
   pwm["hz"] = g_pwm_freq_hz;
   pwm["out"] = g_last_output_duty_pct; // effective output duty percentage
+  JsonObject thr = doc.createNestedObject("thresh");
+  thr["t12"] = g_th_12; thr["t9"] = g_th_9; thr["t6"] = g_th_6; thr["t3"] = g_th_3; thr["t0"] = g_th_0; thr["hys"] = g_hys;
 
   serializeJson(doc, SerialPi);
   SerialPi.print('\n');
@@ -373,6 +394,50 @@ static void apply_dc_auto_output(char st) {
   ledcWrite(CP_1_PWM_CHANNEL, duty);
 }
 
+static bool auto_calibrate_thresholds(uint32_t settle_ms = 150) {
+  // Save mode and PWM settings
+  OpMode prev_mode = g_mode;
+  bool prev_en = g_pwm_enabled;
+  uint16_t prev_duty = g_pwm_duty_pct;
+  // Force LINE HIGH (idle) to capture +12V plateau (scaled by divider)
+  g_mode = OpMode::MANUAL;
+  g_pwm_enabled = false; // apply_pwm_manual() will drive 100% duty (line high)
+  apply_pwm_manual();
+  uint32_t t0 = millis();
+  while (millis() - t0 < settle_ms) { delay(1); }
+  // Take multiple bursts and average the robust plateaus
+  const int bursts = 6;
+  int64_t acc = 0;
+  int valid = 0;
+  for (int i = 0; i < bursts; ++i) {
+    int smin=0, smax=0, savg=0;
+    read_cp_mv_stats(smin, smax, savg);
+    if (smax > 0) { acc += smax; valid++; }
+    delay(5);
+  }
+  // Restore previous mode and settings
+  g_mode = prev_mode;
+  g_pwm_enabled = prev_en;
+  g_pwm_duty_pct = prev_duty;
+  if (prev_mode == OpMode::MANUAL) apply_pwm_manual(); else apply_dc_auto_output(g_last_cp_state);
+
+  if (valid == 0) return false;
+  int v12 = (int)(acc / valid);
+  if (v12 < 1200) {
+    // Clearly not at 12V; refuse to calibrate
+    return false;
+  }
+  // Compute boundaries between states at the J1772 midpoints:
+  // A/B: 10.5V, B/C: 7.5V, C/D: 4.5V, D/E: 1.5V (all relative to 12V reference)
+  auto scale = [&](int num, int den) -> int { return (int)((int64_t)v12 * num / den); };
+  g_th_12 = scale(105, 120);  // 10.5/12 * V12
+  g_th_9  = scale(75, 120);   // 7.5/12 * V12
+  g_th_6  = scale(45, 120);   // 4.5/12 * V12
+  g_th_3  = scale(15, 120);   // 1.5/12 * V12
+  // For E/F boundary we keep existing g_th_0; it's close to 0V; retain hysteresis
+  return true;
+}
+
 static void process_line(String &line) {
   StaticJsonDocument<768> doc;
   DeserializationError err = deserializeJson(doc, line);
@@ -451,6 +516,40 @@ static void process_line(String &line) {
   else if (scmd == "enable_pwm") { handle_cmd_enable_pwm(doc.as<JsonObject>()); }
   else if (scmd == "set_freq")   { handle_cmd_set_freq(doc.as<JsonObject>()); }
   else if (scmd == "set_mode")   { handle_cmd_set_mode(doc.as<JsonObject>()); }
+  else if (scmd == "cp.set_thresholds") {
+    JsonObject o = doc.as<JsonObject>();
+    if (o.containsKey("t12")) g_th_12 = o["t12"].as<int>();
+    if (o.containsKey("t9"))  g_th_9  = o["t9"].as<int>();
+    if (o.containsKey("t6"))  g_th_6  = o["t6"].as<int>();
+    if (o.containsKey("t3"))  g_th_3  = o["t3"].as<int>();
+    if (o.containsKey("t0"))  g_th_0  = o["t0"].as<int>();
+    if (o.containsKey("hys")) g_hys   = max(0, o["hys"].as<int>());
+    Serial.print("["); Serial.print(millis()); Serial.print("] [I] thresholds updated: ");
+    Serial.print(g_th_12); Serial.print(","); Serial.print(g_th_9); Serial.print(","); Serial.print(g_th_6); Serial.print(","); Serial.print(g_th_3); Serial.print(","); Serial.print(g_th_0); Serial.print(" hys="); Serial.println(g_hys);
+    send_status_json();
+  }
+  else if (scmd == "cp.scan") {
+    StaticJsonDocument<384> out;
+    out["type"] = "res";
+    out["cmd"] = "cp.scan";
+    JsonObject mv = out.createNestedObject("mv");
+    const int pins[] = {1,2,3,4,5,6,7,8,9,10};
+    for (size_t i = 0; i < sizeof(pins)/sizeof(pins[0]); ++i) {
+      int p = pins[i];
+      int v = analogReadMilliVolts(p);
+      mv[String(p)] = v; // ensure key lifetime is managed by JsonDocument
+    }
+    serializeJson(out, SerialPi); SerialPi.print('\n');
+    serializeJson(out, Serial); Serial.print('\n');
+  }
+  else if (scmd == "cp.auto_cal") {
+    bool ok = auto_calibrate_thresholds();
+    StaticJsonDocument<192> resp;
+    resp["type"] = ok ? "ok" : "error";
+    if (!ok) resp["msg"] = "cal_failed";
+    serializeJson(resp, SerialPi); SerialPi.print('\n');
+    send_status_json();
+  }
   else if (scmd == "get_status") { send_status_json(); }
   else if (scmd == "ping")      { StaticJsonDocument<64> resp; resp["type"]="pong"; serializeJson(resp, SerialPi); SerialPi.print('\n'); }
   else if (scmd == "restart_slac_hint") {
@@ -497,11 +596,12 @@ void loop() {
     }
     g_mv_max_hist_idx = (g_mv_max_hist_idx + 1) % (uint8_t)(sizeof(g_mv_max_hist)/sizeof(g_mv_max_hist[0]));
     const int mv_robust = robust_max_mv();
-    const int mv = smax; // report immediate peak; use robust for state
+    // Report the robust plateau (smax) rather than instantaneous peak to avoid overshoot
+    const int mv = smax;
     const char prev = g_last_cp_state;
     const char cand = cp_state_with_hysteresis(mv_robust, prev);
     // Treat sudden very-low max (missed plateau) as transient if previously connected
-    bool transient_low = is_connected_state(prev) && (smax < (CP_1_ADC_THRESHOLD_0 - 150));
+    bool transient_low = is_connected_state(prev) && (smax < (g_th_0 - 150));
     // Debounce: require multiple confirmations unless strongly in new band
     const uint8_t confirm_needed = mv_strong_in_state(mv_robust, cand) ? 1 : 3;
     if (!transient_low) {
@@ -558,6 +658,8 @@ void loop() {
     pwm["duty"] = g_pwm_duty_pct;
     pwm["hz"] = g_pwm_freq_hz;
     pwm["out"] = g_last_output_duty_pct; // effective output duty percentage
+    JsonObject thr = doc.createNestedObject("thresh");
+    thr["t12"] = g_th_12; thr["t9"] = g_th_9; thr["t6"] = g_th_6; thr["t3"] = g_th_3; thr["t0"] = g_th_0; thr["hys"] = g_hys;
     serializeJson(doc, SerialPi);
     SerialPi.print('\n');
     serializeJson(doc, Serial);
@@ -580,17 +682,24 @@ void loop() {
   }
 
   // Read commands (newline-delimited JSON)
-  static String line;
+  static String line_uart;
+  static String line_usb;
+  // UART1 (to Pi or external adapter)
   while (SerialPi.available() > 0) {
     char c = (char)SerialPi.read();
     if (c == '\n') {
-      if (line.length() > 0) {
-        process_line(line);
-        line = "";
-      }
+      if (line_uart.length() > 0) { process_line(line_uart); line_uart = ""; }
     } else if (c != '\r') {
-      // prevent runaway lines
-      if (line.length() < 240) line += c; else line = "";
+      if (line_uart.length() < 240) line_uart += c; else line_uart = "";
+    }
+  }
+  // USB CDC (Serial over USB)
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\n') {
+      if (line_usb.length() > 0) { process_line(line_usb); line_usb = ""; }
+    } else if (c != '\r') {
+      if (line_usb.length() < 240) line_usb += c; else line_usb = "";
     }
   }
 
