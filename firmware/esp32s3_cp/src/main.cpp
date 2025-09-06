@@ -112,6 +112,28 @@ static void disable_radios() {
 #define USB_LOG_PERIOD_MS 1000
 #endif
 
+// === Fast measurement vs slower status emission ===
+#ifndef MEAS_PERIOD_MS
+#define MEAS_PERIOD_MS 20         // fast, low-latency state decisions (≈10–30 ms)
+#endif
+#ifndef STATUS_PERIOD_MS
+#define STATUS_PERIOD_MS 200      // UART/USB status publish cadence
+#endif
+
+// === Sampling strategy ===
+#ifndef BURST_SAMPLES_IDLE
+#define BURST_SAMPLES_IDLE 128    // when not expecting narrow-high windows
+#endif
+#ifndef BURST_SAMPLES_CONNECTED
+#define BURST_SAMPLES_CONNECTED 384  // better chance to catch 5% duty plateau
+#endif
+#ifndef CP_SAMPLE_DELAY_US_IDLE
+#define CP_SAMPLE_DELAY_US_IDLE 10
+#endif
+#ifndef CP_SAMPLE_DELAY_US_CONNECTED
+#define CP_SAMPLE_DELAY_US_CONNECTED 6
+#endif
+
 // ADC sampling parameters for plateau capture
 #ifndef CP_SAMPLE_COUNT
 #define CP_SAMPLE_COUNT 256
@@ -126,12 +148,22 @@ static inline uint32_t pct_to_duty(uint16_t pct) {
   return (uint32_t)((CP_1_MAX_DUTY_CYCLE * (uint32_t)pct) / 100U);
 }
 
+// Cache last duty written to avoid redundant LEDC writes
+static uint32_t g_last_ledc_duty = 0xFFFFFFFFu;
+
+static inline void write_ledc_duty(uint32_t duty) {
+  if (duty != g_last_ledc_duty) {
+    ledcWrite(CP_1_PWM_CHANNEL, duty);
+    g_last_ledc_duty = duty;
+  }
+}
+
 static void apply_pwm_manual() {
   // In MANUAL mode, when disabled we hold the line high (+12V) via 100% duty
   // When enabled, we use the requested duty percentage
   const uint32_t duty = g_pwm_enabled ? pct_to_duty(g_pwm_duty_pct)
                                       : CP_1_MAX_DUTY_CYCLE;  // idle = high
-  ledcWrite(CP_1_PWM_CHANNEL, duty);
+  write_ledc_duty(duty);
 }
 
 static void configure_pwm() {
@@ -143,7 +175,14 @@ static void configure_pwm() {
   }
 }
 
-static void read_cp_mv_stats(int &min_mv, int &max_mv, int &avg_mv, size_t samples = CP_SAMPLE_COUNT) {
+// expect_narrow_high = true when the CP PWM is likely at 5% (DC mode or B/C/D),
+// which biases the estimator to the upper ~15–20% samples rather than a plain max.
+static void read_cp_mv_stats(int &min_mv, int &plateau_mv, int &avg_mv,
+                             size_t samples = 0, bool expect_narrow_high = false) {
+  // Choose sampling parameters based on expected window width
+  if (samples == 0) {
+    samples = expect_narrow_high ? BURST_SAMPLES_CONNECTED : BURST_SAMPLES_IDLE;
+  }
   if (samples == 0) samples = 1;
   int64_t acc = 0;
   int minv = INT32_MAX;
@@ -166,22 +205,27 @@ static void read_cp_mv_stats(int &min_mv, int &max_mv, int &avg_mv, size_t sampl
   };
   // Small phase offset to avoid aliasing with PWM period
   if (g_sample_phase_us) delayMicroseconds(g_sample_phase_us);
+  // Warm-up once per burst
+  (void)analogRead(CP_1_READ_PIN);
   for (size_t i = 0; i < samples; ++i) {
-    (void)analogRead(CP_1_READ_PIN);           // warm-up read
-    delayMicroseconds(CP_SAMPLE_DELAY_US);
+    delayMicroseconds(expect_narrow_high ? CP_SAMPLE_DELAY_US_CONNECTED
+                                         : CP_SAMPLE_DELAY_US_IDLE);
     int v = analogReadMilliVolts(CP_1_READ_PIN);
     acc += v;
     if (v < minv)     minv = v;
     if (v > maxtrue)  maxtrue = v;
     insert_topk(v);
   }
-  // Compute robust plateau estimate: trimmed mean of upper half excluding top outliers
+  // Compute robust plateau estimate
   int robust_max = 0;
   if (tk == 0) {
     robust_max = (maxtrue == INT32_MIN) ? 0 : maxtrue;
   } else {
-    int start = tk / 2;                 // keep upper half
-    int hi_exclude = (tk >= 6) ? 2 : 1; // drop 1–2 highest to avoid overshoot
+    // For narrow-high windows (5% duty), bias to the *top ~15–20%*;
+    // else use the upper half. Always trim 1 high outlier if available.
+    int hi_exclude = (tk >= 6) ? 1 : 0;
+    int start = expect_narrow_high ? (tk - max(3, tk / 6)) : (tk / 2);
+    if (start < 0) start = 0;
     int end = tk - hi_exclude;          // [start, end)
     if (end <= start) { start = (tk > 3) ? (tk - 3) : 0; end = tk - 1; if (end <= start) { start = 0; end = tk; } }
     int64_t sum = 0; int n = 0;
@@ -189,7 +233,7 @@ static void read_cp_mv_stats(int &min_mv, int &max_mv, int &avg_mv, size_t sampl
     robust_max = (n > 0) ? (int)(sum / n) : topk[tk - 1];
   }
   min_mv = (minv == INT32_MAX) ? 0 : minv;
-  max_mv = robust_max;                 // return robust plateau as "max"
+  plateau_mv = robust_max;             // return robust plateau as "plateau"
   avg_mv = (int)(acc / (int64_t)samples);
   // Advance phase (co-prime-ish to 1000us for 1kHz PWM)
   g_sample_phase_us = (g_sample_phase_us + 53) % 1000;
@@ -377,7 +421,7 @@ static void apply_dc_auto_output(char st) {
       duty = CP_1_MAX_DUTY_CYCLE;
       break;
   }
-  ledcWrite(CP_1_PWM_CHANNEL, duty);
+  write_ledc_duty(duty);
 }
 
 static bool auto_calibrate_thresholds(uint32_t settle_ms = 150) {
@@ -568,33 +612,36 @@ void setup() {
 
   configure_pwm();
   // Ensure idle=high at boot regardless of first measurement timing
-  ledcWrite(CP_1_PWM_CHANNEL, CP_1_MAX_DUTY_CYCLE);
+  write_ledc_duty(CP_1_MAX_DUTY_CYCLE);
   Serial.println("Init done.");
 }
 
 void loop() {
-  // Periodic status
   const uint32_t now = millis();
-  if (now - g_last_status_ms >= 200) {
-    g_last_status_ms = now;
-    // Update outputs based on mode and latest measured state
-    int smin = 0, smax = 0, savg = 0;
-    read_cp_mv_stats(smin, smax, savg);
+
+  // === FAST MEASUREMENT & DECISION LOOP (low latency) ===
+  static uint32_t g_last_meas_ms = 0;
+  if ((now - g_last_meas_ms) >= MEAS_PERIOD_MS) {
+    g_last_meas_ms = now;
+    // Expect narrow highs if in DC mode or already connected
+    const bool expect_narrow = (g_mode == OpMode::DC_AUTO) || is_connected_state(g_last_cp_state);
+    int smin = 0, splateau = 0, savg = 0;
+    read_cp_mv_stats(smin, splateau, savg, 0, expect_narrow);
     // push into history for robust filtering
-    g_mv_max_hist[g_mv_max_hist_idx] = smax;
+    g_mv_max_hist[g_mv_max_hist_idx] = splateau;
     if (g_mv_max_hist_count < (uint8_t)(sizeof(g_mv_max_hist)/sizeof(g_mv_max_hist[0]))) {
       g_mv_max_hist_count++;
     }
     g_mv_max_hist_idx = (g_mv_max_hist_idx + 1) % (uint8_t)(sizeof(g_mv_max_hist)/sizeof(g_mv_max_hist[0]));
     const int mv_hist = robust_max_mv();
     // Use current-burst robust plateau for decisions; keep history for smoothing/telemetry
-    const int mv = smax;
+    const int mv = splateau;
     const char prev = g_last_cp_state;
     const char cand = cp_state_with_hysteresis(mv, prev);
     // Treat sudden very-low max (missed plateau) as transient if previously connected
-    bool transient_low = is_connected_state(prev) && (smax < (g_th_0 - 150));
+    bool transient_low = is_connected_state(prev) && (splateau < (g_th_0 - 150));
     // Debounce: stronger confirmation around boundaries
-    const uint8_t confirm_needed = mv_strong_in_state(mv, cand) ? 2 : 4;
+    const uint8_t confirm_needed = mv_strong_in_state(mv, cand) ? 1 : (expect_narrow ? 2 : 3);
     // Treat brief upward blips to 'A' while connected as noise unless far above A/B
     const bool a_blip = is_connected_state(prev) && (cand == 'A') && (mv < (g_th_12 + g_hys + 150));
     if (!transient_low && !a_blip) {
@@ -639,24 +686,13 @@ void loop() {
       Serial.print(prev); Serial.print(" -> "); Serial.print(st);
       Serial.print(" at "); Serial.print(mv); Serial.print(" mV (robust="); Serial.print(mv_hist); Serial.println(" mV)");
     }
-    // Report after applying (mirror to both Pi UART and USB CDC)
-    StaticJsonDocument<256> doc;
-    doc["type"] = "status";
-    doc["cp_mv"] = mv;
-    doc["cp_mv_robust"] = mv_hist;
-    doc["state"] = String(st);
-    doc["mode"] = (g_mode == OpMode::DC_AUTO) ? "dc" : "manual";
-    JsonObject pwm = doc.createNestedObject("pwm");
-    pwm["enabled"] = g_pwm_enabled;
-    pwm["duty"] = g_pwm_duty_pct;
-    pwm["hz"] = g_pwm_freq_hz;
-    pwm["out"] = g_last_output_duty_pct; // effective output duty percentage
-    JsonObject thr = doc.createNestedObject("thresh");
-    thr["t12"] = g_th_12; thr["t9"] = g_th_9; thr["t6"] = g_th_6; thr["t3"] = g_th_3; thr["t0"] = g_th_0; thr["hys"] = g_hys;
-    serializeJson(doc, SerialPi);
-    SerialPi.print('\n');
-    serializeJson(doc, Serial);
-    Serial.print('\n');
+  }
+
+  // === SLOWER STATUS EMISSION (keeps hosts happy, no spam) ===
+  static uint32_t last_status_tx_ms = 0;
+  if ((now - last_status_tx_ms) >= STATUS_PERIOD_MS) {
+    last_status_tx_ms = now;
+    send_status_json();
   }
 
   // Periodic USB human-readable log (throttled)
