@@ -19,14 +19,18 @@
 #define CP_1_READ_PIN 1
 #define CP_1_ADC_CHANNEL 0
 // Thresholds in mV for states A..F (A=highest voltage)
-// Adjusted to match observed scaling (A≈3000 mV, B≈2400 mV)
-#define CP_1_ADC_THRESHOLD_12 2700   // A/B boundary ~ 2.7V
-#define CP_1_ADC_THRESHOLD_9  2200   // B/C boundary ~ 2.2V
-#define CP_1_ADC_THRESHOLD_6  1600   // C/D boundary ~ 1.6V
-#define CP_1_ADC_THRESHOLD_3   900   // D/E boundary ~ 0.9V
-#define CP_1_ADC_THRESHOLD_0   300   // E/F boundary ~ 0.3V
-// Hysteresis in mV to avoid rapid state flapping near thresholds
-#define CP_1_ADC_HYSTERESIS   120
+// Simple thresholds requested for trial (mV)
+#define CP_1_ADC_THRESHOLD_12 2400
+#define CP_1_ADC_THRESHOLD_9  2000
+#define CP_1_ADC_THRESHOLD_6  1700
+#define CP_1_ADC_THRESHOLD_3  1450
+#define CP_1_ADC_THRESHOLD_0  1250
+// Wider hysteresis to suppress flicker with PWM ripple
+#define CP_1_ADC_HYSTERESIS   150
+// Separate, smaller hysteresis for leaving A into B (more responsive)
+#ifndef CP_1_ADC_HYSTERESIS_A2B
+#define CP_1_ADC_HYSTERESIS_A2B 100
+#endif
 
 // Robust plateau estimator over a burst: keep a larger top-K window,
 // then compute a trimmed mean from the high side to avoid edge overshoot.
@@ -86,6 +90,7 @@ static int g_th_6  = CP_1_ADC_THRESHOLD_6;
 static int g_th_3  = CP_1_ADC_THRESHOLD_3;
 static int g_th_0  = CP_1_ADC_THRESHOLD_0;
 static int g_hys   = CP_1_ADC_HYSTERESIS;
+static int g_hys_ab= CP_1_ADC_HYSTERESIS_A2B;
 
 // Disable Wi-Fi and BLE to reduce ADC jitter on ESP32-S3
 static void disable_radios() {
@@ -143,71 +148,51 @@ static void read_cp_mv_stats(int &min_mv, int &max_mv, int &avg_mv, size_t sampl
   int64_t acc = 0;
   int minv = INT32_MAX;
   int maxtrue = INT32_MIN;
-
-  // Maintain a small ascending array of the top-K values (approximate 95th percentile)
+  // Maintain a small ascending array of the top-K values (approximate plateau)
   int topk[CP_TOPK_IN_BURST];
   uint8_t tk = 0;
-
   auto insert_topk = [&](int v) {
     if (tk < CP_TOPK_IN_BURST) {
       topk[tk++] = v;
-      // keep ascending
       for (int i = tk - 1; i > 0 && topk[i] < topk[i - 1]; --i) {
         int t = topk[i]; topk[i] = topk[i - 1]; topk[i - 1] = t;
       }
     } else if (v > topk[0]) {
       topk[0] = v;
-      // bubble the first element up to restore ascending order
       for (int i = 0; i + 1 < CP_TOPK_IN_BURST && topk[i] > topk[i + 1]; ++i) {
         int t = topk[i]; topk[i] = topk[i + 1]; topk[i + 1] = t;
       }
     }
   };
-
   // Small phase offset to avoid aliasing with PWM period
   if (g_sample_phase_us) delayMicroseconds(g_sample_phase_us);
-
   for (size_t i = 0; i < samples; ++i) {
-    // "Warm-up" dummy read helps on ESP32 ADC
-    (void)analogRead(CP_1_READ_PIN);
+    (void)analogRead(CP_1_READ_PIN);           // warm-up read
     delayMicroseconds(CP_SAMPLE_DELAY_US);
-    const int v = analogReadMilliVolts(CP_1_READ_PIN);
-
+    int v = analogReadMilliVolts(CP_1_READ_PIN);
     acc += v;
     if (v < minv)     minv = v;
     if (v > maxtrue)  maxtrue = v;
     insert_topk(v);
   }
-
-  // Compute robust plateau estimate: trimmed mean of the upper tail,
-  // excluding the top-most outliers (edge overshoot) and the lower half.
+  // Compute robust plateau estimate: trimmed mean of upper half excluding top outliers
   int robust_max = 0;
   if (tk == 0) {
     robust_max = (maxtrue == INT32_MIN) ? 0 : maxtrue;
   } else {
-    // Drop the bottom ~1/2 of values (keep upper half)
-    int start = tk / 2;
-    // Exclude the top N outliers to avoid sampling right on the PWM rising edge
-    int hi_exclude = (tk >= 6) ? 2 : 1; // for small tk, still drop at least one
+    int start = tk / 2;                 // keep upper half
+    int hi_exclude = (tk >= 6) ? 2 : 1; // drop 1–2 highest to avoid overshoot
     int end = tk - hi_exclude;          // [start, end)
-    if (end <= start) {
-      // Fallback: keep last 2-3 elements when tk is very small
-      start = (tk > 3) ? (tk - 3) : 0;
-      end = tk - 1;
-      if (end <= start) { start = 0; end = tk; }
-    }
-
+    if (end <= start) { start = (tk > 3) ? (tk - 3) : 0; end = tk - 1; if (end <= start) { start = 0; end = tk; } }
     int64_t sum = 0; int n = 0;
     for (int i = start; i < end; ++i) { sum += topk[i]; ++n; }
     robust_max = (n > 0) ? (int)(sum / n) : topk[tk - 1];
   }
-
-  min_mv  = (minv == INT32_MAX) ? 0 : minv;
-  max_mv  = robust_max;                          // robust, not raw max
-  avg_mv  = (int)(acc / (int64_t)samples);
-
-  // Advance phase (prime to 1000us for 1kHz PWM)
-  g_sample_phase_us = (g_sample_phase_us + 17) % 1000;
+  min_mv = (minv == INT32_MAX) ? 0 : minv;
+  max_mv = robust_max;                 // return robust plateau as "max"
+  avg_mv = (int)(acc / (int64_t)samples);
+  // Advance phase (co-prime-ish to 1000us for 1kHz PWM)
+  g_sample_phase_us = (g_sample_phase_us + 53) % 1000;
 }
 
 static char cp_state_from_mv(int mv) {
@@ -223,7 +208,8 @@ static char cp_state_with_hysteresis(int mv, char last) {
   // If current mv is clearly within a target band beyond hysteresis, switch; otherwise hold last
   switch (last) {
     case 'A':
-      if (mv < g_th_12 - g_hys) return cp_state_from_mv(mv);
+      // Use a smaller hysteresis to enter B from A so we don't lag around the boundary
+      if (mv < g_th_12 - g_hys_ab) return cp_state_from_mv(mv);
       return 'A';
     case 'B':
       if (mv >= g_th_12 + g_hys) return 'A';
@@ -290,7 +276,7 @@ static void send_status_json() {
   pwm["hz"] = g_pwm_freq_hz;
   pwm["out"] = g_last_output_duty_pct; // effective output duty percentage
   JsonObject thr = doc.createNestedObject("thresh");
-  thr["t12"] = g_th_12; thr["t9"] = g_th_9; thr["t6"] = g_th_6; thr["t3"] = g_th_3; thr["t0"] = g_th_0; thr["hys"] = g_hys;
+  thr["t12"] = g_th_12; thr["t9"] = g_th_9; thr["t6"] = g_th_6; thr["t3"] = g_th_3; thr["t0"] = g_th_0; thr["hys"] = g_hys; thr["hys_ab"] = g_hys_ab;
 
   serializeJson(doc, SerialPi);
   SerialPi.print('\n');
@@ -423,8 +409,12 @@ static bool auto_calibrate_thresholds(uint32_t settle_ms = 150) {
 
   if (valid == 0) return false;
   int v12 = (int)(acc / valid);
-  if (v12 < 1200) {
-    // Clearly not at 12V; refuse to calibrate
+  // Guard: only allow auto-cal when line is truly at +12V (state A).
+  // If an EV is connected (state B/C), the CP positive plateau is ~9V scaled
+  // and auto-cal would produce too-low thresholds, misclassifying B as A.
+  if (v12 < 2800) { // tuned for this hardware's scaling (~3.0V @ A)
+    Serial.print("["); Serial.print(millis()); Serial.print("] [W] auto_cal aborted: v12=");
+    Serial.print(v12); Serial.println(" mV (expect ~3000 mV in state A)");
     return false;
   }
   // Compute boundaries between states at the J1772 midpoints:
@@ -524,8 +514,9 @@ static void process_line(String &line) {
     if (o.containsKey("t3"))  g_th_3  = o["t3"].as<int>();
     if (o.containsKey("t0"))  g_th_0  = o["t0"].as<int>();
     if (o.containsKey("hys")) g_hys   = max(0, o["hys"].as<int>());
+    if (o.containsKey("hys_ab")) g_hys_ab = max(0, o["hys_ab"].as<int>());
     Serial.print("["); Serial.print(millis()); Serial.print("] [I] thresholds updated: ");
-    Serial.print(g_th_12); Serial.print(","); Serial.print(g_th_9); Serial.print(","); Serial.print(g_th_6); Serial.print(","); Serial.print(g_th_3); Serial.print(","); Serial.print(g_th_0); Serial.print(" hys="); Serial.println(g_hys);
+    Serial.print(g_th_12); Serial.print(","); Serial.print(g_th_9); Serial.print(","); Serial.print(g_th_6); Serial.print(","); Serial.print(g_th_3); Serial.print(","); Serial.print(g_th_0); Serial.print(" hys="); Serial.print(g_hys); Serial.print(" hys_ab="); Serial.println(g_hys_ab);
     send_status_json();
   }
   else if (scmd == "cp.scan") {
@@ -595,16 +586,18 @@ void loop() {
       g_mv_max_hist_count++;
     }
     g_mv_max_hist_idx = (g_mv_max_hist_idx + 1) % (uint8_t)(sizeof(g_mv_max_hist)/sizeof(g_mv_max_hist[0]));
-    const int mv_robust = robust_max_mv();
-    // Report the robust plateau (smax) rather than instantaneous peak to avoid overshoot
+    const int mv_hist = robust_max_mv();
+    // Use current-burst robust plateau for decisions; keep history for smoothing/telemetry
     const int mv = smax;
     const char prev = g_last_cp_state;
-    const char cand = cp_state_with_hysteresis(mv_robust, prev);
+    const char cand = cp_state_with_hysteresis(mv, prev);
     // Treat sudden very-low max (missed plateau) as transient if previously connected
     bool transient_low = is_connected_state(prev) && (smax < (g_th_0 - 150));
-    // Debounce: require multiple confirmations unless strongly in new band
-    const uint8_t confirm_needed = mv_strong_in_state(mv_robust, cand) ? 1 : 3;
-    if (!transient_low) {
+    // Debounce: stronger confirmation around boundaries
+    const uint8_t confirm_needed = mv_strong_in_state(mv, cand) ? 2 : 4;
+    // Treat brief upward blips to 'A' while connected as noise unless far above A/B
+    const bool a_blip = is_connected_state(prev) && (cand == 'A') && (mv < (g_th_12 + g_hys + 150));
+    if (!transient_low && !a_blip) {
       if (cand != prev) {
         if (g_pending_state == cand) {
           if (g_pending_count + 1 >= confirm_needed) {
@@ -636,21 +629,21 @@ void loop() {
     } else {
       g_last_output_duty_pct = g_pwm_enabled ? g_pwm_duty_pct : 100;
     }
-    g_last_cp_mv = mv;
-    g_last_cp_mv_robust = mv_robust;
+    g_last_cp_mv = mv;             // publish robust plateau of current burst
+    g_last_cp_mv_robust = mv_hist; // history-based smoothing
     g_last_cp_mv_min = smin;
     g_last_cp_mv_avg = savg;
     // Event: CP state transition
     if (st != prev) {
       Serial.print("["); Serial.print(now); Serial.print("] [I] CP state ");
       Serial.print(prev); Serial.print(" -> "); Serial.print(st);
-      Serial.print(" at "); Serial.print(mv); Serial.print(" mV (robust="); Serial.print(mv_robust); Serial.println(" mV)");
+      Serial.print(" at "); Serial.print(mv); Serial.print(" mV (robust="); Serial.print(mv_hist); Serial.println(" mV)");
     }
     // Report after applying (mirror to both Pi UART and USB CDC)
     StaticJsonDocument<256> doc;
     doc["type"] = "status";
     doc["cp_mv"] = mv;
-    doc["cp_mv_robust"] = mv_robust;
+    doc["cp_mv_robust"] = mv_hist;
     doc["state"] = String(st);
     doc["mode"] = (g_mode == OpMode::DC_AUTO) ? "dc" : "manual";
     JsonObject pwm = doc.createNestedObject("pwm");
