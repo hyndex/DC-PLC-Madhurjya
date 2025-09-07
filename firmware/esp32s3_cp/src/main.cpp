@@ -19,10 +19,10 @@
 #define CP_1_READ_PIN       1
 
 // ===== Threshold anchors (runtime; old API expects t12..t0) =====
-static int g_t12 = 2300; // A boundary
+static int g_t12 = 2500; // A boundary
 static int g_t9  = 2100; // B boundary
 #ifndef TH_STEP_MV
-#define TH_STEP_MV 300
+#define TH_STEP_MV 400
 #endif
 static int g_t6  = (g_t9 - TH_STEP_MV);
 static int g_t3  = (g_t6 - TH_STEP_MV);
