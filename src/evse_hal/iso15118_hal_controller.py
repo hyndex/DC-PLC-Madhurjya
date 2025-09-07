@@ -69,6 +69,35 @@ class HalEVSEController(SimEVSEController):
     async def get_supported_energy_transfer_modes(
         self, protocol: Protocol
     ) -> List[EnergyTransferModeEnum]:
+        """Advertise AC-only or DC-only based on the HAL CP mode.
+
+        Many EVs expect the EVSE to be consistent between the physical CP
+        signaling and the capabilities it advertises over HLC. If the HAL is in
+        AC/manual mode (IEC 61851 PWM), advertise AC modes only. If in DC mode,
+        advertise DC modes only. Fallback to simulator defaults on error.
+        """
+        try:
+            mode = None
+            try:
+                mode = getattr(self._hal, "cp_mode", lambda: None)()
+            except Exception:
+                mode = None
+            # Normalize
+            mode = (str(mode).strip().lower() if mode else None)
+            if mode in ("ac", "manual"):
+                # Offer common AC modes for ISO 15118-2/-20
+                return [
+                    EnergyTransferModeEnum.AC_SINGLE_PHASE_CORE,
+                    EnergyTransferModeEnum.AC_THREE_PHASE_CORE,
+                ]
+            if mode == "dc":
+                return [
+                    EnergyTransferModeEnum.DC_CORE,
+                    EnergyTransferModeEnum.DC_EXTENDED,
+                ]
+        except Exception:
+            pass
+        # Fallback to parent behavior if detection fails
         return await super().get_supported_energy_transfer_modes(protocol)
 
     def is_eim_authorized(self) -> bool:

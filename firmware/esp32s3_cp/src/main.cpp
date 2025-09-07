@@ -19,14 +19,20 @@
 #define CP_1_READ_PIN       1
 
 // ===== Threshold anchors (runtime; old API expects t12..t0) =====
-static int g_t12 = 2500; // A boundary
-static int g_t9  = 2100; // B boundary
+// A↔B boundary
+static int g_t12 = 2440;   // mid((~2620), (~2260))
+
+// B↔C boundary
+static int g_t9  = 2080;   // mid((~2260), (~1900))
+
+// Keep the old step-based API but set the step so t6,t3 align with C/D & below
 #ifndef TH_STEP_MV
-#define TH_STEP_MV 400
+#define TH_STEP_MV 380      // g_t6 ≈ 1700, g_t3 ≈ 1320, g_t0 ≈ 940
 #endif
-static int g_t6  = (g_t9 - TH_STEP_MV);
-static int g_t3  = (g_t6 - TH_STEP_MV);
-static int g_t0  = (g_t3 - TH_STEP_MV);
+
+static int g_t6  = (g_t9 - TH_STEP_MV);  // ≈1700  (C↔D boundary)
+static int g_t3  = (g_t6 - TH_STEP_MV);  // ≈1320  (D↔E guard, rarely used in DC)
+static int g_t0  = (g_t3 - TH_STEP_MV);  // ≈ 940  (floor)
 
 // Hysteresis placeholders (kept in JSON; not used)
 static int g_hys    = 0;
@@ -313,11 +319,14 @@ static void process_line(String &line) {
   // JSON-RPC path
   const char* mtype = doc["type"] | "";
   if (strcmp(mtype, "req") == 0) {
-    uint32_t id = doc["id"] | 0; const char* method = doc["method"] | "";
+    // Preserve JSON-RPC id as-is (string or number)
+    JsonVariant idv = doc["id"]; const char* method = doc["method"] | "";
     auto send_res = [&](JsonVariant res, JsonVariant errv = JsonVariant()){
-      StaticJsonDocument<512> out; out["type"]="res"; out["id"]=id; out["ts"]=millis();
+      StaticJsonDocument<512> out; out["type"]="res"; out["id"]=idv; out["ts"]=millis();
       if (errv.isNull()) out["result"]=res; else out["error"]=errv;
+      // Mirror responses to both SerialPi (UART1) and USB CDC Serial for host tools
       serializeJson(out, SerialPi); SerialPi.print('\n');
+      serializeJson(out, Serial);   Serial.print('\n');
     };
     if (!method[0]) { StaticJsonDocument<128> e; e["code"]=-32600; e["message"]="invalid_request"; send_res(JsonObject(), e); return; }
 
@@ -393,23 +402,23 @@ static void process_line(String &line) {
   else if (scmd=="cp.auto_cal") {
     bool ok = auto_calibrate_thresholds();
     StaticJsonDocument<192> resp; resp["type"]= ok ? "ok" : "error"; if (!ok) resp["msg"]="cal_failed";
-    serializeJson(resp, SerialPi); SerialPi.print('\n'); send_status_json();
+    serializeJson(resp, SerialPi); SerialPi.print('\n'); serializeJson(resp, Serial); Serial.print('\n'); send_status_json();
   }
   else if (scmd=="get_status") { send_status_json(); }
-  else if (scmd=="ping")       { StaticJsonDocument<64> resp; resp["type"]="pong"; serializeJson(resp, SerialPi); SerialPi.print('\n'); }
+  else if (scmd=="ping")       { StaticJsonDocument<64> resp; resp["type"]="pong"; serializeJson(resp, SerialPi); SerialPi.print('\n'); serializeJson(resp, Serial); Serial.print('\n'); }
   else if (scmd=="restart_slac_hint") {
     uint32_t ms = doc["ms"] | 400; if (ms<50) ms=50; if (ms>2000) ms=2000;
     OpMode prev = g_mode; g_mode=OpMode::MANUAL; g_pwm_enabled=true; g_pwm_duty_pct=100; apply_pwm_manual();
     delay(ms);
     g_mode=OpMode::DC_AUTO; apply_dc_auto_output(g_last_cp_state);
-    StaticJsonDocument<96> resp; resp["type"]="ok"; resp["cmd"]="restart_slac_hint"; serializeJson(resp, SerialPi); SerialPi.print('\n'); send_status_json(); (void)prev;
+    StaticJsonDocument<96> resp; resp["type"]="ok"; resp["cmd"]="restart_slac_hint"; serializeJson(resp, SerialPi); SerialPi.print('\n'); serializeJson(resp, Serial); Serial.print('\n'); send_status_json(); (void)prev;
   }
   else if (scmd=="reset") {
-    StaticJsonDocument<64> resp; resp["type"]="ok"; resp["cmd"]="reset"; serializeJson(resp, SerialPi); SerialPi.print('\n');
+    StaticJsonDocument<64> resp; resp["type"]="ok"; resp["cmd"]="reset"; serializeJson(resp, SerialPi); SerialPi.print('\n'); serializeJson(resp, Serial); Serial.print('\n');
     delay(50); ESP.restart();
   }
   else {
-    StaticJsonDocument<96> resp; resp["type"]="error"; resp["msg"]="unknown_cmd"; serializeJson(resp, SerialPi); SerialPi.print('\n');
+    StaticJsonDocument<96> resp; resp["type"]="error"; resp["msg"]="unknown_cmd"; serializeJson(resp, SerialPi); SerialPi.print('\n'); serializeJson(resp, Serial); Serial.print('\n');
   }
 }
 
@@ -518,13 +527,17 @@ void loop() {
       static float e=0.0f; float on=g_contactor_aux?1.0f:0.0f; float v=415.0f; float i=on*50.0f; float p=v*i/1000.0f; e += p*0.001f;
       StaticJsonDocument<192> pld; pld["v"]=v; pld["i"]=i; pld["p"]=p; pld["e"]=e;
       StaticJsonDocument<256> evt; evt["type"]="evt"; evt["ts"]=now; evt["id"]=0; evt["method"]="evt:meter.tick"; evt["result"]=pld;
+      // Mirror events to both SerialPi and USB CDC Serial
       serializeJson(evt, SerialPi); SerialPi.print('\n');
+      serializeJson(evt, Serial);   Serial.print('\n');
     }
     if (g_temps_stream) {
       StaticJsonDocument<192> pld; pld.createNestedObject("gun_a")["c"] = 32.0 + (g_contactor_aux?12.0:0.5);
       pld.createNestedObject("gun_b")["c"] = 31.5 + (g_contactor_aux?11.0:0.3);
       StaticJsonDocument<256> evt; evt["type"]="evt"; evt["ts"]=now; evt["id"]=0; evt["method"]="evt:temps.tick"; evt["result"]=pld;
+      // Mirror events to both SerialPi and USB CDC Serial
       serializeJson(evt, SerialPi); SerialPi.print('\n');
+      serializeJson(evt, Serial);   Serial.print('\n');
     }
   }
 
@@ -533,6 +546,8 @@ void loop() {
     g_contactor_cmd = false; g_contactor_aux = false;
     StaticJsonDocument<96> evt; evt["type"]="evt"; evt["ts"]=now; evt["id"]=0; evt["method"]="evt:failsafe.keepalive";
     JsonObject res = evt.createNestedObject("result"); res["forced"]="contactor_off";
+    // Mirror events to both SerialPi and USB CDC Serial
     serializeJson(evt, SerialPi); SerialPi.print('\n');
+    serializeJson(evt, Serial);   Serial.print('\n');
   }
 }

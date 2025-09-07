@@ -91,6 +91,7 @@ export EVSE_CONTROLLER="${EVSE_CONTROLLER:-hal}"
 export EVSE_HAL_ADAPTER="${ADAPTER_ARG}"
 export EVSE_LOG_LEVEL="${EVSE_LOG_LEVEL:-DEBUG}"
 export EVSE_LOG_FORMAT="${EVSE_LOG_FORMAT:-text}"
+export EVSE_CP_HOST_HINTS="${EVSE_CP_HOST_HINTS:-0}"
 
 # Optional cert/config envs
 ARGS=( -m src.evse_main --evse-id "${EVSE_ID}" --iface "${IFACE}" --controller hal )
@@ -104,6 +105,7 @@ CHILD_ENV=(
   "EVSE_HAL_ADAPTER=${EVSE_HAL_ADAPTER}"
   "EVSE_LOG_LEVEL=${EVSE_LOG_LEVEL}"
   "EVSE_LOG_FORMAT=${EVSE_LOG_FORMAT}"
+  "EVSE_CP_HOST_HINTS=${EVSE_CP_HOST_HINTS}"
 )
 [[ -n "${ESP_PORT}" ]] && CHILD_ENV+=("ESP_CP_PORT=${ESP_PORT}")
 [[ -n "${CERT_STORE_PATH:-}" ]] && CHILD_ENV+=("PKI_PATH=${CERT_STORE_PATH}")

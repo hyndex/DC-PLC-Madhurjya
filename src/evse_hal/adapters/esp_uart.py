@@ -42,30 +42,21 @@ class _EspCP(CPReader):
     def __init__(self, client: EspCpClient) -> None:
         self._c = client
         self._last_state: Optional[str] = None
-        # Debounce control-pilot state transitions to mitigate noise/glitches.
-        # Default to 50 ms for non-emergency transitions. Allow override via env.
-        try:
-            self._debounce_s: float = float(os.environ.get("CP_DEBOUNCE_S", "0.05"))
-        except Exception:
-            self._debounce_s = 0.05
-        # Internal tracking for raw vs debounced state
-        self._raw_state: Optional[str] = None
-        self._raw_since: float = 0.0
-        self._debounced_state: Optional[str] = None
-        self._debounced_since: float = 0.0
 
     def read_voltage(self) -> float:
         st = self._c.get_status(wait_s=0.2)
         if st:
-            # Update debouncer and last known state based on status
-            self._update_states_from_status(st)
+            # Trust firmware-provided CP state without Pi-side debouncing
+            try:
+                self._last_state = (st.state or "").strip().upper()[:1] or self._last_state
+            except Exception:
+                pass
             v = st.cp_mv / 1000.0
             logger.debug(
                 "HAL CP read",
                 extra={
                     "voltage_v": v,
-                    "raw_state": st.state,
-                    "debounced_state": self._debounced_state,
+                    "state": getattr(st, "state", None),
                     "mode": getattr(st, "mode", None),
                 },
             )
@@ -79,64 +70,13 @@ class _EspCP(CPReader):
     def get_state(self) -> Optional[str]:
         st = self._c.get_status(wait_s=0.05)
         if st:
-            self._update_states_from_status(st)
-        return self._debounced_state or self._last_state
+            try:
+                self._last_state = (st.state or "").strip().upper()[:1] or self._last_state
+            except Exception:
+                pass
+        return self._last_state
 
-    # --- Internals ---
-    def _update_states_from_status(self, st) -> None:
-        now = time.time()
-        raw = (st.state or "").strip().upper()[:1] or None
-        if raw != self._raw_state:
-            self._raw_state = raw
-            self._raw_since = now
-        # Initialize on first run
-        if self._debounced_state is None and raw is not None:
-            self._debounced_state = raw
-            self._debounced_since = now
-            self._last_state = raw
-            try:
-                logger.info(f"CP state (init) {raw}")
-            except Exception:
-                logger.info("CP state (init)", extra={"state": raw})
-            return
-        # Emergency states E/F: apply no debounce for fail-safe reaction
-        if raw in ("E", "F") and raw != self._debounced_state:
-            prev = self._debounced_state
-            self._debounced_state = raw
-            self._debounced_since = now
-            self._last_state = raw
-            try:
-                logger.warning(f"CP emergency {prev}->{raw} mv={st.cp_mv} mode={getattr(st,'mode',None)}")
-            except Exception:
-                logger.warning(
-                    "CP emergency state",
-                    extra={"from": prev, "to": raw, "cp_mv": st.cp_mv, "mode": getattr(st, "mode", None)},
-                )
-            return
-        # For normal transitions A/B/C/D, require stability for debounce_s
-        if raw is not None and raw != self._debounced_state:
-            stable = max(0.0, now - self._raw_since)
-            if stable >= max(0.0, self._debounce_s):
-                prev = self._debounced_state
-                self._debounced_state = raw
-                self._debounced_since = now
-                self._last_state = raw
-                try:
-                    logger.info(f"CP state {prev}->{raw} mv={st.cp_mv} stable_ms={int(stable*1000)}")
-                except Exception:
-                    logger.info(
-                        "CP state",
-                        extra={
-                            "from": prev,
-                            "to": raw,
-                            "stable_ms": int(stable * 1000),
-                            "cp_mv": st.cp_mv,
-                            "mode": getattr(st, "mode", None),
-                        },
-                    )
-        else:
-            # Maintain last state
-            self._last_state = self._debounced_state or raw
+    # No additional internals: we rely on firmware for state classification and stability
 
 
 @dataclass
@@ -156,12 +96,29 @@ class ESPSerialHardware(EVSEHardware):
             logger.info("HAL ESP ping", extra={"ok": ok})
         except Exception:
             logger.warning("HAL ESP ping failed")
-        # Ensure firmware is in DC auto mode
+        # Configure firmware CP mode once on startup based on environment
+        # Defaults to 'dc' (5% duty in B/C/D). For AC Type 2 use cases set:
+        #   ESP_CP_MODE=manual  EVSE_AC_MAX_CURRENT_A=16   (or desired Amps)
+        cp_mode = os.environ.get("ESP_CP_MODE", os.environ.get("EVSE_CP_MODE", "dc")).strip().lower()
         try:
-            self._client.set_mode("dc")
-            logger.info("HAL ESP set_mode(dc)")
+            if cp_mode in ("ac", "manual"):
+                self._client.set_mode("manual")
+                # Compute IEC 61851 AC PWM duty: Imax[A] ≈ duty[%] * 0.6 for 10–85%
+                try:
+                    a = float(os.environ.get("EVSE_AC_MAX_CURRENT_A", "16"))
+                except Exception:
+                    a = 16.0
+                duty = int(max(10, min(85, round(a / 0.6))))
+                try:
+                    self._client.set_pwm(duty, enable=True)
+                except Exception as e:
+                    logger.warning("HAL ESP set_pwm failed", extra={"error": str(e)})
+                logger.info("HAL ESP set_mode(manual)", extra={"duty_percent": duty, "ac_max_a": a})
+            else:
+                self._client.set_mode("dc")
+                logger.info("HAL ESP set_mode(dc)")
         except Exception:
-            logger.warning("HAL ESP set_mode(dc) failed")
+            logger.warning("HAL ESP initial CP mode setup failed", extra={"cp_mode": cp_mode})
         self._pwm = _EspPWM(self._client)
         self._cp = _EspCP(self._client)
         # reuse sim for the rest to keep plumbing simple
@@ -225,3 +182,45 @@ class ESPSerialHardware(EVSEHardware):
     # Optional cable lock API for HAL consumers
     def cable_lock(self) -> CableLockSim:
         return self._lock
+
+    # Current CP mode as reported by firmware ('dc' or 'manual')
+    def cp_mode(self) -> Optional[str]:
+        try:
+            st = self._client.get_status(wait_s=0.3)
+            return getattr(st, "mode", None)
+        except Exception:
+            return None
+
+    # Convenience: set AC advertised current (Amps). Computes IEC 61851 duty and
+    # ensures firmware is in manual (AC) mode. Safe NOOP if firmware rejects.
+    def set_ac_current(self, amps: float) -> None:
+        try:
+            a = float(amps)
+            duty = int(max(10, min(85, round(a / 0.6))))
+        except Exception:
+            duty = 27
+        try:
+            self._client.set_mode("manual")
+            self._client.set_pwm(duty, enable=True)
+            logger.info("HAL ESP AC current set", extra={"amps": amps, "duty_percent": duty})
+        except Exception as e:
+            logger.warning("HAL ESP AC current set failed", extra={"error": str(e)})
+
+    # AC HLC nudge: briefly set PWM to 5% to coax the EV to start SLAC/HLC,
+    # then restore previous duty. Safe for AC where normal operation uses manual PWM.
+    def ac_hlc_nudge(self, reset_ms: int = 350) -> None:
+        try:
+            st = self._client.get_status(wait_s=0.3)
+            prev_duty = int(getattr(getattr(st, "pwm", None), "duty", 27)) if st else 27
+        except Exception:
+            prev_duty = 27
+        try:
+            self._client.set_mode("manual")
+            self._client.set_pwm(5, enable=True)
+            time.sleep(max(0, reset_ms) / 1000.0)
+        finally:
+            try:
+                self._client.set_pwm(prev_duty, enable=True)
+            except Exception:
+                pass
+        logger.info("HAL ESP AC HLC nudge", extra={"reset_ms": reset_ms, "restore_duty": prev_duty})

@@ -1,0 +1,214 @@
+$ bash -lc 'export PLC_IFACE=eth1 ESP_CP_PORT=/dev/ttyACM0 EVSE_TEE_JSON=/tmp/evse_run.jsonl; scripts/start_evse_hal.sh --evse-id EVSE-1 --iface eth1 --port /dev/ttyACM0 --adapter esp-uart --json /tmp/evse_run.jsonl | sed -u '"'"'s/.*/[evse]\t&/'"'"
+[evse]	[start-evse-hal] EVSE_ID=EVSE-1 IFACE=eth1 ADAPTER=esp-uart PORT=/dev/ttyACM0
+[evse]	[start-evse-hal] LOG_LEVEL=DEBUG LOG_FORMAT=text (tee -> /tmp/evse_run.jsonl)
+[evse]	[start-evse-hal] Python=/opt/evse-venv/bin/python
+2025-09-07 11:23:27,171 INFO slac_session: 
+
+#################################################
+ ###### Starting PySlac version: 0.8.3 #######
+#################################################
+
+2025-09-07 11:23:27,173 INFO util.standards_check: Timing summary (CCS/ISO 15118)
+2025-09-07 11:23:27,178 INFO util.standards_check: ISO15118 Shared: SDP_REQ=0.250s, SAP_REQ=2.000s, COMM_SETUP=20.000s, SEQ_TO=60.000s, ONGOING=60.000s
+2025-09-07 11:23:27,180 INFO util.standards_check: ISO15118-2: SESSION_SETUP=2.000s, SERVICE_DISCOVERY=2.000s, CPD=2.000s, CURRENT_DEMAND=0.250s
+2025-09-07 11:23:27,181 INFO util.standards_check: ISO15118-20: COMM_SETUP=20.000s, SEQ_TO=60.000s, AC_CL=0.500s, DC_CL=0.500s
+2025-09-07 11:23:27,184 DEBUG asyncio: Using selector: EpollSelector
+2025-09-07 11:23:27,345 INFO esp.cp: ESP CP serial connect
+2025-09-07 11:23:27,394 INFO hal.esp: HAL ESP ping
+2025-09-07 11:23:27,395 INFO hal.esp: HAL ESP set_mode(dc)
+2025-09-07 11:23:27,397 INFO evse.main: HAL mode: waiting for CP states to start SLAC
+2025-09-07 11:23:27,439 INFO hal.esp: CP state (init) B
+2025-09-07 11:23:27,439 DEBUG evse.main: CP transition
+2025-09-07 11:23:27,617 INFO evse.main: Vehicle detected via CP
+2025-09-07 11:23:27,635 DEBUG slac_session: Session created for evse_id EVSE-1 on interface eth1
+2025-09-07 11:23:27,673 INFO slac_session: CM_SET_KEY: Started...
+2025-09-07 11:23:27,674 DEBUG slac_session: New NMK: b'24430a231d3fc2c65d18e0fe819de5ce'
+2025-09-07 11:23:27,675 DEBUG slac_session: New NID: b'6a5fffb5055d0f'
+2025-09-07 11:23:27,677 DEBUG slac_session: Registering NMK and NID into the PLC node...
+2025-09-07 11:23:37,688 INFO slac_session: CM_SET_KEY: Finished!
+2025-09-07 11:23:37,689 INFO evse.main: CM_SET_KEY succeeded
+2025-09-07 11:23:37,690 DEBUG slac_session: CP State Received: B
+2025-09-07 11:23:37,692 DEBUG slac_session: CM_SLAC_PARM: Started...
+2025-09-07 11:23:44,043 INFO hal.esp: HAL ESP SLAC restart hint (fw) sent
+2025-09-07 11:23:44,044 INFO evse.main: HAL SLAC proactive nudge
+2025-09-07 11:23:48,872 DEBUG slac_session: Sent SLAC_PARM.CNF
+2025-09-07 11:23:48,875 DEBUG slac_session: CM_SLAC_PARM: Finished!
+2025-09-07 11:23:48,876 INFO slac_session: Matching ongoing (EVSE ID: EVSE-1. Run ID: b'\xec\x88\xfe;\xf4\x83\xf4\xb5').
+2025-09-07 11:23:48,877 INFO evse.main: SLAC matching in progress for EVSE-1
+2025-09-07 11:23:48,878 DEBUG slac_session: CM_START_ATTEN_CHAR: Started...
+2025-09-07 11:23:48,946 INFO evse.main: SLAC peer info: ev_mac=fc:d6:bd:ff:cd:67 nid=6a:5f:ff:b5:05:5d:0f run_id=ec:88:fe:3b:f4:83:f4:b5
+2025-09-07 11:23:48,949 DEBUG evse.main: SLAC peer info (extra)
+2025-09-07 11:23:49,140 DEBUG slac_session: CM_START_ATTEN_CHAR: Finished!
+2025-09-07 11:23:49,141 DEBUG slac_session: CM_MNBC_SOUND: Started...
+2025-09-07 11:23:49,257 DEBUG slac_session: MNBC Sound received
+2025-09-07 11:23:49,258 DEBUG slac_session: Remaining number of sounds: 9
+2025-09-07 11:23:49,259 DEBUG slac_session: ATTEN_Profile Sounds received 1
+2025-09-07 11:23:49,265 DEBUG slac_session: Num total sounds: 1 / Num expected: 10
+2025-09-07 11:23:49,271 DEBUG slac_session: MNBC Sound received
+2025-09-07 11:23:49,272 DEBUG slac_session: Remaining number of sounds: 8
+2025-09-07 11:23:49,274 DEBUG slac_session: ATTEN_Profile Sounds received 2
+2025-09-07 11:23:49,275 DEBUG slac_session: Num total sounds: 2 / Num expected: 10
+2025-09-07 11:23:49,371 DEBUG slac_session: MNBC Sound received
+2025-09-07 11:23:49,372 DEBUG slac_session: Remaining number of sounds: 7
+2025-09-07 11:23:49,374 DEBUG slac_session: ATTEN_Profile Sounds received 3
+2025-09-07 11:23:49,375 DEBUG slac_session: Num total sounds: 3 / Num expected: 10
+2025-09-07 11:23:49,376 DEBUG slac_session: MNBC Sound received
+2025-09-07 11:23:49,377 DEBUG slac_session: Remaining number of sounds: 6
+2025-09-07 11:23:49,378 DEBUG slac_session: ATTEN_Profile Sounds received 4
+2025-09-07 11:23:49,379 DEBUG slac_session: Num total sounds: 4 / Num expected: 10
+2025-09-07 11:23:49,389 DEBUG slac_session: MNBC Sound received
+2025-09-07 11:23:49,390 DEBUG slac_session: Remaining number of sounds: 5
+2025-09-07 11:23:49,397 DEBUG slac_session: ATTEN_Profile Sounds received 5
+2025-09-07 11:23:49,402 DEBUG slac_session: Num total sounds: 5 / Num expected: 10
+2025-09-07 11:23:49,486 DEBUG slac_session: MNBC Sound received
+2025-09-07 11:23:49,487 DEBUG slac_session: Remaining number of sounds: 4
+2025-09-07 11:23:49,489 DEBUG slac_session: ATTEN_Profile Sounds received 6
+2025-09-07 11:23:49,490 DEBUG slac_session: Num total sounds: 6 / Num expected: 10
+2025-09-07 11:23:49,491 DEBUG slac_session: MNBC Sound received
+2025-09-07 11:23:49,493 DEBUG slac_session: Remaining number of sounds: 3
+2025-09-07 11:23:49,496 DEBUG slac_session: ATTEN_Profile Sounds received 7
+2025-09-07 11:23:49,499 DEBUG slac_session: Num total sounds: 7 / Num expected: 10
+2025-09-07 11:23:49,509 DEBUG slac_session: MNBC Sound received
+2025-09-07 11:23:49,510 DEBUG slac_session: Remaining number of sounds: 2
+2025-09-07 11:23:49,513 DEBUG slac_session: ATTEN_Profile Sounds received 8
+2025-09-07 11:23:49,516 DEBUG slac_session: Num total sounds: 8 / Num expected: 10
+2025-09-07 11:23:49,601 DEBUG slac_session: MNBC Sound received
+2025-09-07 11:23:49,601 DEBUG slac_session: Remaining number of sounds: 1
+2025-09-07 11:23:49,603 DEBUG slac_session: ATTEN_Profile Sounds received 9
+2025-09-07 11:23:49,605 DEBUG slac_session: Num total sounds: 9 / Num expected: 10
+2025-09-07 11:23:49,607 DEBUG slac_session: MNBC Sound received
+2025-09-07 11:23:49,610 DEBUG slac_session: Remaining number of sounds: 0
+2025-09-07 11:23:49,612 DEBUG slac_session: ATTEN_Profile Sounds received 10
+2025-09-07 11:23:49,613 DEBUG slac_session: Num total sounds: 10 / Num expected: 10
+2025-09-07 11:23:49,618 DEBUG slac_session: CM_MNBC_SOUND: Finished!
+2025-09-07 11:23:49,619 DEBUG slac_session: CM_ATTEN_CHAR Started...
+2025-09-07 11:23:49,627 DEBUG slac_session: Payload Received: 
+ b'c230a13974b4fcd6bdffcd6788e1016f6000000000fcd6bdffcd67ec88fe3bf483f4b50000000000000000000000000000000000000000000000000000000000000000000000'
+2025-09-07 11:23:49,628 DEBUG slac_session: CM_ATTEN_CHAR: Finished!
+2025-09-07 11:23:49,629 DEBUG slac_session: Num sounds received 10
+2025-09-07 11:23:49,630 DEBUG slac_session: Num total sounds: 10
+2025-09-07 11:23:49,631 DEBUG slac_session: Num expected sounds: 10
+2025-09-07 11:23:49,633 DEBUG slac_session: CM_SLAC_MATCH: Started...
+2025-09-07 11:23:49,635 DEBUG slac_session: Payload Received: 
+ b'c230a13974b4fcd6bdffcd6788e1017c60000000003e000000000000000000000000000000000000fcd6bdffcd670000000000000000000000000000000000c230a13974b4ec88fe3bf483f4b50000000000000000'
+2025-09-07 11:23:49,642 DEBUG slac_session: CM_SLAC_MATCH: Finished!
+2025-09-07 11:23:49,643 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: EVSE-1. Run ID: b'\xec\x88\xfe;\xf4\x83\xf4\xb5').
+2025-09-07 11:23:49,713 INFO evse.main: SLAC peer info: ev_mac=fc:d6:bd:ff:cd:67 nid=6a:5f:ff:b5:05:5d:0f run_id=ec:88:fe:3b:f4:83:f4:b5
+2025-09-07 11:23:49,717 DEBUG evse.main: SLAC peer info (extra)
+2025-09-07 11:23:49,724 INFO evse.main: Launching ISO 15118 SECC
+2025-09-07 11:23:49,764 INFO evse.main: EVSE controller=hal
+2025-09-07 11:23:49,771 INFO esp.cp: ESP CP serial connect
+2025-09-07 11:23:50,288 INFO hal.esp: HAL ESP ping
+2025-09-07 11:23:51,511 INFO hal.esp: HAL ESP set_mode(dc)
+2025-09-07 11:23:51,515 DEBUG iso15118.secc.controller.simulator: New Status: ServiceStatus.STARTING
+2025-09-07 11:24:00,307 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:24:05,548 INFO iso15118.shared.exi_codec: EXI Codec version: 1.55
+2025-09-07 11:24:05,550 INFO iso15118.secc: Starting 15118 version: 0.31.0
+2025-09-07 11:24:05,554 INFO iso15118.secc.comm_session_handler: Communication session handler started
+2025-09-07 11:24:05,556 INFO iso15118.secc.transport.udp_server: UDP server socket ready
+2025-09-07 11:24:05,558 INFO iso15118.secc.transport.udp_server: UDP server started at address FF02::1%eth1 and port 15118
+2025-09-07 11:24:05,571 DEBUG iso15118.secc.controller.simulator: New Status: ServiceStatus.READY
+2025-09-07 11:24:07,068 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:24:10,712 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:24:17,552 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:24:24,909 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:24:30,698 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:24:36,145 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:24:39,382 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:24:48,625 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:24:57,016 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:24:59,705 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:25:11,317 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:25:11,683 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:25:11,952 INFO hal.esp: CP state B->C mv=2269 stable_ms=111
+2025-09-07 11:25:11,954 DEBUG evse.main: CP transition
+2025-09-07 11:25:11,954 DEBUG slac_session: CP State Received: C
+2025-09-07 11:25:17,408 INFO hal.esp: CP state C->B mv=2296 stable_ms=112
+2025-09-07 11:25:17,410 DEBUG evse.main: CP transition
+2025-09-07 11:25:17,411 DEBUG slac_session: CP State Received: B
+2025-09-07 11:25:20,680 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:25:22,464 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:25:30,128 INFO hal.esp: CP state B->C mv=2285 stable_ms=111
+2025-09-07 11:25:30,129 DEBUG evse.main: CP transition
+2025-09-07 11:25:30,130 DEBUG slac_session: CP State Received: C
+2025-09-07 11:25:32,931 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:25:33,187 INFO hal.esp: CP state C->B mv=2299 stable_ms=118
+2025-09-07 11:25:33,188 DEBUG evse.main: CP transition
+2025-09-07 11:25:33,190 DEBUG slac_session: CP State Received: B
+2025-09-07 11:25:36,170 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:25:36,980 INFO hal.esp: CP state B->C mv=2288 stable_ms=111
+2025-09-07 11:25:36,981 DEBUG evse.main: CP transition
+2025-09-07 11:25:36,981 DEBUG slac_session: CP State Received: C
+2025-09-07 11:25:38,655 INFO hal.esp: CP state C->B mv=2282 stable_ms=111
+2025-09-07 11:25:38,657 DEBUG evse.main: CP transition
+2025-09-07 11:25:38,658 DEBUG slac_session: CP State Received: B
+2025-09-07 11:25:41,247 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:25:49,147 INFO hal.esp: CP state B->C mv=2263 stable_ms=112
+2025-09-07 11:25:49,147 DEBUG evse.main: CP transition
+2025-09-07 11:25:49,148 DEBUG slac_session: CP State Received: C
+2025-09-07 11:25:50,583 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:25:51,767 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:25:53,104 INFO hal.esp: CP state C->B mv=2298 stable_ms=123
+2025-09-07 11:25:53,107 DEBUG evse.main: CP transition
+2025-09-07 11:25:53,109 DEBUG slac_session: CP State Received: B
+2025-09-07 11:25:58,822 INFO hal.esp: CP state B->C mv=2286 stable_ms=111
+2025-09-07 11:25:58,823 DEBUG evse.main: CP transition
+2025-09-07 11:25:58,825 DEBUG slac_session: CP State Received: C
+2025-09-07 11:25:59,490 INFO hal.esp: CP state C->B mv=2299 stable_ms=113
+2025-09-07 11:25:59,491 DEBUG evse.main: CP transition
+2025-09-07 11:25:59,492 DEBUG slac_session: CP State Received: B
+2025-09-07 11:25:59,932 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:26:04,498 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:26:08,873 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:26:09,220 INFO hal.esp: CP state B->C mv=2272 stable_ms=114
+2025-09-07 11:26:09,221 DEBUG evse.main: CP transition
+2025-09-07 11:26:09,226 DEBUG slac_session: CP State Received: C
+2025-09-07 11:26:11,964 INFO hal.esp: CP state C->B mv=2300 stable_ms=114
+2025-09-07 11:26:11,964 DEBUG evse.main: CP transition
+2025-09-07 11:26:11,965 DEBUG slac_session: CP State Received: B
+2025-09-07 11:26:17,102 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:26:21,699 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:26:24,280 INFO hal.esp: CP state B->C mv=2278 stable_ms=111
+2025-09-07 11:26:24,281 DEBUG evse.main: CP transition
+2025-09-07 11:26:24,281 DEBUG slac_session: CP State Received: C
+2025-09-07 11:26:37,559 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:26:42,300 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:26:42,408 INFO esp.cp: ESP CP serial connect
+2025-09-07 11:26:47,424 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:26:48,425 INFO hal.esp: CP state C->B mv=2290 stable_ms=111
+2025-09-07 11:26:48,426 DEBUG evse.main: CP transition
+2025-09-07 11:26:48,427 DEBUG slac_session: CP State Received: B
+2025-09-07 11:26:53,517 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:00,525 INFO hal.esp: CP state B->C mv=2272 stable_ms=115
+2025-09-07 11:27:00,526 DEBUG evse.main: CP transition
+2025-09-07 11:27:00,526 DEBUG slac_session: CP State Received: C
+2025-09-07 11:27:02,221 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:02,540 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:10,447 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:15,000 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:20,872 INFO hal.esp: CP state C->B mv=2293 stable_ms=111
+2025-09-07 11:27:20,872 DEBUG evse.main: CP transition
+2025-09-07 11:27:20,873 DEBUG slac_session: CP State Received: B
+2025-09-07 11:27:22,316 INFO hal.esp: CP state B->C mv=2261 stable_ms=111
+2025-09-07 11:27:22,317 DEBUG evse.main: CP transition
+2025-09-07 11:27:22,319 DEBUG slac_session: CP State Received: C
+2025-09-07 11:27:23,620 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:28,915 INFO hal.esp: CP state C->B mv=2310 stable_ms=112
+2025-09-07 11:27:28,917 DEBUG evse.main: CP transition
+2025-09-07 11:27:28,923 DEBUG slac_session: CP State Received: B
+2025-09-07 11:27:29,340 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:30,487 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:31,392 INFO hal.esp: CP state B->C mv=2255 stable_ms=111
+2025-09-07 11:27:31,397 DEBUG evse.main: CP transition
+2025-09-07 11:27:31,401 DEBUG slac_session: CP State Received: C
+2025-09-07 11:27:43,340 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:43,784 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:50,682 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:58,663 INFO hal.esp: CP state C->B mv=2264 stable_ms=111
+2025-09-07 11:27:58,664 DEBUG evse.main: CP transition
+2025-09-07 11:27:58,666 DEBUG slac_session: CP State Received: B
+2025-09-07 11:27:59,541 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:59,806 INFO esp.cp: ESP CP serial reconnected
+2025-09-07 11:27:59,940 INFO hal.esp: CP state B->C mv=2269 stable_ms=113
+2025-09-07 11:27:59,942 DEBUG evse.main: CP transition
+2025-09-07 11:27:59,946 DEBUG slac_session: CP State Received: C

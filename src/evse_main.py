@@ -179,13 +179,22 @@ class EVSECommunicationController(SlacSessionController):
             nudge_every_s = 12.0
         last_nudge_ts: float = 0.0
 
+        # Whether Pi is allowed to hint CP via ESP (mode/pwm toggles). Default disabled.
+        def _cp_host_hints_enabled() -> bool:
+            try:
+                v = os.environ.get("EVSE_CP_HOST_HINTS", "0").strip().lower()
+                return v not in ("0", "false", "no", "off", "")
+            except Exception:
+                return False
+
         async def _start_secc_bg() -> None:
             nonlocal secc_task, secc_handler
             if secc_task is not None:
                 return
             logger.info("Launching ISO 15118 SECC")
+            # Reuse the same HAL instance to avoid double-opening the ESP UART
             secc_handler, secc_task = await launch_secc_background(
-                iface, self.secc_config_path, self.certificate_store
+                iface, self.secc_config_path, self.certificate_store, existing_hal=hal
             )
 
         async def _stop_secc(reason: str = "CP disconnect") -> None:
@@ -300,16 +309,17 @@ class EVSECommunicationController(SlacSessionController):
                     session_started_at = 0.0
                     slac_attempts = 0
                 # Hint firmware CP to safe if available
-                try:
-                    getattr(hal, "esp_set_mode", lambda _m=None: None)("manual")
-                    getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
-                except Exception:
-                    pass
-                # Restore dc mode so CP reports 5% duty when reconnected
-                try:
-                    getattr(hal, "esp_set_mode", lambda _m=None: None)("dc")
-                except Exception:
-                    pass
+                if _cp_host_hints_enabled():
+                    try:
+                        getattr(hal, "esp_set_mode", lambda _m=None: None)("manual")
+                        getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
+                    except Exception:
+                        pass
+                    # Restore dc mode so CP reports 5% duty when reconnected
+                    try:
+                        getattr(hal, "esp_set_mode", lambda _m=None: None)("dc")
+                    except Exception:
+                        pass
                 # Allow fresh SetKey on next connection
                 keyed_once = False
 
@@ -395,16 +405,22 @@ class EVSECommunicationController(SlacSessionController):
                         now = asyncio.get_event_loop().time()
                         if cp == "B" and session_started_at > 0 and (now - session_started_at) >= max(0.0, first_nudge_s):
                             if (now - last_nudge_ts) >= max(0.0, nudge_every_s):
-                                try:
-                                    reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
-                                except Exception:
-                                    reset_ms = 400
-                                try:
-                                    getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
-                                    last_nudge_ts = now
-                                    logger.info("HAL SLAC proactive nudge", extra={"reset_ms": reset_ms})
-                                except Exception:
-                                    pass
+                                if _cp_host_hints_enabled():
+                                    try:
+                                        reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
+                                    except Exception:
+                                        reset_ms = 400
+                                    # Choose AC or DC nudge based on configured CP mode
+                                    cp_mode = os.environ.get("ESP_CP_MODE", os.environ.get("EVSE_CP_MODE", "dc")).strip().lower()
+                                    try:
+                                        if cp_mode in ("ac", "manual"):
+                                            getattr(hal, "ac_hlc_nudge", lambda _ms=None: None)(reset_ms)
+                                        else:
+                                            getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
+                                        last_nudge_ts = now
+                                        logger.info("HAL SLAC proactive nudge", extra={"reset_ms": reset_ms, "cp_mode": cp_mode})
+                                    except Exception:
+                                        pass
                     except Exception:
                         pass
                     # Keep SLAC session informed of steady-state CP even if it hasn't changed recently
@@ -438,15 +454,16 @@ class EVSECommunicationController(SlacSessionController):
                             slac_attempts,
                             max_slac_attempts,
                         )
-                        try:
-                            reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
-                            getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
-                            logger.info(
-                                "HAL SLAC restart hint requested",
-                                extra={"reset_ms": reset_ms, "iface": iface, "timeout_s": timeout_s},
-                            )
-                        except Exception:
-                            pass
+                        if _cp_host_hints_enabled():
+                            try:
+                                reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
+                                getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
+                                logger.info(
+                                    "HAL SLAC restart hint requested",
+                                    extra={"reset_ms": reset_ms, "iface": iface, "timeout_s": timeout_s},
+                                )
+                            except Exception:
+                                pass
                         # Gracefully reset SLAC state on the current session
                         try:
                             await self.process_cp_state(session, "A")
@@ -473,11 +490,12 @@ class EVSECommunicationController(SlacSessionController):
                                     reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
                                 except Exception:
                                     reset_ms = 400
-                                try:
-                                    getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
-                                    logger.info("HAL SLAC proactive nudge (auto-restart)", extra={"reset_ms": reset_ms})
-                                except Exception:
-                                    pass
+                                if _cp_host_hints_enabled():
+                                    try:
+                                        getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
+                                        logger.info("HAL SLAC proactive nudge (auto-restart)", extra={"reset_ms": reset_ms})
+                                    except Exception:
+                                        pass
                                 # Reset attempt counter and wait before next try
                                 slac_attempts = 0
                                 try:
@@ -504,9 +522,10 @@ class EVSECommunicationController(SlacSessionController):
                 if cutoff_s > 0:
                     try:
                         hal.contactor().set_closed(False)
-                        # Attempt to drive CP to a safe state as a hardware hint
-                        getattr(hal, "esp_set_mode", lambda _m=None: None)("manual")
-                        getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
+                        if _cp_host_hints_enabled():
+                            # Attempt to drive CP to a safe state as a hardware hint
+                            getattr(hal, "esp_set_mode", lambda _m=None: None)("manual")
+                            getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
                     except Exception:
                         pass
                     # Unlock promptly so user can remove connector
@@ -517,10 +536,11 @@ class EVSECommunicationController(SlacSessionController):
                     except Exception:
                         pass
                     # Restore dc mode so EV sees 5% duty once reconnected
-                    try:
-                        getattr(hal, "esp_set_mode", lambda _m=None: None)("dc")
-                    except Exception:
-                        pass
+                    if _cp_host_hints_enabled():
+                        try:
+                            getattr(hal, "esp_set_mode", lambda _m=None: None)("dc")
+                        except Exception:
+                            pass
                 # Grace window to tolerate brief CP flaps before tearing down SECC
                 grace_s = float(os.environ.get("CP_DISCONNECT_GRACE_S", "0.5"))
                 if grace_s > 0:
@@ -552,7 +572,7 @@ class EVSECommunicationController(SlacSessionController):
                 # Optional: nudge SLAC reset hint on disconnect
                 try:
                     ms = int(os.environ.get("SLAC_RESTART_ON_DISCONNECT_MS", "0"))
-                    if ms > 0:
+                    if ms > 0 and _cp_host_hints_enabled():
                         getattr(hal, "restart_slac_hint", lambda _ms=None: None)(ms)
                         logger.info("HAL SLAC restart hint on disconnect", extra={"reset_ms": ms})
                 except Exception:
@@ -646,9 +666,12 @@ class EVSECommunicationController(SlacSessionController):
         # Persist for external readers (e.g., API curl)
         try:
             if write_peer:
-                write_peer(ev_mac=str(ev_mac) if ev_mac is not None else None,
-                           nid=str(nid) if nid is not None else None,
-                           run_id=str(run_id) if run_id is not None else None)
+                # Persist normalized, human-readable forms to ease external consumption
+                write_peer(
+                    ev_mac=ev_mac_s,
+                    nid=nid_s,
+                    run_id=run_id_s,
+                )
         except Exception:
             pass
 
@@ -686,6 +709,7 @@ async def start_secc(
     iface: str,
     secc_config_path: Optional[str],
     certificate_store: Optional[str],
+    existing_hal=None,
 ) -> None:
     """Start ISO 15118 SECC bound to *iface*."""
     # Pre-flight: ensure the interface has an IPv6 link-local address.
@@ -735,7 +759,9 @@ async def start_secc(
 
         adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
         logger.info("EVSE controller=hal", extra={"adapter": adapter})
-        evse_controller = HalEVSEController(create_hal(adapter))
+        # Reuse existing HAL if provided to prevent double-opening UART
+        hal_hw = existing_hal if existing_hal is not None else create_hal(adapter)
+        evse_controller = HalEVSEController(hal_hw)
     else:
         logger.info("EVSE controller=sim")
         evse_controller = SimEVSEController()
@@ -757,6 +783,7 @@ async def launch_secc_background(
     iface: str,
     secc_config_path: Optional[str],
     certificate_store: Optional[str],
+    existing_hal=None,
 ):
     """Start the SECC in a background task and return (handler, task).
 
@@ -785,7 +812,8 @@ async def launch_secc_background(
             from evse_hal.iso15118_hal_controller import HalEVSEController  # type: ignore
         adapter = os.environ.get("EVSE_HAL_ADAPTER", "sim")
         logger.info("EVSE controller=hal", extra={"adapter": adapter})
-        evse_controller = HalEVSEController(create_hal(adapter))
+        hal_hw = existing_hal if existing_hal is not None else create_hal(adapter)
+        evse_controller = HalEVSEController(hal_hw)
     else:
         logger.info("EVSE controller=sim")
         evse_controller = SimEVSEController()
