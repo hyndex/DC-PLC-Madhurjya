@@ -7,6 +7,9 @@
 #include <WiFi.h>
 #include "esp_wifi.h"
 #include "esp_bt.h"
+#include <math.h>
+#include <SPI.h>
+#include <mcp2515.h>
 
 // ===== PWM (LEDC) =====
 #define CP_1_PWM_PIN        38
@@ -79,10 +82,50 @@ static uint16_t g_belowB_run = 0; // consecutive bursts without any ≥t9 observ
 #define ESP_UART_TX 43
 HardwareSerial SerialPi(1);
 
-// ===== Peripheral JSON-RPC state (unchanged) =====
+// ===== Peripheral JSON-RPC state (SIM vs HW) =====
 struct Meter { float v; float i; float p; float e; };
 enum ModePeriph { MODE_SIM = 0, MODE_HW = 1 };
 static ModePeriph g_periph_mode = MODE_SIM;
+
+// Contactor I/O (defaults are safe; override at build-time if needed)
+#ifndef CONTACTOR_COIL_PIN
+#define CONTACTOR_COIL_PIN 7
+#endif
+#ifndef CONTACTOR_COIL_ACTIVE_HIGH
+#define CONTACTOR_COIL_ACTIVE_HIGH 1
+#endif
+#ifndef CONTACTOR_AUX_PIN
+#define CONTACTOR_AUX_PIN -1   // -1 means no AUX wire; use command echo
+#endif
+#ifndef CONTACTOR_AUX_ACTIVE_HIGH
+#define CONTACTOR_AUX_ACTIVE_HIGH 1
+#endif
+
+// Internal-linkage variable used in AUX fallback
+static bool g_contactor_cmd = false;
+
+static inline void hw_contactor_setup() {
+  pinMode(CONTACTOR_COIL_PIN, OUTPUT);
+  // Default to OFF (open)
+  digitalWrite(CONTACTOR_COIL_PIN, CONTACTOR_COIL_ACTIVE_HIGH ? LOW : HIGH);
+#if CONTACTOR_AUX_PIN >= 0
+  pinMode(CONTACTOR_AUX_PIN, INPUT);
+#endif
+}
+static inline void hw_contactor_set(bool on) {
+  digitalWrite(CONTACTOR_COIL_PIN,
+               on ? (CONTACTOR_COIL_ACTIVE_HIGH ? HIGH : LOW)
+                  : (CONTACTOR_COIL_ACTIVE_HIGH ? LOW  : HIGH));
+}
+static inline bool hw_contactor_aux() {
+#if CONTACTOR_AUX_PIN >= 0
+  int v = digitalRead(CONTACTOR_AUX_PIN);
+  return CONTACTOR_AUX_ACTIVE_HIGH ? (v == HIGH) : (v == LOW);
+#else
+  // Without AUX input, assume aux follows cmd after a short delay
+  return g_contactor_cmd;
+#endif
+}
 
 enum class OpMode : uint8_t { MANUAL = 0, DC_AUTO = 1 };
 static volatile OpMode g_mode = OpMode::DC_AUTO;
@@ -103,7 +146,6 @@ static int      g_last_cp_mv_min = 0;        // telemetry
 static int      g_last_cp_mv_avg = 0;        // telemetry
 static uint16_t g_last_output_duty_pct = 100;
 
-static bool     g_contactor_cmd = false;
 static bool     g_contactor_aux = false;
 static uint32_t g_armed_until_ms = 0;
 static bool     g_meter_stream = false;
@@ -150,6 +192,222 @@ static inline void apply_dc_auto_output(char st) {
   // Old behavior: B/C/D => 5% duty; else keep +12V (100%)
   g_last_output_duty_pct = (st=='B' || st=='C' || st=='D') ? 5 : 100;
   write_ledc_duty(pct_to_duty(g_last_output_duty_pct));
+}
+
+// ===== NEW: MCP2515 + Maxwell ENR (DC module control over CAN) =====
+// Pin macros default via build_flags; safe fallbacks here
+#ifndef CAN_CS_PIN
+#define CAN_CS_PIN  10
+#endif
+#ifndef CAN_RST_PIN
+#define CAN_RST_PIN -1
+#endif
+#ifndef CAN_INT_PIN
+#define CAN_INT_PIN -1
+#endif
+
+// Maxwell protocol constants
+static const uint8_t  MAXWELL_PROTO = 0x1;   // bits 28:25
+static const uint8_t  MAXWELL_MONITOR_ADDR = 0x1;  // bits 24:21 (host addr)
+static const uint8_t  MAXWELL_GROUP_DEFAULT = 0x1; // Byte0[7:4]
+static const uint32_t CAN_ID_MASK_ALL = 0x1FFFFFFFUL;
+
+static MCP2515 g_mcp2515(CAN_CS_PIN);
+bool g_can_ok = false;
+
+// DC targets / ramps
+bool  g_dc_enabled = false;
+float g_dc_v_target_V = 0.0f;
+float g_dc_i_target_A = 0.0f;
+float g_dc_v_set_V    = 0.0f;
+float g_dc_i_set_A    = 0.0f;
+
+#ifndef DC_V_RAMP_V_PER_S
+#define DC_V_RAMP_V_PER_S 50.0f
+#endif
+#ifndef DC_I_RAMP_A_PER_S
+#define DC_I_RAMP_A_PER_S 20.0f
+#endif
+#ifndef DC_RAMP_TICK_MS
+#define DC_RAMP_TICK_MS 100
+#endif
+
+#ifndef MAX_MODULES
+#define MAX_MODULES 8
+#endif
+struct MaxwellModule {
+  uint8_t  addr;
+  uint64_t sn48_9;
+  uint32_t last_status;
+  uint32_t last_v_mv;
+  uint32_t last_i_ma;
+  uint32_t last_seen_ms;
+};
+static MaxwellModule g_modules[MAX_MODULES];
+static uint8_t g_module_count = 0;
+static uint8_t g_group_addr = MAXWELL_GROUP_DEFAULT;
+
+static inline uint32_t build_maxwell_can_id(uint8_t monitor, uint8_t module, uint8_t prodDay=0, uint16_t snLow9=0) {
+  uint32_t id = 0;
+  id |= ((uint32_t)(MAXWELL_PROTO & 0x0F) << 25);
+  id |= ((uint32_t)(monitor & 0x0F) << 21);
+  id |= ((uint32_t)(module  & 0x7F) << 14);
+  id |= ((uint32_t)(prodDay & 0x1F) <<  9);
+  id |= ((uint32_t)(snLow9  & 0x1FF)     );
+  return id;
+}
+static inline uint8_t b0_group_type(uint8_t group, uint8_t msgType) {
+  return (uint8_t)(((group & 0x0F) << 4) | (msgType & 0x0F));
+}
+static inline void be_put_u32(uint8_t* p, uint32_t v) { p[0]=(uint8_t)(v>>24); p[1]=(uint8_t)(v>>16); p[2]=(uint8_t)(v>>8); p[3]=(uint8_t)v; }
+static inline void be_put_u16(uint8_t* p, uint16_t v) { p[0]=(uint8_t)(v>>8);  p[1]=(uint8_t)v; }
+
+static bool maxwell_send(uint32_t id, const uint8_t* data, uint8_t len) {
+  if (!g_can_ok) return false;
+  struct can_frame f;
+  f.can_id  = (id & CAN_ID_MASK_ALL) | CAN_EFF_FLAG;
+  f.can_dlc = len;
+  for (uint8_t i=0;i<len && i<8;i++) f.data[i] = data[i];
+  return (g_mcp2515.sendMessage(&f) == MCP2515::ERROR_OK);
+}
+
+static bool cmd_set_vref_mv(uint8_t moduleAddr, uint32_t mv) {
+  uint8_t d[8] = { b0_group_type(g_group_addr, 0x0), 0x02, 0,0, 0,0,0,0 };
+  be_put_u32(&d[4], mv);
+  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ADDR, moduleAddr), d, 8);
+}
+static bool cmd_set_ilim_ma(uint8_t moduleAddr, uint32_t ma) {
+  uint8_t d[8] = { b0_group_type(g_group_addr, 0x0), 0x03, 0,0, 0,0,0,0 };
+  be_put_u32(&d[4], ma);
+  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ADDR, moduleAddr), d, 8);
+}
+static bool cmd_onoff(uint8_t moduleAddr, bool on) {
+  uint8_t d[8] = { b0_group_type(g_group_addr, 0x0), 0x04, 0,0, 0,0,0,0 };
+  be_put_u32(&d[4], on ? 0 : 1);
+  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ADDR, moduleAddr), d, 8);
+}
+static bool cmd_read(uint8_t moduleAddr, uint8_t what) {
+  uint8_t d[8] = { b0_group_type(g_group_addr, 0x2), what, 0,0,0,0,0,0 };
+  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ADDR, moduleAddr), d, 8);
+}
+static bool cmd_allset(uint8_t moduleAddr, uint8_t onoff_hilo, uint16_t i_0p1A, uint16_t vbat_0p1V, uint16_t vout_0p1V) {
+  uint8_t d[8] = { b0_group_type(g_group_addr, 0x0B), onoff_hilo, 0,0, 0,0, 0,0 };
+  be_put_u16(&d[2], i_0p1A);
+  be_put_u16(&d[4], vbat_0p1V);
+  be_put_u16(&d[6], vout_0p1V);
+  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ADDR, moduleAddr), d, 8);
+}
+static bool cmd_set_hilo(uint8_t moduleAddr, uint8_t hilo) {
+  uint8_t d[8] = { b0_group_type(g_group_addr, 0x0), 0x5F, 0,0, 0,0,0,0 };
+  be_put_u32(&d[4], (uint32_t)hilo);
+  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ADDR, moduleAddr), d, 8);
+}
+
+bool can_setup_mcp2515() {
+  g_mcp2515.reset();
+#if MCP2515_CLK_MHZ == 8
+  if (g_mcp2515.setBitrate(CAN_125KBPS, MCP_8MHZ) != MCP2515::ERROR_OK) return false;
+#else
+  if (g_mcp2515.setBitrate(CAN_125KBPS, MCP_16MHZ) != MCP2515::ERROR_OK) return false;
+#endif
+  g_mcp2515.setFilterMask(MCP2515::MASK0, true, 0x00000000);
+  g_mcp2515.setFilterMask(MCP2515::MASK1, true, 0x00000000);
+  g_mcp2515.setNormalMode();
+  return true;
+}
+
+static void modules_upsert(uint8_t addr) {
+  for (uint8_t i=0;i<g_module_count;i++) if (g_modules[i].addr==addr) { g_modules[i].last_seen_ms = millis(); return; }
+  if (g_module_count < MAX_MODULES) {
+    g_modules[g_module_count] = MaxwellModule{addr, 0, 0, 0, 0, millis()};
+    g_module_count++;
+  }
+}
+static void handle_can_frame(const struct can_frame& f) {
+  const uint32_t id = f.can_id & CAN_ID_MASK_ALL;
+  const uint8_t  proto   = (id >> 25) & 0x0F;
+  const uint8_t  modAddr = (id >> 14) & 0x7F;
+  if (proto != MAXWELL_PROTO) return;
+  if (modAddr==0) return;
+  modules_upsert(modAddr);
+  const uint8_t b0 = f.data[0];
+  const uint8_t msgType = (b0 & 0x0F);
+  if (msgType==0x03) { // Read Data Response
+    const uint8_t cmd = f.data[1];
+    if (cmd==0x00 && f.can_dlc>=8) {
+      uint32_t mv = (uint32_t)f.data[4]<<24 | (uint32_t)f.data[5]<<16 | (uint32_t)f.data[6]<<8 | f.data[7];
+      for (uint8_t i=0;i<g_module_count;i++) if (g_modules[i].addr==modAddr){ g_modules[i].last_v_mv = mv; }
+    } else if (cmd==0x01 && f.can_dlc>=8) {
+      uint32_t ma = (uint32_t)f.data[4]<<24 | (uint32_t)f.data[5]<<16 | (uint32_t)f.data[6]<<8 | f.data[7];
+      for (uint8_t i=0;i<g_module_count;i++) if (g_modules[i].addr==modAddr){ g_modules[i].last_i_ma = ma; }
+    } else if (cmd==0x08 && f.can_dlc>=8) {
+      uint32_t st = (uint32_t)f.data[4]<<24 | (uint32_t)f.data[5]<<16 | (uint32_t)f.data[6]<<8 | f.data[7];
+      for (uint8_t i=0;i<g_module_count;i++) if (g_modules[i].addr==modAddr){ g_modules[i].last_status = st; }
+    }
+  }
+}
+
+void dc_discover(uint16_t window_ms) {
+  g_module_count = 0;
+  (void)cmd_read(0x00, 0x08);
+  const uint32_t until = millis()+window_ms;
+  struct can_frame f;
+  while (millis() < until) {
+    if (g_mcp2515.readMessage(&f) == MCP2515::ERROR_OK) handle_can_frame(f);
+  }
+}
+
+static void dc_apply_setpoints_broadcast(bool turnOnOffOnly) {
+  uint8_t onoff_hilo = 0x00; // On(DC), no Hi/Lo selection
+  const uint16_t i_0p1A   = (uint16_t)lroundf(g_dc_i_set_A * 10.0f);
+  const uint16_t vbat_0p1 = (uint16_t)lroundf(g_dc_v_set_V * 10.0f);
+  const uint16_t vout_0p1 = (uint16_t)lroundf(g_dc_v_set_V * 10.0f);
+  (void)cmd_allset(0x00, onoff_hilo, i_0p1A, vbat_0p1, vout_0p1);
+  (void)turnOnOffOnly; // reserved for future
+}
+
+static uint32_t g_last_dc_ramp_ms = 0;
+void dc_ramp_tick() {
+  if ((int32_t)(millis()-g_last_dc_ramp_ms) < (int32_t)DC_RAMP_TICK_MS) return;
+  g_last_dc_ramp_ms = millis();
+  const bool system_ready = is_connected_state(g_last_cp_state) && g_contactor_aux;
+  if (!system_ready) g_dc_enabled = false;
+  const float dv = DC_V_RAMP_V_PER_S * (DC_RAMP_TICK_MS/1000.0f);
+  const float di = DC_I_RAMP_A_PER_S * (DC_RAMP_TICK_MS/1000.0f);
+  auto approach = [](float now, float tgt, float step)->float{
+    if (now < tgt) return fminf(tgt, now + step);
+    if (now > tgt) return fmaxf(tgt, now - step);
+    return now;
+  };
+  const float tgtV = g_dc_enabled ? g_dc_v_target_V : 0.0f;
+  const float tgtI = g_dc_enabled ? g_dc_i_target_A : 0.0f;
+  const float prevV = g_dc_v_set_V;
+  const float prevI = g_dc_i_set_A;
+  g_dc_v_set_V = approach(g_dc_v_set_V, tgtV, dv);
+  g_dc_i_set_A = approach(g_dc_i_set_A, tgtI, di);
+  if (fabsf(g_dc_v_set_V - prevV) > 0.01f || fabsf(g_dc_i_set_A - prevI) > 0.01f) {
+    dc_apply_setpoints_broadcast(false);
+  }
+}
+
+void dc_emergency_stop() {
+  (void)cmd_onoff(0x00, false);
+  g_contactor_cmd = false; g_contactor_aux = false;
+  if (g_periph_mode==MODE_HW) hw_contactor_set(false);
+  g_dc_enabled = false; g_dc_v_target_V = 0; g_dc_i_target_A = 0;
+}
+
+static uint32_t g_last_dc_poll_ms = 0;
+void dc_poll_tick() {
+  const uint32_t now = millis();
+  if ((int32_t)(now - g_last_dc_poll_ms) > 300) {
+    g_last_dc_poll_ms = now;
+    (void)cmd_read(0x00, 0x00);
+    (void)cmd_read(0x00, 0x01);
+    (void)cmd_read(0x00, 0x08);
+  }
+  struct can_frame f;
+  while (g_mcp2515.readMessage(&f) == MCP2515::ERROR_OK) handle_can_frame(f);
 }
 
 // ===== Robust plateau (Top-K, 5%-aware upper-sixth trimmed mean) =====
@@ -331,6 +589,7 @@ static void process_line(String &line) {
     if (!method[0]) { StaticJsonDocument<128> e; e["code"]=-32600; e["message"]="invalid_request"; send_res(JsonObject(), e); return; }
 
     if (!strcmp(method,"sys.ping")) {
+      g_last_ping_ms = millis();
       StaticJsonDocument<256> res; res["up_ms"]=millis()-g_up0_ms; res["mode"]=(g_periph_mode==MODE_SIM)?"sim":"hw";
       res.createNestedObject("temps")["mcu"]=temperatureRead(); send_res(res); return;
     }
@@ -345,15 +604,78 @@ static void process_line(String &line) {
       StaticJsonDocument<96> res; res["mode"]=(g_periph_mode==MODE_SIM)?"sim":"hw"; send_res(res); return;
     }
     if (!strcmp(method,"contactor.check")) {
-      StaticJsonDocument<256> res; res["commanded"]=g_contactor_cmd; bool aux_ok=(g_contactor_aux==g_contactor_cmd);
-      res["aux_ok"]=aux_ok; res["coil_ma"]= g_contactor_cmd ? 120.0 : 0.0; res["reason"]= aux_ok?"ok":"mismatch"; send_res(res); return;
+      StaticJsonDocument<256> res; res["commanded"]=g_contactor_cmd;
+      bool aux_now = (g_periph_mode==MODE_HW) ? hw_contactor_aux() : (g_contactor_aux);
+      bool aux_ok = (aux_now == g_contactor_cmd);
+      res["aux_ok"]=aux_ok; res["aux_now"]=aux_now; res["coil_ma"]= g_contactor_cmd ? 120.0 : 0.0; res["reason"]= aux_ok?"ok":"mismatch"; send_res(res); return;
     }
     if (!strcmp(method,"contactor.set")) {
       if ((int32_t)(millis()-g_armed_until_ms) > 0) { StaticJsonDocument<128> e; e["code"]=1001; e["message"]="not_armed"; send_res(JsonObject(), e); return; }
-      bool on = doc["params"]["on"] | false; g_contactor_cmd = on; delay(40); g_contactor_aux = on; delay(60);
+      bool on = doc["params"]["on"] | false; g_contactor_cmd = on;
+      if (g_periph_mode==MODE_HW) {
+        hw_contactor_set(on);
+        delay(50);
+        g_contactor_aux = hw_contactor_aux();
+      } else {
+        delay(40); g_contactor_aux = on; delay(60);
+      }
       bool aux_ok=(g_contactor_aux==g_contactor_cmd);
-      if (!aux_ok && on) { g_contactor_cmd=false; g_contactor_aux=false; StaticJsonDocument<128> e; e["code"]=1002; e["message"]="aux_mismatch"; send_res(JsonObject(), e); return; }
+      if (!aux_ok && on) {
+        if (g_periph_mode==MODE_HW) hw_contactor_set(false);
+        g_contactor_cmd=false; g_contactor_aux=false; StaticJsonDocument<128> e; e["code"]=1002; e["message"]="aux_mismatch"; send_res(JsonObject(), e); return; }
       StaticJsonDocument<128> res; res["ok"]=true; res["aux_ok"]=aux_ok; res["took_ms"]=60; send_res(res); return;
+    }
+    // --- DC module control (Maxwell over CAN) ---
+    if (!strcmp(method,"dc.discover")) {
+      dc_discover(250);
+      StaticJsonDocument<384> res;
+      res["count"] = g_module_count;
+      JsonArray arr = res.createNestedArray("mods");
+      for (uint8_t i=0;i<g_module_count;i++){ JsonObject m=arr.createNestedObject(); m["addr"]=g_modules[i].addr; m["status"]=g_modules[i].last_status; }
+      send_res(res); return;
+    }
+    if (!strcmp(method,"dc.enable")) {
+      bool on = doc["params"]["on"] | false;
+      if (on && !g_contactor_aux) {
+        if ((int32_t)(millis()-g_armed_until_ms) > 0) { StaticJsonDocument<96> e; e["code"]=1001; e["message"]="not_armed"; send_res(JsonObject(), e); return; }
+        g_contactor_cmd = true;
+        if (g_periph_mode==MODE_HW) { hw_contactor_set(true); delay(50); g_contactor_aux = hw_contactor_aux(); }
+        else { delay(40); g_contactor_aux = true; }
+      }
+      g_dc_enabled = on;
+      dc_apply_setpoints_broadcast(true);
+      StaticJsonDocument<128> res; res["enabled"]=g_dc_enabled; res["contactor"]=g_contactor_aux; send_res(res); return;
+    }
+    if (!strcmp(method,"dc.set")) {
+      float vs = doc["params"]["v"] | NAN;   // volts
+      float is = doc["params"]["i"] | NAN;   // amps
+      if (!isnan(vs)) { if (vs < 0) vs = 0; g_dc_v_target_V = vs; }
+      if (!isnan(is)) { if (is < 0) is = 0; g_dc_i_target_A = is; }
+      StaticJsonDocument<192> res; res["ok"]=true; res["v_target"]=g_dc_v_target_V; res["i_target"]=g_dc_i_target_A; res["v_set"]=g_dc_v_set_V; res["i_set"]=g_dc_i_set_A; send_res(res); return;
+    }
+    if (!strcmp(method,"dc.status")) {
+      StaticJsonDocument<512> res;
+      res["enabled"]=g_dc_enabled;
+      res["v_set"]=g_dc_v_set_V; res["i_set"]=g_dc_i_set_A;
+      res["mods"]=g_module_count;
+      JsonArray arr = res.createNestedArray("tele");
+      for (uint8_t i=0;i<g_module_count;i++){
+        JsonObject m = arr.createNestedObject();
+        m["addr"]=g_modules[i].addr;
+        m["v_mv"]=g_modules[i].last_v_mv;
+        m["i_ma"]=g_modules[i].last_i_ma;
+        m["st"]=g_modules[i].last_status;
+      }
+      send_res(res); return;
+    }
+    if (!strcmp(method,"dc.estop")) {
+      dc_emergency_stop();
+      StaticJsonDocument<96> res; res["ok"]=true; send_res(res); return;
+    }
+    if (!strcmp(method,"dc.set_hilo")) {
+      uint8_t mode = doc["params"]["mode"] | 3; // 1=Hi,2=Lo,3=Auto
+      (void)cmd_set_hilo(0x00, mode);
+      StaticJsonDocument<96> res; res["ok"]=true; res["mode"]=mode; send_res(res); return;
     }
     if (!strcmp(method,"temps.read")) {
       StaticJsonDocument<256> res; JsonObject t = res.createNestedObject("temps");
@@ -442,7 +764,49 @@ void setup() {
 
   for (uint8_t i=0;i<RBUF_LEN;++i) g_rbuf[i]=0;
 
+  // Initialize contactor I/O (safe defaults)
+  hw_contactor_setup();
+
   Serial.println("Init done.");
+
+  // ===== CAN (MCP2515) bring-up =====
+  // Optional reset pin
+#ifdef CAN_RST_PIN
+  #if (CAN_RST_PIN >= 0)
+    pinMode(CAN_RST_PIN, OUTPUT);
+    digitalWrite(CAN_RST_PIN, LOW);
+    delay(5);
+    digitalWrite(CAN_RST_PIN, HIGH);
+    delay(5);
+  #endif
+#endif
+  // SPI wiring: use custom pins if provided via build flags
+#ifdef CAN_SCK_PIN
+  #if (CAN_SCK_PIN >= 0) && (CAN_MOSI_PIN >= 0) && (CAN_MISO_PIN >= 0)
+    SPI.begin(CAN_SCK_PIN, CAN_MISO_PIN, CAN_MOSI_PIN);
+  #else
+    SPI.begin();
+  #endif
+#else
+  SPI.begin();
+#endif
+  // Guard INT pin usage
+#ifndef CAN_INT_PIN
+  #define CAN_INT_PIN -1
+#endif
+  if (CAN_INT_PIN >= 0) pinMode(CAN_INT_PIN, INPUT_PULLUP);
+
+  // Set bitrate and mode
+  extern bool can_setup_mcp2515();
+  extern bool g_can_ok;
+  if (can_setup_mcp2515()) {
+    g_can_ok = true;
+    Serial.println("[CAN] MCP2515 ready @125kbps (extended)");
+    extern void dc_discover(uint16_t);
+    dc_discover(200);
+  } else {
+    Serial.println("[CAN] MCP2515 init FAILED!");
+  }
 }
 
 void loop() {
@@ -544,10 +908,20 @@ void loop() {
   // === Contactor keepalive failsafe (unchanged) ===
   if ((now - g_last_ping_ms) > 6000 && g_contactor_cmd) {
     g_contactor_cmd = false; g_contactor_aux = false;
+    if (g_periph_mode==MODE_HW) hw_contactor_set(false);
     StaticJsonDocument<96> evt; evt["type"]="evt"; evt["ts"]=now; evt["id"]=0; evt["method"]="evt:failsafe.keepalive";
     JsonObject res = evt.createNestedObject("result"); res["forced"]="contactor_off";
     // Mirror events to both SerialPi and USB CDC Serial
     serializeJson(evt, SerialPi); SerialPi.print('\n');
     serializeJson(evt, Serial);   Serial.print('\n');
+  }
+
+  // === DC CAN integration ===
+  extern bool g_can_ok;
+  if (g_can_ok) {
+    extern void dc_ramp_tick();
+    extern void dc_poll_tick();
+    dc_ramp_tick();
+    dc_poll_tick();
   }
 }

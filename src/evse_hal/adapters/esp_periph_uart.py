@@ -34,6 +34,11 @@ class _ContactorPeriph(ContactorDriver):
             self._last_ok = bool(res.get("ok", False))
             self._last_aux = bool(res.get("aux_ok", False))
             self._last_ts = time.time()
+            # Tie DC enable to contactor state for first bring-up
+            try:
+                self._c.dc_enable(bool(closed))
+            except Exception:
+                pass
             if closed and not self._last_aux:
                 logger.warning("Contactor aux mismatch; forced open", extra={"res": res})
         except Exception as e:
@@ -147,12 +152,11 @@ class _SupplySim(DCPowerSupply):
         return self._impl.get_status()
 
 
-class _SupplyFromMeter(DCPowerSupply):
-    """Supply proxy reporting measured V/I from ESP meter only.
+class _SupplyPeriph(DCPowerSupply):
+    """Supply driver that forwards setpoints to the ESP and reads measured V/I.
 
-    - Avoids generating any simulated telemetry on the host.
-    - set_* calls are accepted and cached for observability.
-    - get_status() returns meter averages or single-shot reads.
+    - set_voltage()/set_current_limit() forward combined setpoints via dc.set
+    - get_status() returns ESP meter averages or single-shot reads
     """
 
     def __init__(self, client: EspPeriphClient, meter: "_MeterPeriph") -> None:
@@ -161,11 +165,19 @@ class _SupplyFromMeter(DCPowerSupply):
         self._last_set_v = 0.0
         self._last_set_i = 0.0
 
+    def _push(self) -> None:
+        try:
+            self._c.dc_set(volts=self._last_set_v, amps=self._last_set_i)
+        except Exception:
+            pass
+
     def set_voltage(self, volts: float) -> None:
         self._last_set_v = float(max(0.0, volts))
+        self._push()
 
     def set_current_limit(self, amps: float) -> None:
         self._last_set_i = float(max(0.0, amps))
+        self._push()
 
     def get_status(self) -> Tuple[float, float]:
         try:
@@ -277,6 +289,11 @@ class ESPPeriphHardware(EVSEHardware):
             logger.info("ESP periph info", extra={"mode": info.get("mode"), "caps": info.get("capabilities")})
         except Exception as e:
             logger.warning("ESP periph info failed", extra={"error": str(e)})
+        # Prefer hardware mode for real I/O (contactor, etc.) if supported
+        try:
+            self._periph.sys_set_mode("hw")
+        except Exception:
+            pass
         # Wire interfaces
         # Configure CP to dc mode; ignore failures
         try:
@@ -288,7 +305,7 @@ class ESPPeriphHardware(EVSEHardware):
 
         self._cont = _ContactorPeriph(self._periph)
         self._meter = _MeterPeriph(self._periph)
-        self._sup = _SupplyFromMeter(self._periph, self._meter)
+        self._sup = _SupplyPeriph(self._periph, self._meter)
         self._lock = CableLockSim()
 
     def pwm(self) -> PWMController:

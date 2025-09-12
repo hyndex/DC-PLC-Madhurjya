@@ -294,6 +294,23 @@ class EspPeriphClient:
         e = float(res.get("e", 0.0))
         return MeterSample(voltage_v=v, current_a=i, power_kw=p, energy_kwh=e)
 
+    # ----- DC module control (optional; stubbed in firmware) -----
+    def dc_set(self, volts: float | None = None, amps: float | None = None, on: bool | None = None, timeout: float = 0.5) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if volts is not None:
+            params["v"] = float(volts)
+        if amps is not None:
+            params["i"] = float(amps)
+        if on is not None:
+            params["on"] = bool(on)
+        return self.send_req("dc.set", params, timeout=timeout)
+
+    def dc_enable(self, on: bool, timeout: float = 0.5) -> Dict[str, Any]:
+        return self.send_req("dc.enable", {"on": bool(on)}, timeout=timeout)
+
+    def dc_status(self, timeout: float = 0.5) -> Dict[str, Any]:
+        return self.send_req("dc.status", timeout=timeout)
+
     # ----- Keepalive -----
     def _keepalive_loop(self) -> None:
         while not self._stop.is_set():

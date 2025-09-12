@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from typing import Optional, List, Union, Dict
+import asyncio
 import os
 
 from .interfaces import EVSEHardware
@@ -111,6 +112,37 @@ class HalEVSEController(SimEVSEController):
         hash_data: Optional[List[Dict[str, str]]] = None,
     ) -> AuthorizationResponse:
         return AuthorizationResponse(authorization_status=AuthorizationStatus.ACCEPTED)
+
+    async def set_hlc_charging(self, is_ongoing: bool) -> None:
+        """Close/open the EVSE contactor in sync with ISO15118 PowerDelivery.
+
+        - When HLC charging starts (PowerDelivery Start), close the contactor and
+          wait briefly for auxiliary feedback.
+        - When HLC stops, do not force-open here; "stop_charger()" handles
+          graceful ramp-down and opening with auxiliary verification.
+        """
+        try:
+            cont = self._hal.contactor()
+        except Exception:
+            return
+        if is_ongoing:
+            try:
+                cont.set_closed(True)
+            except Exception:
+                # Let ISO state machine detect and handle failure
+                return
+            # Await auxiliary confirmation up to ~3s (V2G2-860 expectation)
+            deadline = asyncio.get_event_loop().time() + 3.0
+            while asyncio.get_event_loop().time() < deadline:
+                try:
+                    if cont.is_closed():
+                        break
+                except Exception:
+                    pass
+                await asyncio.sleep(0.05)
+        else:
+            # No-op here; stop_charger() performs controlled open and CP fallback
+            return
 
     async def get_meter_info_v2(self) -> MeterInfoV2:
         m = self._hal.meter()

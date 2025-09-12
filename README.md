@@ -218,6 +218,157 @@ EVSE_ID=DE*PNC*E12345*1
 
 Additional options are documented in the respective packages. Certificates
 for Plug & Charge are generated with
+
+## ESP32‑S3 Peripheral: CP + DC Module Control over CAN (MCP2515)
+
+The ESP32‑S3 peripheral firmware provides Control Pilot (CP) handling, contactor control, and Maxwell ENR DC module control over CAN (via the MCP2515). The Pi communicates with the ESP over UART using a simple JSON/JSON‑RPC protocol.
+
+### Hardware & Wiring
+
+- CP PWM out: `GPIO38` (LEDC 1 kHz)
+- CP ADC in: `GPIO1` (12‑bit ADC)
+- UART to Pi: RX=`GPIO44`, TX=`GPIO43` (115200 baud)
+- Contactor coil: `GPIO7` (active‑high default); AUX input optional (define at build)
+- MCP2515 (CAN 2.0B, extended 29‑bit): 125 kbit/s
+  - CS=`GPIO41`, RST=`GPIO40`, SCK=`GPIO48`, MOSI=`GPIO47`, MISO=`GPIO21`, INT=optional GPIO
+  - Use a 3.3 V CAN transceiver (e.g., SN65HVD230). If using 5 V TJA1050 boards, add level shifting or replace transceiver.
+
+Build flags are set in `firmware/esp32s3_cp/platformio.ini`:
+
+```
+-DCAN_CS_PIN=41  -DCAN_RST_PIN=40  -DCAN_SCK_PIN=48  -DCAN_MOSI_PIN=47  -DCAN_MISO_PIN=21
+-DMCP2515_CLK_MHZ=8  # match 8 MHz/16 MHz crystal on your MCP2515 board
+```
+
+### Build, Flash, Monitor
+
+```
+cd firmware/esp32s3_cp
+python3 -m platformio run
+python3 -m platformio run -t upload --upload-port /dev/ttyACM0
+python3 -m platformio device monitor -b 115200
+```
+
+### Firmware Protocol (UART)
+
+The firmware streams CP `status` objects at ~5 Hz and accepts JSON‑RPC requests:
+
+```
+{"type":"req","id":"<uuid|string|int>","method":"<name>","params":{...}}
+{"type":"res","id":"...","ts":<ms>,"result":{...}} or {"error":{...}}
+{"type":"evt","method":"evt:<name>","result":{...}}
+```
+
+Supported methods (subset):
+
+- System: `sys.ping`, `sys.info`, `sys.set_mode {mode:"sim|hw"}`, `sys.arm`
+- Contactor: `contactor.set {on}`, `contactor.check`
+- Meter/Temps: `meter.read`, `meter.stream_start|stop`, `temps.read`, `temps.stream_start|stop`
+- DC over CAN (Maxwell ENR):
+  - `dc.discover` → scan modules (broadcast Read Status)
+  - `dc.set {v:float_V, i:float_A}` → soft‑ramp targets
+  - `dc.enable {on}` → gate by CP C/D and contactor AUX
+  - `dc.status` → setpoints + per‑module telemetry (`v_mv`, `i_ma`, `st`)
+  - `dc.estop` → immediate off + opens contactor
+  - `dc.set_hilo {mode:1|2|3}` → optional Hi/Lo/Auto
+
+### Maxwell CAN Mapping (summary)
+
+- Extended 29‑bit ID: `[28:25]=1 | [24:21]=monitor(1) | [20:14]=module(0=broadcast)`
+- Set Vref: `Byte0=(grp<<4)|0x00`, `Byte1=0x02`, `Byte4..7=Vref_mV (MSB..LSB)`
+- Set Ilim: `Byte1=0x03`, `Byte4..7=Ilim_mA (MSB..LSB)`
+- Power On/Off: `Byte1=0x04`, `Byte4..7=0 (On)/1 (Off)`
+- Read: `Byte0=(grp<<4)|0x02`, `Byte1=0x00 V / 0x01 I / 0x08 Status`
+- AllSetData (sync): `Byte0=(grp<<4)|0x0B`, `Byte1=On/Off+Hi/Lo`, `Byte2..3=I(0.1A)`, `Byte4..5=Vbat(0.1V)`, `Byte6..7=Vout(0.1V)`
+
+### End‑to‑End Control Flow
+
+```mermaid
+flowchart TD
+  A[CP A→B detected] --> B(SLAC match over PLC)
+  B --> C{SECC PowerDelivery Start}
+  C -->|set_hlc_charging(True)| D[Close contactor]
+  D --> E[dc.enable on]
+  E --> F{Soft‑ramp}
+  F -->|AllSetData sync| G[CurrentDemand loop]
+  G --> H{PowerDelivery Stop}
+  H --> I[dc.enable off + soft‑stop]
+  I --> J[Open contactor]
+```
+
+### Pi Integration (HAL adapter)
+
+Use the `esp_periph` adapter to forward SECC setpoints to the ESP and control the contactor:
+
+```
+export EVSE_CONTROLLER=hal
+export EVSE_HAL_ADAPTER=esp_periph
+export ESP_PERIPH_PORT=/dev/ttyUSB0
+python src/evse_main.py --iface eth1 --evse-id EVSE-1 --secc-config secc.env
+```
+
+### Safety & Test Checklist
+
+- Verify CP: mode is `dc`, state transitions A/B/C visible; radios are off.
+- Verify contactor AUX OK before enabling DC.
+- Verify CAN bitrate (125 kbit/s) and MCP2515 crystal (8/16 MHz).
+- Bench: `sys.arm` → `contactor.set on` → `dc.discover` → `dc.set v/i` → `dc.enable on` → `dc.status`.
+
+## Scripts Overview
+
+The `scripts/` folder contains helper tools for bring‑up, health checks, ESP control, and smoke tests. Below is a curated map with what, why, and how to use each.
+
+### Bring‑Up & Health
+
+- `plc_soft_reset.sh`: Reloads the QCA7000 PLC driver and rebinds SPI safely.
+  - Why: Recover from PLC stalls; re‑establish `eth1` (qcaspi) without reboot.
+  - Use: `sudo bash scripts/plc_soft_reset.sh`
+
+- `qca_health.sh`: Summarizes PLC health: module info, overlays, dmesg, driver stats.
+  - Why: One‑shot sanity check that the QCA7000 is detected and healthy.
+  - Use: `bash scripts/qca_health.sh`
+
+- `sniff_ev_mac.py`: Passive HomePlug AV sniffer to extract EV MAC during SLAC.
+  - Why: Debug SLAC timing and matching; verify EV presence on the PLC link.
+  - Use: `sudo -E python scripts/sniff_ev_mac.py --iface eth1 --timeout 60`
+
+- `start_evse_hal.sh`: Convenience launcher for the SECC in HAL mode with iface detection.
+  - Why: Run the ISO 15118 SECC with minimal env setup.
+  - Use: `bash scripts/start_evse_hal.sh`
+
+- `evse_setup.sh`, `export_env.sh`, `generate_certs.sh`:
+  - Why: Setup machine, manage .env, and generate ISO 15118 PKI.
+  - Use: `sudo scripts/evse_setup.sh all` or `scripts/evse_setup.sh env init && scripts/evse_setup.sh env export && source scripts/export_env.sh` and `./scripts/generate_certs.sh`
+
+### ESP Peripheral Tools
+
+- `esp_periph_cli.py`: JSON‑RPC CLI for ESP32‑S3 peripheral firmware over UART.
+  - Why: Direct control for contactor, discovery, setpoints, enable, status.
+  - Use: `python scripts/esp_periph_cli.py --port /dev/ttyUSB0 discover | jq .`
+  - Subcommands: `ping`, `info`, `arm`, `contactor 0|1`, `discover`, `set --v V --i A`, `enable 0|1`, `status`, `estop`.
+
+- `module_test.sh`: End‑to‑end DC module exercise (ramp up/down).
+  - Why: Exercise discovery → contactor → enable → setpoints ramp 50→500 V in 10 V steps every 3 s, then ramp down.
+  - Use: `PORT=/dev/ttyUSB0 START_V=50 END_V=500 STEP_V=10 DWELL_S=3 CURRENT_A=10 bash scripts/module_test.sh`
+  - Behavior: Arms/Closes contactor, enables DC, ramps up, prints summarized status (`esp_status_summary.py`), ramps down, disables and opens contactor (trap on EXIT).
+
+- `esp_status_summary.py`: jq‑free summarizer for `dc.status` JSON.
+  - Why: Quick readout (enabled, Vset/Iset, Vavg/Isum, module count, fault words).
+  - Use: `python scripts/esp_periph_cli.py --port /dev/ttyUSB0 status | python scripts/esp_status_summary.py`
+
+### ESP/SLAC/SECC Smokes & Demos
+
+- `esp_slac_smoke.py`, `esp_ac_pwm.py`, `esp_periph_demo.py`: targeted bring‑up helpers for ESP CP and AC PWM.
+- `secc_*_smoke.py`: SECC timing/duplication/timeout smoke tests.
+- `sim_e2e_cp_flow_test.py`: Full end‑to‑end CP/charging flow in simulation (no HV).
+
+### Docker/RPi Helpers
+
+- `pi_docker_e2e.sh`: Build/run end‑to‑end in Docker on Pi.
+- `rpi0_*`: Build/test/run helpers for Raspberry Pi Zero environments.
+
+Tip: Most scripts print their assumptions and are idempotent where possible. Prefer running with `bash -x` during bring‑up to trace steps.
+
 [`scripts/generate_certs.sh`](scripts/generate_certs.sh) and stored under
 `pki/` by default.
 

@@ -14,12 +14,15 @@ modprobe qcaspi qcaspi_clkspeed=${QCASPI_CLKSPEED:-12000000} qcaspi_burst_len=${
 }
 
 echo "[plc-soft-reset] Rebinding SPI device if driver path exists ..."
-if [ -d /sys/bus/spi/drivers/qca7000 ]; then
-  if [ -e /sys/bus/spi/drivers/qca7000/spi0.0 ]; then
-    echo spi0.0 > /sys/bus/spi/drivers/qca7000/unbind || true
-    sleep 0.1
-    echo spi0.0 > /sys/bus/spi/drivers/qca7000/bind || true
-  fi
+# Kernel driver is typically 'qcaspi'; some older trees used 'qca7000'.
+drv_dir=""
+for d in /sys/bus/spi/drivers/qcaspi /sys/bus/spi/drivers/qca7000 /sys/bus/spi/drivers/qca7000-spi; do
+  if [ -d "$d" ]; then drv_dir="$d"; break; fi
+done
+if [ -n "$drv_dir" ] && [ -e "$drv_dir/spi0.0" ]; then
+  echo spi0.0 > "$drv_dir/unbind" || true
+  sleep 0.1
+  echo spi0.0 > "$drv_dir/bind" || true
 fi
 
 echo "[plc-soft-reset] Waiting for netdev ..."
@@ -35,4 +38,3 @@ ip link set eth1 promisc on multicast on 2>/dev/null || true
 echo "[plc-soft-reset] ethtool driver stats:"
 ethtool -S eth1 || true
 echo "[plc-soft-reset] Done."
-
