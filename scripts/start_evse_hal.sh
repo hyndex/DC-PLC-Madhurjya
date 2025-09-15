@@ -35,6 +35,29 @@ find_python() {
   echo "python3"
 }
 
+ensure_lladdr() {
+  local nic="$1"
+  # If already has a link-local addr, nothing to do
+  if ip -6 addr show dev "$nic" | grep -q 'scope link'; then
+    return 0
+  fi
+  # Compute EUI-64 from MAC and add fe80::/64 address
+  local mac
+  mac=$(cat "/sys/class/net/${nic}/address" 2>/dev/null | tr '[:lower:]' '[:upper:]') || return 0
+  # MAC like FA:D3:C0:20:56:60
+  IFS=: read -r o1 o2 o3 o4 o5 o6 <<<"$mac"
+  # Flip the U/L bit
+  printf -v o1_hex "%02X" $(( 0x${o1} ^ 0x02 ))
+  local eui64="${o1_hex}:${o2}:${o3}:FF:FE:${o4}:${o5}:${o6}"
+  # Condense to IPv6 form
+  local ll="fe80::$(printf "%s" "$eui64" | awk -F: '{printf tolower($1$2":"$3$4":"$5$6":"$7$8)}')"
+  # Enable IPv6 on nic if disabled
+  if [ -f "/proc/sys/net/ipv6/conf/${nic}/disable_ipv6" ]; then
+    sudo -n sh -c "echo 0 > /proc/sys/net/ipv6/conf/${nic}/disable_ipv6" 2>/dev/null || true
+  fi
+  sudo -n ip -6 addr add "${ll}/64" dev "$nic" scope link 2>/dev/null || true
+}
+
 usage() {
   cat <<EOF
 Usage: $0 [--evse-id EVSE-1] [--iface IFACE] [--port /dev/serial0] [--adapter esp-uart] [--json [FILE]]
@@ -83,6 +106,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 EVSE_ID="${EVSE_ID_DEFAULT}"
+# If a SECC .env is provided, try to read ISO EVSEID (does not affect SLAC ID)
+if [[ -n "${SECC_CONFIG_PATH:-}" && -f "${SECC_CONFIG_PATH}" ]]; then
+  id_from_env=$(grep -E '^EVSE_ID=' "${SECC_CONFIG_PATH}" | tail -n1 | cut -d '=' -f2- | tr -d ' \t\r') || true
+else
+  id_from_env=""
+fi
 IFACE="${IFACE_ARG:-$(find_iface)}"
 ESP_PORT="${PORT_ARG:-$(find_port)}"
 PY_BIN="$(find_python)"
@@ -92,6 +121,7 @@ export EVSE_HAL_ADAPTER="${ADAPTER_ARG}"
 export EVSE_LOG_LEVEL="${EVSE_LOG_LEVEL:-DEBUG}"
 export EVSE_LOG_FORMAT="${EVSE_LOG_FORMAT:-text}"
 export EVSE_CP_HOST_HINTS="${EVSE_CP_HOST_HINTS:-0}"
+export EVSE_CLEANUP_PREV="${EVSE_CLEANUP_PREV:-1}"
 
 # Optional cert/config envs
 ARGS=( -m src.evse_main --evse-id "${EVSE_ID}" --iface "${IFACE}" --controller hal )
@@ -101,6 +131,8 @@ ARGS=( -m src.evse_main --evse-id "${EVSE_ID}" --iface "${IFACE}" --controller h
 
 # Prepare env for child
 CHILD_ENV=(
+  "EVSE_ID=${EVSE_ID}"
+  ${id_from_env:+"ISO_EVSE_ID=${id_from_env}"}
   "EVSE_CONTROLLER=${EVSE_CONTROLLER}"
   "EVSE_HAL_ADAPTER=${EVSE_HAL_ADAPTER}"
   "EVSE_LOG_LEVEL=${EVSE_LOG_LEVEL}"
@@ -128,6 +160,23 @@ if [[ -z "${ESP_PORT}" || ! -e "${ESP_PORT}" ]]; then
   exit 3
 fi
 
+# Optional: cleanup any previous EVSE/SECC process to avoid port conflicts
+if [[ "${EVSE_CLEANUP_PREV}" != "0" ]]; then
+  echo "[start-evse-hal] Cleaning up previous runs (if any) ..."
+  # Kill Python invocations of src.evse_main
+  pids=$(pgrep -f "python .* -m src.evse_main" || true)
+  if [[ -n "$pids" ]]; then
+    sudo -n kill -TERM $pids 2>/dev/null || true
+    sleep 0.2
+    sudo -n kill -KILL $pids 2>/dev/null || true
+  fi
+  # Free UDP 15118 listener
+  if sudo -n ss -ulpn 2>/dev/null | grep -q "*:15118"; then
+    pid=$(sudo -n ss -ulpn | awk '/\*:15118/{print $NF}' | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n1)
+    if [[ -n "$pid" ]]; then sudo -n kill -KILL "$pid" 2>/dev/null || true; fi
+  fi
+fi
+
 # Best-effort: ensure PLC interface is up and allows multicast/promisc (needed for HPGP/SLAC)
 if [[ "${EUID}" -ne 0 ]]; then
   sudo -n ip link set "${IFACE}" up || true
@@ -136,6 +185,9 @@ else
   ip link set "${IFACE}" up || true
   ip link set "${IFACE}" promisc on multicast on || true
 fi
+
+# Ensure IPv6 link-local present on PLC iface for ISO 15118 TCP bind
+ensure_lladdr "${IFACE}"
 
 run_cmd=( env PYTHONPATH="${PYTHONPATH_LOCAL}" "${CHILD_ENV[@]}" "${PY_BIN}" "${ARGS[@]}" )
 

@@ -65,7 +65,51 @@ class HalEVSEController(SimEVSEController):
         return await super().set_status(status)
 
     async def get_evse_id(self, protocol: Protocol) -> str:
-        return await super().get_evse_id(protocol)
+        """Return EVSEID from environment when provided, else fallback.
+
+        For ISO 15118-2/-20 we expect the standardized EVSEID format like
+        "DE*PNC*E12345*1". Many EVs abort early if the EVSEID is a placeholder.
+
+        The value can be provided via environment variable `EVSE_ID` (e.g., in
+        `secc.env` or exported by the launcher). If not set, we fall back to the
+        simulator default for DIN and a sane example for ISO 15118-2/-20.
+        """
+        try:
+            # Prefer a dedicated ISO EVSEID if provided; fallback to EVSE_ID
+            evse_id = (
+                os.environ.get("ISO_EVSE_ID")
+                or os.environ.get("EVSE_ID")
+                or os.environ.get("EVSEID")
+            )
+            if evse_id:
+                evse_id = evse_id.strip()
+        except Exception:
+            evse_id = None
+
+        # DIN uses a different representation (hexBinary) with '*' mapped to nibble 0xA.
+        # If a custom DIN ID is provided via ENV, use it. Otherwise, try to convert
+        # a star-separated numeric ID to hex (e.g., "49*89*6360" -> "49A89A6360").
+        if protocol == Protocol.DIN_SPEC_70121:
+            try:
+                din_hex = os.environ.get("EVSE_ID_DIN_HEX") or os.environ.get("DIN_EVSE_ID_HEX")
+                if din_hex:
+                    din_hex = din_hex.strip().upper()
+                else:
+                    raw = os.environ.get("EVSE_ID_DIN") or os.environ.get("DIN_EVSE_ID") or evse_id
+                    if raw:
+                        # Map '*' to 'A' nibble and drop separators
+                        din_hex = raw.strip().upper().replace("*", "A").replace(":", "").replace("-", "")
+                if din_hex and len(din_hex) % 2 == 0 and all(c in "0123456789ABCDEF" for c in din_hex):
+                    return din_hex
+            except Exception:
+                pass
+            # Fallback simulator example
+            return "49A89A6360"
+
+        # ISO 15118-2/-20: prefer provided EVSE_ID, else use a valid-looking default
+        if evse_id:
+            return evse_id
+        return "DE*PNC*E12345*1"
 
     async def get_supported_energy_transfer_modes(
         self, protocol: Protocol

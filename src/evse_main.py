@@ -69,7 +69,18 @@ from iso15118.secc.secc_settings import Config as SeccConfig
 from iso15118.secc.controller.simulator import SimEVSEController
 from iso15118.secc.controller.interface import ServiceStatus
 from iso15118.secc import SECCHandler
-from iso15118.shared.exi_codec import ExificientEXICodec
+from iso15118.shared.exi_codec import ExificientEXICodec, EXI
+from iso15118.shared.messages.app_protocol import (
+    SupportedAppProtocolRes,
+    ResponseCodeSAP,
+)
+from iso15118.shared.messages.enums import Namespace
+from iso15118.shared.messages.iso15118_2.body import SessionSetupRes
+from iso15118.shared.messages.iso15118_2.header import MessageHeader
+from iso15118.shared.messages.iso15118_2.msgdef import V2GMessage as V2GMessageV2
+from iso15118.shared.messages.din_spec.body import SessionSetupRes as SessionSetupResDIN
+from iso15118.shared.messages.din_spec.header import MessageHeader as MessageHeaderDIN
+from iso15118.shared.messages.din_spec.msgdef import V2GMessage as V2GMessageDIN
 try:
     from util.standards_check import log_timing_summary
 except Exception:
@@ -766,8 +777,32 @@ async def start_secc(
         logger.info("EVSE controller=sim")
         evse_controller = SimEVSEController()
     await evse_controller.set_status(ServiceStatus.STARTING)
+    # Pre-warm the EXI codec to avoid multi-second latency on the first
+    # encode/decode calls that some EVs interpret as a protocol timeout.
+    exi_codec = ExificientEXICodec()
+    try:
+        # Set the global EXI codec so the warmup hits the same JVM instance
+        EXI().set_exi_codec(exi_codec)
+        # 1) Warm SAP
+        sap_res = SupportedAppProtocolRes(response_code=ResponseCodeSAP.NEGOTIATION_OK, schema_id=0)
+        _ = EXI().to_exi(sap_res, Namespace.SAP)
+        # 2) Warm ISO 15118-2 minimal SessionSetupRes
+        dummy = V2GMessageV2(
+            header=MessageHeader(session_id="0" * 16),
+            body={"SessionSetupRes": SessionSetupRes(evse_id="DE*PNC*WARMUP*1")}  # type: ignore
+        )
+        _ = EXI().to_exi(dummy, Namespace.ISO_V2_MSG_DEF)
+        # 3) Warm DIN minimal SessionSetupRes
+        dummy_din = V2GMessageDIN(
+            header=MessageHeaderDIN(session_id="0" * 16),
+            body={"SessionSetupRes": SessionSetupResDIN(evse_id="49A89A6360")}  # type: ignore
+        )
+        _ = EXI().to_exi(dummy_din, Namespace.DIN_MSG_DEF)
+    except Exception:
+        pass
+
     handler = SECCHandler(
-        exi_codec=ExificientEXICodec(),
+        exi_codec=exi_codec,
         evse_controller=evse_controller,
         config=config,
     )
@@ -834,8 +869,27 @@ async def launch_secc_background(
     except Exception:
         pass
 
+    # Same EXI warmup as in start_secc() to minimize first-response latency
+    exi_codec = ExificientEXICodec()
+    try:
+        EXI().set_exi_codec(exi_codec)
+        sap_res = SupportedAppProtocolRes(response_code=ResponseCodeSAP.NEGOTIATION_OK, schema_id=0)
+        _ = EXI().to_exi(sap_res, Namespace.SAP)
+        dummy = V2GMessageV2(
+            header=MessageHeader(session_id="0" * 16),
+            body={"SessionSetupRes": SessionSetupRes(evse_id="DE*PNC*WARMUP*1")}  # type: ignore
+        )
+        _ = EXI().to_exi(dummy, Namespace.ISO_V2_MSG_DEF)
+        dummy_din = V2GMessageDIN(
+            header=MessageHeaderDIN(session_id="0" * 16),
+            body={"SessionSetupRes": SessionSetupResDIN(evse_id="49A89A6360")}  # type: ignore
+        )
+        _ = EXI().to_exi(dummy_din, Namespace.DIN_MSG_DEF)
+    except Exception:
+        pass
+
     handler = SECCHandler(
-        exi_codec=ExificientEXICodec(),
+        exi_codec=exi_codec,
         evse_controller=evse_controller,
         config=config,
     )
