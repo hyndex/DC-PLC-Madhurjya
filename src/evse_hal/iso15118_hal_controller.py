@@ -99,17 +99,40 @@ class HalEVSEController(SimEVSEController):
                     if raw:
                         # Map '*' to 'A' nibble and drop separators
                         din_hex = raw.strip().upper().replace("*", "A").replace(":", "").replace("-", "")
+                # Case 1: Proper hexBinary already
                 if din_hex and len(din_hex) % 2 == 0 and all(c in "0123456789ABCDEF" for c in din_hex):
+                    logger.info("DIN EVSEID (hexBinary)", extra={"evse_id_din_hex": din_hex})
                     return din_hex
+                # Case 2: Provided a non-hex e-mobility style string (e.g., INJPSE0006360);
+                # encode ASCII bytes as hex to satisfy hexBinary type.
+                if raw and any(ch not in "0123456789ABCDEF" for ch in raw.strip().upper().replace(":","")):
+                    try:
+                        ascii_hex = raw.strip().encode("ascii", errors="ignore").hex().upper()
+                        if ascii_hex and len(ascii_hex) % 2 == 0:
+                            logger.info(
+                                "DIN EVSEID derived from ASCII (hexBinary)",
+                                extra={"raw": raw.strip(), "evse_id_din_hex": ascii_hex},
+                            )
+                            return ascii_hex
+                    except Exception:
+                        pass
+                # Fallback warning
+                if din_hex:
+                    logger.warning("Invalid DIN EVSEID for hexBinary; falling back", extra={"provided": din_hex})
             except Exception:
                 pass
             # Fallback simulator example
-            return "49A89A6360"
+            fb = "49A89A6360"
+            logger.info("Using fallback DIN EVSEID", extra={"evse_id_din_hex": fb})
+            return fb
 
         # ISO 15118-2/-20: prefer provided EVSE_ID, else use a valid-looking default
         if evse_id:
+            logger.info("ISO EVSEID", extra={"evse_id": evse_id})
             return evse_id
-        return "DE*PNC*E12345*1"
+        fb_iso = "DE*PNC*E12345*1"
+        logger.info("Using fallback ISO EVSEID", extra={"evse_id": fb_iso})
+        return fb_iso
 
     async def get_supported_energy_transfer_modes(
         self, protocol: Protocol

@@ -118,7 +118,7 @@ PY_BIN="$(find_python)"
 
 export EVSE_CONTROLLER="${EVSE_CONTROLLER:-hal}"
 export EVSE_HAL_ADAPTER="${ADAPTER_ARG}"
-export EVSE_LOG_LEVEL="${EVSE_LOG_LEVEL:-DEBUG}"
+export EVSE_LOG_LEVEL="${EVSE_LOG_LEVEL:-INFO}"
 export EVSE_LOG_FORMAT="${EVSE_LOG_FORMAT:-text}"
 export EVSE_CP_HOST_HINTS="${EVSE_CP_HOST_HINTS:-0}"
 export EVSE_CLEANUP_PREV="${EVSE_CLEANUP_PREV:-1}"
@@ -131,6 +131,7 @@ ARGS=( -m src.evse_main --evse-id "${EVSE_ID}" --iface "${IFACE}" --controller h
 
 # Prepare env for child
 CHILD_ENV=(
+  # Use a single EVSE_ID consistently across SLAC + ISO. Also expose ISO_EVSE_ID alias.
   "EVSE_ID=${EVSE_ID}"
   ${id_from_env:+"ISO_EVSE_ID=${id_from_env}"}
   "EVSE_CONTROLLER=${EVSE_CONTROLLER}"
@@ -139,6 +140,8 @@ CHILD_ENV=(
   "EVSE_LOG_FORMAT=${EVSE_LOG_FORMAT}"
   "EVSE_CP_HOST_HINTS=${EVSE_CP_HOST_HINTS}"
 )
+# If no DIN-specific ID provided, default DIN source to the same EVSE_ID for consistency
+[[ -z "${EVSE_ID_DIN:-}" && -n "${EVSE_ID}" ]] && CHILD_ENV+=("EVSE_ID_DIN=${EVSE_ID}")
 [[ -n "${ESP_PORT}" ]] && CHILD_ENV+=("ESP_CP_PORT=${ESP_PORT}")
 [[ -n "${CERT_STORE_PATH:-}" ]] && CHILD_ENV+=("PKI_PATH=${CERT_STORE_PATH}")
 [[ -n "${TEE_JSON_ARG}" ]] && CHILD_ENV+=("EVSE_LOG_JSON_TEE=${TEE_JSON_ARG}")
