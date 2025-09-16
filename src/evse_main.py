@@ -752,10 +752,7 @@ async def start_secc(
             config.env_dump["NETWORK_INTERFACE"] = iface
     except Exception:
         pass
-    try:
-        config.print_settings()
-    except Exception:
-        pass
+    # Avoid printing full settings to reduce startup latency
 
     controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
     if controller_mode == "hal":

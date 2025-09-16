@@ -122,11 +122,18 @@ export EVSE_LOG_LEVEL="${EVSE_LOG_LEVEL:-INFO}"
 export EVSE_LOG_FORMAT="${EVSE_LOG_FORMAT:-text}"
 export EVSE_CP_HOST_HINTS="${EVSE_CP_HOST_HINTS:-0}"
 export EVSE_CLEANUP_PREV="${EVSE_CLEANUP_PREV:-1}"
+# Force unbuffered Python stdio and line-buffered stdio for child to reduce latency
+export PYTHONUNBUFFERED="1"
 
 # Optional cert/config envs
 ARGS=( -m src.evse_main --evse-id "${EVSE_ID}" --iface "${IFACE}" --controller hal )
 [[ -n "${SECC_CONFIG_PATH:-}" ]] && ARGS+=( --secc-config "${SECC_CONFIG_PATH}" )
-[[ -n "${SLAC_CONFIG_PATH:-}" ]] && ARGS+=( --slac-config "${SLAC_CONFIG_PATH}" )
+if [[ -n "${SLAC_CONFIG_PATH:-}" ]]; then
+  ARGS+=( --slac-config "${SLAC_CONFIG_PATH}" )
+elif [[ -f "$PWD/slac.env" ]]; then
+  SLAC_CONFIG_PATH="$PWD/slac.env"
+  ARGS+=( --slac-config "${SLAC_CONFIG_PATH}" )
+fi
 [[ -n "${CERT_STORE_PATH:-}" ]] && ARGS+=( --cert-store "${CERT_STORE_PATH}" )
 
 # Prepare env for child
@@ -153,19 +160,17 @@ echo "[start-evse-hal] EVSE_ID=${EVSE_ID} IFACE=${IFACE} ADAPTER=${EVSE_HAL_ADAP
 echo "[start-evse-hal] LOG_LEVEL=${EVSE_LOG_LEVEL} LOG_FORMAT=${EVSE_LOG_FORMAT}${TEE_JSON_ARG:+ (tee -> ${TEE_JSON_ARG})}"
 echo "[start-evse-hal] Python=${PY_BIN}"
 
-# Validate critical dependencies early
-if ! ip link show "${IFACE}" >/dev/null 2>&1; then
-  echo "[start-evse-hal] ERROR: Interface '${IFACE}' not found. Set PLC_IFACE or use --iface." >&2
-  exit 2
-fi
-if [[ -z "${ESP_PORT}" || ! -e "${ESP_PORT}" ]]; then
-  echo "[start-evse-hal] ERROR: ESP CP UART not found. Set ESP_CP_PORT or use --port (e.g., /dev/serial0)." >&2
-  exit 3
+# Prepare tee file with permissive mode to avoid permission errors if root writes to it
+if [[ -n "${TEE_JSON_ARG}" ]]; then
+  sudo -n mkdir -p "$(dirname -- "${TEE_JSON_ARG}")" 2>/dev/null || true
+  sudo -n rm -f "${TEE_JSON_ARG}" 2>/dev/null || true
+  sudo -n touch "${TEE_JSON_ARG}" 2>/dev/null || true
+  sudo -n chmod 666 "${TEE_JSON_ARG}" 2>/dev/null || true
 fi
 
 # Optional: cleanup any previous EVSE/SECC process to avoid port conflicts
 if [[ "${EVSE_CLEANUP_PREV}" != "0" ]]; then
-  echo "[start-evse-hal] Cleaning up previous runs (if any) ..."
+echo "[start-evse-hal] Cleaning up previous runs (if any) ..."
   # Kill Python invocations of src.evse_main
   pids=$(pgrep -f "python .* -m src.evse_main" || true)
   if [[ -n "$pids" ]]; then
@@ -180,19 +185,94 @@ if [[ "${EVSE_CLEANUP_PREV}" != "0" ]]; then
   fi
 fi
 
-# Best-effort: ensure PLC interface is up and allows multicast/promisc (needed for HPGP/SLAC)
+# Optional PLC soft reset (driver rebinding) for QCA7000/qcaspi before SLAC
+if [[ "${EVSE_PLC_SOFT_RESET:-0}" != "0" ]]; then
+  if [[ -x "scripts/plc_soft_reset.sh" ]]; then
+    echo "[start-evse-hal] Performing PLC soft reset (qcaspi) ..."
+    sudo -n bash scripts/plc_soft_reset.sh || true
+  fi
+fi
+
+# Best-effort: set CPU governor to performance for lower latency (no-fail)
+if [[ "${EVSE_TUNE_CPU_GOVERNOR:-1}" != "0" ]]; then
+  if command -v cpupower >/dev/null 2>&1; then
+    sudo -n cpupower frequency-set -g performance >/dev/null 2>&1 || true
+  else
+    for g in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+      echo performance | sudo -n tee "$g" >/dev/null 2>&1 || true
+    done
+  fi
+fi
+
+# Best-effort: ensure PLC interface is up and allows multicast/promisc/allmulti (needed for HPGP/SLAC)
 if [[ "${EUID}" -ne 0 ]]; then
   sudo -n ip link set "${IFACE}" up || true
-  sudo -n ip link set "${IFACE}" promisc on multicast on || true
+  sudo -n ip link set "${IFACE}" promisc on multicast on allmulticast on || true
 else
   ip link set "${IFACE}" up || true
-  ip link set "${IFACE}" promisc on multicast on || true
+  ip link set "${IFACE}" promisc on multicast on allmulticast on || true
+fi
+# Ensure IPv6 link‑local is configured on the chosen interface
+ensure_lladdr "${IFACE}"
+
+# Re-detect interface if the selected one disappeared after PLC reset
+if ! ip link show "${IFACE}" >/dev/null 2>&1; then
+  new_iface=$(find_iface)
+  if [[ -n "${new_iface}" && "${new_iface}" != "${IFACE}" ]]; then
+    echo "[start-evse-hal] Interface ${IFACE} not present; using ${new_iface}"
+    IFACE="${new_iface}"
+    # Update ARGS with new iface
+    ARGS=( -m src.evse_main --evse-id "${EVSE_ID}" --iface "${IFACE}" --controller hal )
+    [[ -n "${SECC_CONFIG_PATH:-}" ]] && ARGS+=( --secc-config "${SECC_CONFIG_PATH}" )
+    [[ -n "${SLAC_CONFIG_PATH:-}" ]] && ARGS+=( --slac-config "${SLAC_CONFIG_PATH}" )
+    [[ -n "${CERT_STORE_PATH:-}" ]] && ARGS+=( --cert-store "${CERT_STORE_PATH}" )
+    # Bring up the new iface and ensure IPv6 link‑local
+    if [[ "${EUID}" -ne 0 ]]; then
+      sudo -n ip link set "${IFACE}" up || true
+      sudo -n ip link set "${IFACE}" promisc on multicast on allmulticast on || true
+    else
+      ip link set "${IFACE}" up || true
+      ip link set "${IFACE}" promisc on multicast on allmulticast on || true
+    fi
+    ensure_lladdr "${IFACE}"
+  fi
+fi
+
+# Final validation after any iface changes / reset
+if ! ip link show "${IFACE}" >/dev/null 2>&1; then
+  echo "[start-evse-hal] ERROR: Interface '${IFACE}' not found. Set PLC_IFACE or use --iface." >&2
+  exit 2
+fi
+if [[ -z "${ESP_PORT}" || ! -e "${ESP_PORT}" ]]; then
+  echo "[start-evse-hal] ERROR: ESP CP UART not found. Set ESP_CP_PORT or use --port (e.g., /dev/serial0)." >&2
+  exit 3
+fi
+
+# Optional EXI pre-warm to avoid first-encode latency (enabled by default)
+if [[ "${EVSE_PREWARM_EXI:-1}" != "0" ]]; then
+  echo "[start-evse-hal] Pre-warming EXI codec ..."
+  env PYTHONPATH="${PYTHONPATH_LOCAL}" "${PY_BIN}" - <<'PY' >/dev/null 2>&1 || true
+from iso15118.shared.exi_codec import EXI
+from iso15118.shared.messages.app_protocol import SupportedAppProtocolRes, ResponseCodeSAP
+from iso15118.shared.messages.enums import Namespace
+try:
+    exi = EXI()
+    # Nudge codec by encoding a tiny SAP response
+    _ = exi.to_exi(SupportedAppProtocolRes(response_code=ResponseCodeSAP.NEGOTIATION_OK, schema_id=0), Namespace.SAP)
+except Exception:
+    pass
+PY
 fi
 
 # Ensure IPv6 link-local present on PLC iface for ISO 15118 TCP bind
 ensure_lladdr "${IFACE}"
 
-run_cmd=( env PYTHONPATH="${PYTHONPATH_LOCAL}" "${CHILD_ENV[@]}" "${PY_BIN}" "${ARGS[@]}" )
+# Prefer line-buffered stdio to avoid I/O stalls when logs are piped
+if command -v stdbuf >/dev/null 2>&1; then
+  run_cmd=( env PYTHONPATH="${PYTHONPATH_LOCAL}" "${CHILD_ENV[@]}" stdbuf -oL -eL "${PY_BIN}" "${ARGS[@]}" )
+else
+  run_cmd=( env PYTHONPATH="${PYTHONPATH_LOCAL}" "${CHILD_ENV[@]}" "${PY_BIN}" "${ARGS[@]}" )
+fi
 
 if [[ "${EUID}" -ne 0 ]]; then
   exec sudo -E "${run_cmd[@]}"

@@ -9,7 +9,8 @@ if lsmod | grep -q '^qcaspi'; then
   modprobe -r qcaspi qca_7k_common 2>/dev/null || true
   sleep 0.3
 fi
-modprobe qcaspi qcaspi_clkspeed=${QCASPI_CLKSPEED:-12000000} qcaspi_burst_len=${QCASPI_BURST:-5000} qcaspi_pluggable=${QCASPI_PLUGGABLE:-1} || {
+# Prefer a stable MAC by default (qcaspi_pluggable=0); allow override via env
+modprobe qcaspi qcaspi_clkspeed=${QCASPI_CLKSPEED:-12000000} qcaspi_burst_len=${QCASPI_BURST:-5000} qcaspi_pluggable=${QCASPI_PLUGGABLE:-0} || {
   echo "[plc-soft-reset] modprobe qcaspi failed" >&2; exit 1;
 }
 
@@ -33,7 +34,11 @@ done
 
 echo "[plc-soft-reset] Bringing iface up and permissive ..."
 ip link set eth1 up 2>/dev/null || true
-ip link set eth1 promisc on multicast on 2>/dev/null || true
+ip link set eth1 promisc on multicast on allmulticast on 2>/dev/null || true
+# Optionally set a static MAC to keep PLC L2 identity stable across resets
+if [ -n "${EVSE_PLC_STATIC_MAC:-}" ]; then
+  ip link set dev eth1 address "${EVSE_PLC_STATIC_MAC}" 2>/dev/null || true
+fi
 
 echo "[plc-soft-reset] ethtool driver stats:"
 ethtool -S eth1 || true

@@ -1,0 +1,126 @@
+$ bash -lc 'export SECC_CONFIG_PATH="$PWD/secc.env" SLAC_CONFIG_PATH="$PWD/slac.env" PLC_IFACE=eth1 ESP_CP_PORT=/dev/ttyACM0 EVSE_CP_HOST_HINTS=1 EVSE_PLC_SOFT_RESET=0 EVSE_TUNE_CPU_GOVERNOR=1 LOG_LEVEL=INFO MESSAGE_LOG_JSON=False MESSAGE_LOG_EXI=False EVSE_ID="INJPSE0006360"; . .venv/bin/activate; rm -f /tmp/evse_e2e.log; timeout 180s scripts/start_evse_hal.sh --evse-id "$EVSE_ID" --iface "$PLC_IFACE" --port "$ESP_CP_PORT" --adapter esp-uart > /tmp/evse_e2e.log 2>&1 || true; egrep -n "(CM_SET_KEY|SLAC|MATCHED|SDP|SupportedAppProtocol|Chosen protocol|SessionSetup|ServiceDiscovery|Charge-loop|ISO 15118|DIN|TCP|UDP|hlc|BMS)" /tmp/evse_e2e.log | tail -n 60 || true; tail -n 40 /tmp/evse_e2e.log'
+12:2025-09-16 14:05:02,632 INFO util.standards_check: Timing summary (CCS/ISO 15118)
+13:2025-09-16 14:05:02,632 INFO util.standards_check: SLAC: init_timeout=50.000s, atten_results_timeout=EV-defined (<=1200ms)
+14:2025-09-16 14:05:02,632 INFO util.standards_check: ISO15118 Shared: SDP_REQ=0.250s, SAP_REQ=2.000s, COMM_SETUP=20.000s, SEQ_TO=60.000s, ONGOING=60.000s
+20:2025-09-16 14:05:02,756 INFO evse.main: HAL mode: waiting for CP states to start SLAC
+22:2025-09-16 14:05:03,010 INFO slac_session: CM_SET_KEY: Started...
+23:2025-09-16 14:05:13,021 INFO slac_session: CM_SET_KEY: Finished!
+24:2025-09-16 14:05:13,022 INFO evse.main: CM_SET_KEY succeeded
+25:2025-09-16 14:05:19,323 INFO hal.esp: HAL ESP SLAC restart hint (fw) sent
+26:2025-09-16 14:05:19,323 INFO evse.main: HAL SLAC proactive nudge
+28:2025-09-16 14:05:24,211 INFO evse.main: SLAC matching in progress for INJPSE0006360
+29:2025-09-16 14:05:24,304 INFO evse.main: SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=ae:eb:15:50:b3:64:00 run_id=f5:ea:e3:7f:b4:6f:ae:62
+30:2025-09-16 14:05:25,122 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: INJPSE0006360. Run ID: b'\xf5\xea\xe3\x7f\xb4o\xaeb').
+31:2025-09-16 14:05:25,216 INFO evse.main: SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=ae:eb:15:50:b3:64:00 run_id=f5:ea:e3:7f:b4:6f:ae:62
+32:2025-09-16 14:05:25,217 INFO evse.main: Launching ISO 15118 SECC
+38:2025-09-16 14:05:34,029 INFO iso15118.secc.transport.udp_server: UDP server socket ready
+39:2025-09-16 14:05:34,032 INFO iso15118.secc.transport.udp_server: UDP server started at address FF02::1%eth1 and port 15118
+40:2025-09-16 14:05:34,252 INFO iso15118.secc.comm_session_handler: SDPRequest received: [Security: NO_TLS, Protocol: TCP]
+41:2025-09-16 14:05:34,259 INFO iso15118.secc.transport.tcp_server: TCP bind succeeded on fe80::3436:70ff:fe23:987c%eth1:57323
+42:2025-09-16 14:05:34,260 INFO iso15118.secc.transport.tcp_server: TCP server started at address fe80::3436:70ff:fe23:987c%eth1 and port 57323
+43:2025-09-16 14:05:34,269 INFO iso15118.secc.comm_session_handler: Sending SDPResponse: [ IP address: fe80::3436:70ff:fe23:987c, Port: 57323 , Security: NO_TLS , Transport: TCP ]
+44:2025-09-16 14:05:34,364 INFO iso15118.secc.transport.udp_server: UDP server has been paused.
+45:2025-09-16 14:05:34,364 INFO iso15118.secc.comm_session_handler: TCP client connected, client address is ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 12).
+46:2025-09-16 14:05:34,364 INFO hlc: ISO EVSEID
+48:2025-09-16 14:05:34,407 INFO iso15118.shared.states: Entered state SupportedAppProtocol
+50:2025-09-16 14:05:35,063 INFO iso15118.secc.states.sap_states: Chosen protocol: ISO_15118_2
+52:2025-09-16 14:05:35,065 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 585 ms
+53:2025-09-16 14:05:35,065 INFO iso15118.shared.states: Entered state SessionSetup
+54:2025-09-16 14:05:36,128 INFO iso15118.shared.comm_session: SessionSetupReq received
+55:2025-09-16 14:05:36,129 INFO hlc: ISO EVSEID
+57:2025-09-16 14:05:37,035 INFO iso15118.shared.comm_session: Sent SessionSetupRes
+58:2025-09-16 14:05:37,036 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1908 ms
+59:2025-09-16 14:05:37,039 INFO iso15118.shared.states: Entered state ServiceDiscovery
+60:2025-09-16 14:05:37,619 INFO iso15118.shared.comm_session: ServiceDiscoveryReq received
+61:2025-09-16 14:05:38,393 INFO iso15118.shared.comm_session: Sent ServiceDiscoveryRes
+62:2025-09-16 14:05:38,393 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1288 ms
+66:2025-09-16 14:05:39,076 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 626 ms
+70:2025-09-16 14:05:39,835 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 696 ms
+75:2025-09-16 14:05:41,572 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1584 ms
+79:2025-09-16 14:05:42,617 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 647 ms
+80:2025-09-16 14:05:42,742 INFO iso15118.shared.comm_session: The data link will SessionStopAction.TERMINATE in 2 seconds and the TCP connection will close in 5 seconds. 
+83:2025-09-16 14:05:42,745 WARNING iso15118.secc.transport.tcp_server: Closing TCP server
+84:2025-09-16 14:05:42,807 INFO iso15118.secc.transport.udp_server: UDP server has been resumed.
+87:2025-09-16 14:05:47,839 INFO iso15118.shared.comm_session: TCP connection closed to peer with address ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 12)
+2025-09-16 14:05:34,407 INFO iso15118.shared.states: Entered state SupportedAppProtocol
+2025-09-16 14:05:35,047 INFO iso15118.shared.comm_session: supportedAppProtocolReq received
+2025-09-16 14:05:35,063 INFO iso15118.secc.states.sap_states: Chosen protocol: ISO_15118_2
+2025-09-16 14:05:35,064 INFO iso15118.shared.comm_session: Sent supportedAppProtocolRes
+2025-09-16 14:05:35,065 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 585 ms
+2025-09-16 14:05:35,065 INFO iso15118.shared.states: Entered state SessionSetup
+2025-09-16 14:05:36,128 INFO iso15118.shared.comm_session: SessionSetupReq received
+2025-09-16 14:05:36,129 INFO hlc: ISO EVSEID
+2025-09-16 14:05:36,130 INFO iso15118.secc.quirks: EVCC identified: 381F26339DB0
+2025-09-16 14:05:37,035 INFO iso15118.shared.comm_session: Sent SessionSetupRes
+2025-09-16 14:05:37,036 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1908 ms
+2025-09-16 14:05:37,039 INFO iso15118.shared.states: Entered state ServiceDiscovery
+2025-09-16 14:05:37,619 INFO iso15118.shared.comm_session: ServiceDiscoveryReq received
+2025-09-16 14:05:38,393 INFO iso15118.shared.comm_session: Sent ServiceDiscoveryRes
+2025-09-16 14:05:38,393 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1288 ms
+2025-09-16 14:05:38,714 INFO iso15118.shared.comm_session: PaymentServiceSelectionReq received
+2025-09-16 14:05:38,715 INFO iso15118.shared.states: Entered state PaymentServiceSelection
+2025-09-16 14:05:39,075 INFO iso15118.shared.comm_session: Sent PaymentServiceSelectionRes
+2025-09-16 14:05:39,076 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 626 ms
+2025-09-16 14:05:39,455 INFO iso15118.shared.comm_session: AuthorizationReq received
+2025-09-16 14:05:39,456 INFO iso15118.shared.states: Entered state Authorization
+2025-09-16 14:05:39,833 INFO iso15118.shared.comm_session: Sent AuthorizationRes
+2025-09-16 14:05:39,835 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 696 ms
+2025-09-16 14:05:39,836 INFO iso15118.shared.states: Entered state ChargeParameterDiscovery
+2025-09-16 14:05:40,357 INFO iso15118.shared.comm_session: ChargeParameterDiscoveryReq received
+2025-09-16 14:05:40,444 INFO iso15118.secc.controller.simulator: Send rated limits to CS.
+2025-09-16 14:05:41,571 INFO iso15118.shared.comm_session: Sent ChargeParameterDiscoveryRes
+2025-09-16 14:05:41,572 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1584 ms
+2025-09-16 14:05:41,572 INFO iso15118.shared.states: Entered state CableCheck
+2025-09-16 14:05:42,270 INFO iso15118.shared.comm_session: CableCheckReq received
+2025-09-16 14:05:42,616 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 14:05:42,617 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 647 ms
+2025-09-16 14:05:42,742 INFO iso15118.shared.comm_session: The data link will SessionStopAction.TERMINATE in 2 seconds and the TCP connection will close in 5 seconds. 
+2025-09-16 14:05:42,743 INFO iso15118.shared.comm_session: Reason: Contactor didnt close for Cable Check
+2025-09-16 14:05:42,744 INFO iso15118.shared.comm_session: v2g_metrics: {"type": "v2g_session_metrics", "session_id": "A4253FAD5E3228A9", "peer": "('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 12)", "protocol": "ISO_15118_2", "successful": false, "reason": "Contactor didnt close for Cable Check", "rx_decode_errors": 0, "rx_validation_errors": 0, "rx_invalid_v2gtp": 0, "dup_resent_count": 0, "dup_resend_enabled": true, "dup_window_s": 2.0, "dup_resend_max": 3, "tx_drop_prob": 0.0}
+2025-09-16 14:05:42,745 WARNING iso15118.secc.transport.tcp_server: Closing TCP server
+2025-09-16 14:05:42,807 INFO iso15118.secc.transport.udp_server: UDP server has been resumed.
+2025-09-16 14:05:44,794 INFO iso15118.secc.controller.simulator: Session ended in CableCheck (Contactor didnt close for Cable Check).
+2025-09-16 14:05:44,795 INFO iso15118.shared.comm_session: SessionStopAction.TERMINATEd the data link
+2025-09-16 14:05:47,839 INFO iso15118.shared.comm_session: TCP connection closed to peer with address ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 12)
+
+---
+
+Follow-up run (evening) with HAL via ESP32-S3 over USB and full SLAC + HLC bring-up
+
+- Launcher: `scripts/start_evse_hal.sh` (HAL adapter `esp-uart`) with JSON tee enabled
+- Environment used:
+  - `PLC_IFACE=eth1` (qcaspi PLC)
+  - `ESP_CP_PORT=/dev/ttyACM0`
+  - `EVSE_CONTROLLER=hal`
+  - `SECC_CONFIG_PATH=$PWD/secc.env`, `SLAC_CONFIG_PATH=$PWD/slac.env`
+  - `EVSE_PLC_SOFT_RESET=1` (qcaspi soft reset before SLAC)
+  - `EVSE_CP_HOST_HINTS=1` (allow SLAC restart hint if EV stalls at B)
+  - Power stage simulated: `EVSE_SIM_SUPPLY=1`, contactor simulated: `EVSE_SIM_CONTACTOR=1`
+  - Logs: text to `/tmp/evse_hal.out`, JSON tee to `/tmp/evse_e2e.jsonl`
+
+What happened:
+
+- CP from ESP32-S3 reports state=B (vehicle present). Quick check:
+  `python - <<'PY' ... from evse_hal.esp_cp_client import EspCpClient ...` shows `state='B'`, `mode='dc'`.
+- SLAC: CM_SET_KEY → CM_SLAC_PARM → MNBC sounds/ATTEN → CM_SLAC_MATCH → MATCHED.
+  - EV MAC observed: `38:1f:26:33:9d:b0`
+  - NID: `6c:2e:68:48:a8:ab:06`
+  - Run-ID: `f5:ea:e3:7f:b4:6f:ae:62`
+- SECC started; UDP server bound on `FF02::1%eth1:15118`.
+- Ensured IPv6 link-local on eth1 (needed for ISO15118 reply): added `fe80::f471:72ff:fe90:e41d/64`.
+
+Next actions to reach BMS/PreCharge (physical + verify):
+
+1) On the vehicle, initiate charging (some EVs require “Start” on the dash). CP should move B→C.
+2) Watch ISO progress and extract BMS snapshot (these commands can run in parallel):
+   - `python scripts/wait_hlc_phases.py --log /tmp/evse_e2e.jsonl --timeout 0`
+   - `python scripts/wait_bms.py --log /tmp/evse_e2e.jsonl --timeout 0`
+   These will print milestones (SessionSetup, ServiceDiscovery, Authorization, CPD) and the first BMS snapshot
+   (includes target_voltage/current, present_voltage, SOC, energy requests) once PreCharge/CurrentDemand starts.
+
+Notes:
+
+- Earlier attempt failed at CableCheck with “Contactor didn't close”. For bench bring‑up we now simulate:
+  `EVSE_SIM_CONTACTOR=1`, so CableCheck should pass and the flow proceeds to PreCharge/CurrentDemand.
+- If SLAC stalls at B again, firmware SLAC restart hints are enabled (reset_ms≈400) via HAL.
+- All structured logs with BMS snapshots are in `/tmp/evse_e2e.jsonl` (root-owned due to sudo launcher).
