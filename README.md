@@ -126,6 +126,62 @@ What you’ll see:
 - Per‑message ISO logs (`hlc` logger) with fields:
   - `iso_state` (e.g., CableCheck, PreCharge, CurrentDemand)
   - `bms`: `present_soc`, `target_voltage`, `target_current`, session limits
+
+### Field Bring‑Up Summary (DC CCS2)
+
+With a real vehicle connected and a QCA7000 (qcaspi) PLC on the Pi:
+
+- Detect the PLC NIC (driver `qcaspi`), often `eth1`:
+  - `for i in /sys/class/net/*; do d=$(basename $i); ethtool -i $d 2>/dev/null | awk -v d=$d -F': ' '/driver/{print d, $2}'; done`
+- Run the HAL launcher (auto‑adds IPv6 link‑local and starts SECC after SLAC match):
+  ```bash
+  export EVSE_ID=INJPSE0006360
+  export ESP_CP_PORT=/dev/ttyACM0
+  export EVSE_CP_HOST_HINTS=1
+  export SECC_CONFIG_PATH=$PWD/secc.env
+  export SLAC_CONFIG_PATH=$PWD/slac.env
+  EVSE_TEE_JSON=/tmp/evse_e2e.jsonl \
+  scripts/start_evse_hal.sh --evse-id "$EVSE_ID" --iface eth1 --port "$ESP_CP_PORT" --adapter esp-uart
+  ```
+- Expected sequence (seen in logs):
+  - SLAC: CM_SET_KEY → ATTEN → MATCHED (EV MAC printed)
+  - ISO 15118: SessionSetup → ServiceDiscovery → Authorization → CPD → CableCheck → PreCharge
+  - PowerDelivery(Start) → CurrentDemand
+
+If the EV closes TCP shortly after CurrentDemand (IncompleteReadError on our side), capture a structured tee and inspect the first BMS snapshot to verify targets vs EVSE delivery:
+
+```bash
+python scripts/wait_hlc_phases.py --log /tmp/evse_e2e.jsonl --timeout 0
+python scripts/wait_bms.py --log /tmp/evse_e2e.jsonl --timeout 0
+cat /tmp/evse_bms_snapshot.json
+```
+
+### Troubleshooting QCA7000 (qcaspi)
+
+- Health check: `bash scripts/qca_health.sh` (shows driver, overlay, dmesg, iface stats)
+- Robust soft‑reset (auto‑detect iface, pluggable=1 by default):
+  ```bash
+  export EVSE_PLC_SOFT_RESET=1
+  export QCASPI_PLUGGABLE=1 QCASPI_CLKSPEED=8000000 QCASPI_BURST=3000
+  scripts/start_evse_hal.sh --evse-id EVSE-1 --port /dev/ttyACM0 --adapter esp-uart
+  ```
+- Persist options: `/etc/modprobe.d/qcaspi.conf` → `options qcaspi qcaspi_pluggable=1 qcaspi_clkspeed=8000000 qcaspi_burst_len=3000`
+
+### No‑Vehicle Test Tools
+
+- `scripts/start_secc_only.py` – start SECC on an interface without SLAC (bench testing)
+- `scripts/send_sdp.py` – broadcast SDP over IPv6/UDP and print the SECC TCP endpoint
+- `scripts/evcc_min_flow.py` – minimal EVCC client for SAP → SessionSetup → ServiceDiscovery
+
+### Productionization Checklist (DC)
+
+- Systemd services for HAL/SECC; order after serial and qcaspi ready
+- udev rules for stable `/dev/tty*` and permissions
+- IPv6 link‑local on PLC iface (don’t disable IPv6)
+- CPU governor=performance; log rotation and durable log path
+- Certificates and valid EVSEID; manage `pki/`
+- Contactor coil + AUX prove‑out; DC supply control + meter integration (move from sim to real driver)
+- Thermal monitoring and derating
   - `evse`: `present_voltage`, `present_current`, `set_voltage`, `set_current`
 
 4) Optional smoke checks

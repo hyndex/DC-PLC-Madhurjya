@@ -354,3 +354,93 @@ tail -f /tmp/evse_run.jsonl
 Notes:
 cat Notes.md
 If you want, I can keep the AC session running and post the first “ServiceDiscovery/Authorization/AC CPD” phase timestamps here the moment they appear. If your goal shifts to SoC specifically, we should switch to DC (Combo‑2) since SoC is typically provided in DC CurrentDemand flows.
+
+---
+
+## 15) DC Field Bring‑Up with Real Vehicle (Try6/Try7)
+
+Run context
+- Hardware: RPi + QCA7000 (qcaspi) on `spi0.0`, ESP32‑S3 CP over `/dev/ttyACM0`, CCS2 vehicle connected.
+- PLC driver: `qcaspi 0.2.7-i` with overlay `dtoverlay=qca7000,int_pin=25,speed=12000000`.
+- Detected PLC iface: `eth1` (driver=qcaspi).
+- HAL adapter: `esp-uart`.
+- Start command (Try6 style):
+  ```bash
+  export SECC_CONFIG_PATH=$PWD/secc.env
+  export SLAC_CONFIG_PATH=$PWD/slac.env
+  export PLC_IFACE=eth1
+  export ESP_CP_PORT=/dev/ttyACM0
+  export EVSE_CP_HOST_HINTS=1
+  export EVSE_PLC_SOFT_RESET=0  # use 1 if needed
+  export EVSE_ID=INJPSE0006360
+  . .venv/bin/activate
+  timeout 180s scripts/start_evse_hal.sh --evse-id "$EVSE_ID" --iface "$PLC_IFACE" --port "$ESP_CP_PORT" --adapter esp-uart > /tmp/evse_e2e.log 2>&1
+  ```
+
+Observed (high‑level)
+- SLAC: CM_SET_KEY succeeded; SLAC matched.
+  - EV MAC observed: `38:1f:26:33:9d:b0`
+  - Run‑ID: `f5:ea:e3:7f:b4:6f:ae:62`
+- ISO 15118 (TCP on fe80::…%eth1:<port>):
+  - SupportedAppProtocol → SessionSetup → ServiceDiscovery → Authorization → ChargeParameterDiscovery → CableCheck → PreCharge
+  - PowerDelivery(Start) accepted
+  - Entered CurrentDemand and replied once, then EV closed TCP (IncompleteReadError on our side).
+
+Representative log tail (from `/tmp/evse_e2e.log`)
+- `SLAC MATCHED Successfully, Link Established`
+- `UDP server started at address FF02::1%eth1 and port 15118`
+- `TCP server started at address fe80::…%eth1 and port 50119`
+- `Entered state ...` through PreCharge, then:
+  - `Entered state CurrentDemand`
+  - `CurrentDemandReq received`
+  - `Sent CurrentDemandRes`
+  - `IncompleteReadError: 0 bytes read on a total of 8 expected bytes` (peer closed)
+
+What this means
+- PLC and HLC succeeded; contactor/AUX passed CableCheck.
+- The EV initiated power transfer, but terminated the HLC quickly after the first CurrentDemand exchange. Typical causes:
+  - EV didn’t see expected power stage behavior (voltage/current not tracking its request).
+  - CP transitioned briefly (mechanical latch, connector movement).
+  - EV‑specific timing/quirk (duplicate retries are visible; duplicates were handled).
+
+Actionable next steps
+1) Capture structured HLC/BMS snapshot for diagnosis
+   - Run with tee: `EVSE_TEE_JSON=/tmp/evse_e2e.jsonl` and re‑run start.
+   - Watchers:
+     - `python scripts/wait_hlc_phases.py --log /tmp/evse_e2e.jsonl --timeout 0`
+     - `python scripts/wait_bms.py --log /tmp/evse_e2e.jsonl --timeout 0`
+   - Inspect first BMS snapshot (`/tmp/evse_bms_snapshot.json`): target_voltage/current, present_voltage, SOC.
+2) Verify CP stability during CurrentDemand
+   - `ESP_CP_PORT=/dev/ttyACM0 ./scripts/cp_monitor.py --duration 30`
+3) If bench‑testing without real DC stage
+   - Temporarily simulate supply to follow setpoints: `EVSE_SIM_SUPPLY=1`.
+   - Confirm HLC continues through CurrentDemand loop.
+4) Reduce latency noise
+   - Keep CPU governor at performance; avoid heavy logging; JSON tee is fine.
+
+QCA7000/qcaspi reliability notes
+- We improved `scripts/plc_soft_reset.sh` to default `qcaspi_pluggable=1` and auto‑detect the qcaspi netdev (no hardcoded `eth1`).
+- If SLAC init stalls, try conservative SPI params before starting: `QCASPI_CLKSPEED=8000000 QCASPI_BURST=3000` (or 4 MHz / 1200 for worst cases).
+
+Productionization checklist (DC CCS2)
+- System
+  - systemd services for HAL/SECC (order after serial and qcaspi ready).
+  - Persistent module options: `/etc/modprobe.d/qcaspi.conf` with `qcaspi_pluggable=1 qcaspi_clkspeed=8000000 qcaspi_burst_len=3000`.
+  - udev rules to name ESP serial predictably and set permissions.
+  - Ensure IPv6 link‑local on PLC iface (script already enforces; verify netplan doesn’t disable IPv6).
+  - CPU governor=performance; log rotation for `/tmp/evse_*.jsonl` or move to `/var/log/evse/`.
+- Certificates / IDs
+  - Valid EVSEID in `secc.env`; manage PKI under `pki/`.
+- Hardware integration
+  - Contactor coil + AUX prove‑out; polarity and timing aligned.
+  - DC supply control and metering plumbed (move from `sim` to real via `esp-periph` or dedicated driver). Verify ramp and current limit.
+  - Thermal monitoring and derating thresholds per site.
+
+Artifacts and helpers added in this work
+- `scripts/run_until_bms.sh`: now accepts `--iface/--port/--adapter`, loops until first BMS snapshot.
+- `scripts/start_secc_only.py`: start SECC without SLAC for bench tests.
+- `scripts/send_sdp.py`: send SDP over IPv6/UDP and print SECC TCP endpoint.
+- `scripts/plc_soft_reset.sh`: more robust qcaspi reload with auto iface detection.
+
+Open item
+- EV closed TCP shortly after first CurrentDemand; collect BMS snapshot and CP monitor traces to decide if this is power‑stage behavior, EV expectation mismatch, or a transient CP event.

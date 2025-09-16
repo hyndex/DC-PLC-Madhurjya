@@ -1,0 +1,207 @@
+$ bash -lc 'echo "Checking PLC health and iface, then running your Try6 command on that iface." && bash scripts/qca_health.sh || true && echo && echo "Attempting Try6 run with detected iface (if any)." && IFACE=$(for n in /sys/class/net/*; do i=$(basename "$n"); ethtool -i "$i" 2>/dev/null | awk -F'"'"': '"'"' '"'"'/driver/{print $2}'"'"' | grep -qi qcaspi && echo "$i"; done | head -n1); echo "Detected PLC_IFACE='"'"'${IFACE}'"'"'" && export SECC_CONFIG_PATH="$PWD/secc.env" SLAC_CONFIG_PATH="$PWD/slac.env" PLC_IFACE="${IFACE}" ESP_CP_PORT=/dev/ttyACM0 EVSE_CP_HOST_HINTS=1 EVSE_PLC_SOFT_RESET=0 EVSE_TUNE_CPU_GOVERNOR=1 LOG_LEVEL=INFO MESSAGE_LOG_JSON=False MESSAGE_LOG_EXI=False EVSE_ID="INJPSE0006360"; . .venv/bin/activate 2>/dev/null || true; rm -f /tmp/evse_e2e.log; timeout 180s scripts/start_evse_hal.sh --evse-id "$EVSE_ID" ${IFACE:+--iface "$IFACE"} --port "$ESP_CP_PORT" --adapter esp-uart > /tmp/evse_e2e.log 2>&1 || true; egrep -n "(CM_SET_KEY|SLAC|MATCHED|SDP|SupportedAppProtocol|Chosen protocol|SessionSetup|ServiceDiscovery|Charge-loop|ISO 15118|DIN|TCP|UDP|hlc|BMS)" /tmp/evse_e2e.log | tail -n 120 || true; echo '"'"'--- tail ---'"'"'; tail -n 80 /tmp/evse_e2e.log || true'
+Checking PLC health and iface, then running your Try6 command on that iface.
+[qca-health] Kernel module info (qcaspi):
+filename:       /lib/modules/6.12.34+rpt-rpi-v8/kernel/drivers/net/ethernet/qualcomm/qcaspi.ko.xz
+version:        0.2.7-i
+license:        Dual BSD/GPL
+author:         Stefan Wahren <wahrenst@gmx.net>
+author:         Qualcomm Atheros Communications
+description:    Qualcomm Atheros QCA7000 SPI Driver
+srcversion:     E521C71D882578D4ABA39BD
+alias:          of:N*T*Cqca,qca7000C*
+alias:          of:N*T*Cqca,qca7000
+alias:          spi:qca7000
+depends:        qca_7k_common
+intree:         Y
+name:           qcaspi
+vermagic:       6.12.34+rpt-rpi-v8 SMP preempt mod_unload modversions aarch64
+parm:           qcaspi_clkspeed:SPI bus clock speed (Hz). Use 1000000-16000000. (int)
+parm:           qcaspi_burst_len:Number of data bytes per burst. Use 1-5000. (int)
+parm:           qcaspi_pluggable:Pluggable SPI connection (yes/no). (int)
+parm:           wr_verify:SPI register write verify trails. Use 0-3. (int)
+
+[qca-health] Boot config (/boot/firmware/config.txt):
+dtparam=spi=on
+dtoverlay=qca7000,int_pin=25,speed=12000000
+
+[qca-health] dtoverlay help (qca7000):
+Name:   qca7000
+
+Info:   Evaluation Board for PLC Stamp micro
+        This uses spi0 and a separate GPIO interrupt to connect the QCA7000.
+
+Usage:  dtoverlay=qca7000,<param>=<val>
+
+Params: int_pin                 GPIO pin for interrupt signal (default 23)
+
+        speed                   SPI bus speed (default 12 MHz)
+
+
+[qca-health] dmesg (qca/qcaspi):
+[    4.448115] qcaspi spi0.0: ver=0.2.7-i, clkspeed=12000000, burst_len=5000, pluggable=1
+[    4.448213] qcaspi spi0.0: Using random MAC address: d2:e2:39:b6:51:23
+[    6.690820] qcaspi spi0.0 eth1: SPI thread created
+
+[qca-health] Interfaces with qcaspi driver:
+- eth1
+  ethtool -i:
+driver: qcaspi
+version: 0.2.7-i
+firmware-version: QCA7000
+expansion-rom-version: 
+bus-info: spi0.0
+supports-statistics: yes
+supports-test: no
+supports-eeprom-access: no
+supports-register-dump: yes
+supports-priv-flags: no
+  ip -s link:
+4: eth1: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP mode DEFAULT group default qlen 100
+    link/ether d2:e2:39:b6:51:23 brd ff:ff:ff:ff:ff:ff
+    RX:  bytes packets errors dropped  missed   mcast           
+             0       0      0       0       0       0 
+    TX:  bytes packets errors dropped carrier collsns           
+         33480     177      0       0       0       0 
+  ethtool -S (driver stats):
+NIC statistics:
+     Triggered resets: 1
+     Device resets: 1
+     Reset timeouts: 0
+     Read errors: 0
+     Write errors: 0
+     Read buffer errors: 0
+     Write buffer errors: 0
+     Out of memory: 0
+     Write buffer misses: 0
+     Transmit ring full: 0
+     SPI errors: 0
+     Write verify errors: 0
+     Buffer available errors: 0
+     Bad signature: 0
+
+[qca-health] Done.
+
+Attempting Try6 run with detected iface (if any).
+Detected PLC_IFACE='eth1'
+12:2025-09-16 23:05:52,775 INFO util.standards_check: Timing summary (CCS/ISO 15118)
+13:2025-09-16 23:05:52,776 INFO util.standards_check: SLAC: init_timeout=50.000s, atten_results_timeout=EV-defined (<=1200ms)
+14:2025-09-16 23:05:52,776 INFO util.standards_check: ISO15118 Shared: SDP_REQ=0.250s, SAP_REQ=2.000s, COMM_SETUP=20.000s, SEQ_TO=60.000s, ONGOING=60.000s
+20:2025-09-16 23:05:52,892 INFO evse.main: HAL mode: waiting for CP states to start SLAC
+22:2025-09-16 23:05:53,086 INFO slac_session: CM_SET_KEY: Started...
+23:2025-09-16 23:06:03,102 INFO slac_session: CM_SET_KEY: Finished!
+24:2025-09-16 23:06:03,102 INFO evse.main: CM_SET_KEY succeeded
+25:2025-09-16 23:06:09,415 INFO hal.esp: HAL ESP SLAC restart hint (fw) sent
+26:2025-09-16 23:06:09,415 INFO evse.main: HAL SLAC proactive nudge
+28:2025-09-16 23:06:14,249 INFO evse.main: SLAC matching in progress for INJPSE0006360
+29:2025-09-16 23:06:14,313 INFO evse.main: SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=47:bc:8e:b6:04:15:0c run_id=f5:ea:e3:7f:b4:6f:ae:62
+30:2025-09-16 23:06:15,207 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: INJPSE0006360. Run ID: b'\xf5\xea\xe3\x7f\xb4o\xaeb').
+31:2025-09-16 23:06:15,310 INFO evse.main: SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=47:bc:8e:b6:04:15:0c run_id=f5:ea:e3:7f:b4:6f:ae:62
+32:2025-09-16 23:06:15,312 INFO evse.main: Launching ISO 15118 SECC
+38:2025-09-16 23:06:22,799 INFO iso15118.secc.transport.udp_server: UDP server socket ready
+39:2025-09-16 23:06:22,800 INFO iso15118.secc.transport.udp_server: UDP server started at address FF02::1%eth1 and port 15118
+40:2025-09-16 23:06:23,087 INFO iso15118.secc.comm_session_handler: SDPRequest received: [Security: NO_TLS, Protocol: TCP]
+41:2025-09-16 23:06:23,124 INFO iso15118.secc.transport.tcp_server: TCP bind succeeded on fe80::d0e2:39ff:feb6:5123%eth1:50119
+42:2025-09-16 23:06:23,127 INFO iso15118.secc.transport.tcp_server: TCP server started at address fe80::d0e2:39ff:feb6:5123%eth1 and port 50119
+43:2025-09-16 23:06:23,190 INFO iso15118.secc.comm_session_handler: Sending SDPResponse: [ IP address: fe80::d0e2:39ff:feb6:5123, Port: 50119 , Security: NO_TLS , Transport: TCP ]
+44:2025-09-16 23:06:23,281 INFO iso15118.secc.transport.udp_server: UDP server has been paused.
+45:2025-09-16 23:06:23,281 INFO iso15118.secc.comm_session_handler: TCP client connected, client address is ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 4).
+46:2025-09-16 23:06:23,282 INFO hlc: ISO EVSEID
+48:2025-09-16 23:06:23,322 INFO iso15118.shared.states: Entered state SupportedAppProtocol
+50:2025-09-16 23:06:23,895 INFO iso15118.secc.states.sap_states: Chosen protocol: ISO_15118_2
+52:2025-09-16 23:06:23,899 INFO iso15118.shared.states: Entered state SessionSetup
+53:2025-09-16 23:06:24,729 INFO iso15118.shared.comm_session: SessionSetupReq received
+54:2025-09-16 23:06:24,730 INFO hlc: ISO EVSEID
+56:2025-09-16 23:06:25,341 INFO iso15118.shared.comm_session: Sent SessionSetupRes
+57:2025-09-16 23:06:25,342 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1379 ms
+58:2025-09-16 23:06:25,343 INFO iso15118.shared.states: Entered state ServiceDiscovery
+59:2025-09-16 23:06:25,738 INFO iso15118.shared.comm_session: ServiceDiscoveryReq received
+60:2025-09-16 23:06:26,276 INFO iso15118.shared.comm_session: Sent ServiceDiscoveryRes
+61:2025-09-16 23:06:26,277 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 871 ms
+65:2025-09-16 23:06:26,844 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 512 ms
+69:2025-09-16 23:06:27,437 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 530 ms
+74:2025-09-16 23:06:28,767 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1236 ms
+78:2025-09-16 23:06:30,495 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 557 ms
+124:2025-09-16 23:06:37,354 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 541 ms
+128:2025-09-16 23:06:37,685 INFO hlc: ISO EVSEID
+130:2025-09-16 23:06:37,922 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 503 ms
+--- tail ---
+2025-09-16 23:06:26,843 INFO iso15118.shared.comm_session: Sent PaymentServiceSelectionRes
+2025-09-16 23:06:26,844 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 512 ms
+2025-09-16 23:06:27,171 INFO iso15118.shared.comm_session: AuthorizationReq received
+2025-09-16 23:06:27,172 INFO iso15118.shared.states: Entered state Authorization
+2025-09-16 23:06:27,437 INFO iso15118.shared.comm_session: Sent AuthorizationRes
+2025-09-16 23:06:27,437 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 530 ms
+2025-09-16 23:06:27,437 INFO iso15118.shared.states: Entered state ChargeParameterDiscovery
+2025-09-16 23:06:27,783 INFO iso15118.shared.comm_session: ChargeParameterDiscoveryReq received
+2025-09-16 23:06:27,928 INFO iso15118.secc.controller.simulator: Send rated limits to CS.
+2025-09-16 23:06:28,767 INFO iso15118.shared.comm_session: Sent ChargeParameterDiscoveryRes
+2025-09-16 23:06:28,767 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1236 ms
+2025-09-16 23:06:28,768 INFO iso15118.shared.states: Entered state CableCheck
+2025-09-16 23:06:30,160 INFO iso15118.shared.comm_session: CableCheckReq received
+2025-09-16 23:06:30,492 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:30,495 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 557 ms
+2025-09-16 23:06:30,768 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=9f4a4cb046) within 2.0s; resending last response #1
+2025-09-16 23:06:30,768 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:30,768 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:31,063 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=9f4a4cb046) within 2.0s; resending last response #2
+2025-09-16 23:06:31,064 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:31,065 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:31,357 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=9f4a4cb046) within 2.0s; resending last response #3
+2025-09-16 23:06:31,357 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:31,358 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:31,882 INFO iso15118.shared.comm_session: CableCheckReq received
+2025-09-16 23:06:32,125 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:32,389 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=9f4a4cb046) within 2.0s; resending last response #1
+2025-09-16 23:06:32,389 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:32,389 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:32,685 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=9f4a4cb046) within 2.0s; resending last response #2
+2025-09-16 23:06:32,686 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:32,686 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:32,980 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=9f4a4cb046) within 2.0s; resending last response #3
+2025-09-16 23:06:32,980 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:32,980 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:33,488 INFO iso15118.shared.comm_session: CableCheckReq received
+2025-09-16 23:06:33,721 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-16 23:06:33,722 INFO iso15118.shared.states: Entered state PreCharge
+2025-09-16 23:06:33,966 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-16 23:06:34,207 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:34,496 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=adbefa6347) within 2.0s; resending last response #1
+2025-09-16 23:06:34,497 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:34,498 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:34,789 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=adbefa6347) within 2.0s; resending last response #2
+2025-09-16 23:06:34,789 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:34,789 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:35,331 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-16 23:06:35,595 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:35,912 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=86421e8c25) within 2.0s; resending last response #1
+2025-09-16 23:06:35,913 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:35,914 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:36,206 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=86421e8c25) within 2.0s; resending last response #2
+2025-09-16 23:06:36,207 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:36,208 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:36,520 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=86421e8c25) within 2.0s; resending last response #3
+2025-09-16 23:06:36,522 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:36,522 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-16 23:06:36,995 INFO iso15118.shared.comm_session: PowerDeliveryReq received
+2025-09-16 23:06:36,997 INFO iso15118.shared.states: Entered state PowerDelivery
+2025-09-16 23:06:37,354 INFO iso15118.shared.comm_session: Sent PowerDeliveryRes
+2025-09-16 23:06:37,354 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 541 ms
+2025-09-16 23:06:37,355 INFO iso15118.shared.states: Entered state CurrentDemand
+2025-09-16 23:06:37,619 INFO iso15118.shared.comm_session: CurrentDemandReq received
+2025-09-16 23:06:37,684 INFO iso15118.secc.controller.simulator: Send display params to CS.
+2025-09-16 23:06:37,685 INFO hlc: ISO EVSEID
+2025-09-16 23:06:37,921 INFO iso15118.shared.comm_session: Sent CurrentDemandRes
+2025-09-16 23:06:37,922 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 503 ms
+2025-09-16 23:06:37,985 ERROR iso15118.shared.utils: 0 bytes read on a total of 8 expected bytes
+Traceback (most recent call last):
+  File "/home/jpi/Desktop/DC-PLC-Madhurjya/src/iso15118/iso15118/shared/utils.py", line 126, in wait_for_tasks
+    done_task.result()
+  File "/home/jpi/Desktop/DC-PLC-Madhurjya/src/iso15118/iso15118/shared/comm_session.py", line 708, in rcv_loop
+    header = await asyncio.wait_for(self.reader.readexactly(8), eff_timeout)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/asyncio/tasks.py", line 479, in wait_for
+    return fut.result()
+           ^^^^^^^^^^^^
+  File "/usr/lib/python3.11/asyncio/streams.py", line 726, in readexactly
+    raise exceptions.IncompleteReadError(incomplete, n)
+asyncio.exceptions.IncompleteReadError: 0 bytes read on a total of 8 expected bytes
