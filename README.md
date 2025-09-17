@@ -518,6 +518,54 @@ Options:
 - `--payload-hex` or `--size` to define EXI payload content.
 - `--count` and `--interval` to repeat/intersperse traffic.
 
+---
+
+## BMS Snapshot Semantics (Why SoC can be 0/None)
+
+Background
+- The EV only communicates SoC and DC targets during PreCharge/CurrentDemand.
+  Earlier phases (SAP, SessionSetup, ServiceDiscovery, Authorization, CPD) do
+  not carry SoC.
+
+What happened
+- Early state-change logs used to include a `bms` object with placeholder
+  values (null/0.0). If a session ended before PreCharge/CurrentDemand,
+  operators saw zeros and assumed “SoC=0”.
+
+Fixes
+- We now emit `bms` only when it’s meaningful (SoC present or non-zero
+  target voltage/current). Before that, the `bms` key is omitted.
+- Added helper to extract the last valid BMS snapshot:
+  - `python3 scripts/print_bms_snapshot.py /tmp/evse_e2e.jsonl`
+
+How to get a valid snapshot
+- Ensure a DC session proceeds to PreCharge/CurrentDemand.
+- Use the launcher with JSON tee (example):
+  ```bash
+  EVSE_TEE_JSON=/tmp/evse_e2e.jsonl \
+  scripts/start_evse_hal.sh --evse-id INJPSE0006360 --iface eth1 --port /dev/ttyACM0 --adapter esp-uart --json /tmp/evse_e2e.jsonl
+  python3 scripts/print_bms_snapshot.py /tmp/evse_e2e.jsonl
+  ```
+- Bench-only: to simulate EVSE measurements without a DC stage, export
+  `EVSE_SIM_SUPPLY=1` so reported present V/A mirror last setpoints.
+
+---
+
+## Edge Cases We Now Handle
+
+- EV closes HLC TCP immediately: classified as “TCP peer closed connection”
+  with session metrics; no stack traces.
+- Duplicate EV requests: last response auto-resent within a short window.
+- PLC interface readiness and IPv6: launcher ensures link-local and
+  promisc/allmulti on the PLC netdev.
+- Consistent IDs: `EVSE_ID` propagated to both SLAC and ISO; DIN hexBinary
+  derived when needed.
+
+Code references
+- IncompleteRead handling: `src/iso15118/iso15118/shared/comm_session.py:722`
+- Snapshot gating: `src/evse_hal/iso15118_hal_controller.py:580`
+- JSON tee launcher: `scripts/start_evse_hal.sh`
+
 Note: Duplicate‑resend works best when SECC has already sent at least one response in the session (so it has a last response to resend).
 
 ### EVCC Minimal Handshake

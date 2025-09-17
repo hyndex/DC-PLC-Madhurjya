@@ -112,7 +112,7 @@ How to run DC (for BMS/Precharge):
 
 - Verified `eth1` is up and has IPv6 link-local; SECC binds to
   `FF02::1%eth1:15118`.
-- JSON tee path: `/tmp/evse_run.jsonl`.
+- JSON tee path: `/tmp/evse_run.jsonl` (launcher default `/tmp/evse_e2e.jsonl`).
 - Created watchers:
   - `scripts/wait_bms.py`: tails JSON log and writes first HLC BMS
     snapshot to `/tmp/evse_bms_snapshot.json`.
@@ -171,6 +171,46 @@ Conclusion:
 - Pipeline up to SECC READY is good.
 - HLC remains pending on EV behavior. Ensure DC cable (Combo‑2) is used
   and EV is in DC charging mode; confirm any OEM “start charging” UI.
+
+---
+
+## 7.1) Why BMS SoC sometimes shows 0/None; what we changed
+
+Observation:
+- In early runs (ending at ChargeParameterDiscovery), structured logs showed
+  `bms` with `present_soc: null` and `target_voltage/current: 0.0`. This is
+  expected before PreCharge/CurrentDemand (no SoC yet), but it confused ops as
+  “SoC=0”.
+
+Action:
+- Gate `bms` emission until meaningful (SoC present or non-zero targets). For
+  early phases, omit the `bms` key entirely instead of logging placeholders.
+- Add helper to extract the last valid BMS snapshot:
+  `python3 scripts/print_bms_snapshot.py /tmp/evse_e2e.jsonl`.
+
+Bench option:
+- If you need the EV to continue without real DC hardware, export
+  `EVSE_SIM_SUPPLY=1` so `EVSEPresentVoltage/Current` mirror setpoints.
+
+Result:
+- Logs are clearer; no misleading zeros before the EV shares DC data.
+
+---
+
+## 7.2) EV closed TCP immediately; stack trace removed
+
+Observation:
+- When the EV closed the TCP socket immediately after a CL frame, the log showed
+  `IncompleteReadError: 0 bytes read on a total of 8 expected bytes` with a
+  traceback.
+
+Action:
+- Treat `asyncio.IncompleteReadError` as a graceful peer close when no partial
+  bytes were read; report "TCP peer closed connection" and emit session metrics.
+
+Change:
+- `src/iso15118/iso15118/shared/comm_session.py:722` exception handling widened
+  and reason generation improved.
 
 ---
 

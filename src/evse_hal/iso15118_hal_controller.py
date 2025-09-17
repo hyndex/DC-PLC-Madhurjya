@@ -55,6 +55,9 @@ class HalEVSEController(SimEVSEController):
         self._last_set_v: float = 0.0
         self._last_set_i: float = 0.0
         self._last_set_ts: float = time.time()
+        # Last known diagnostic snapshots to avoid confusing placeholder values
+        self._last_bms_snapshot = None
+        self._last_evse_snapshot = None
         # Thermal and dynamic derating support
         self._thermal = ThermalManager()
         self._rated_dc_max_current_a: float = 300.0
@@ -618,15 +621,44 @@ class HalEVSEController(SimEVSEController):
             }
         except Exception:
             evse_snapshot = None
-        logger.info(
-            "ISO15118 state",
-            extra={
-                "state": str(state),
-                "iso_state": state_name,
-                **({"bms": snapshot} if snapshot else {}),
-                **({"evse": evse_snapshot} if evse_snapshot else {}),
-            },
-        )
+        # Decide whether the BMS snapshot is meaningful. Early phases often carry
+        # placeholder zeros (e.g., 0.0 targets, null SoC) which confuse operators.
+        def _bms_valid(s: dict | None) -> bool:
+            if not s:
+                return False
+            try:
+                soc = s.get("present_soc")
+                tv = s.get("target_voltage")
+                ti = s.get("target_current")
+                # Consider it valid once SoC is known or a non-zero target is present
+                if soc is not None:
+                    return True
+                if isinstance(tv, (int, float)) and tv > 0:
+                    return True
+                if isinstance(ti, (int, float)) and ti > 0:
+                    return True
+            except Exception:
+                pass
+            return False
+
+        emit_bms = snapshot if _bms_valid(snapshot) else None
+        if emit_bms:
+            self._last_bms_snapshot = emit_bms
+        # Always cache EVSE snapshot if available
+        if evse_snapshot:
+            self._last_evse_snapshot = evse_snapshot
+
+        # Emit log without placeholder BMS to avoid showing misleading zeros.
+        # When BMS is not yet valid, omit the key entirely.
+        extra = {
+            "state": str(state),
+            "iso_state": state_name,
+        }
+        if emit_bms:
+            extra["bms"] = emit_bms
+        if evse_snapshot:
+            extra["evse"] = evse_snapshot
+        logger.info("ISO15118 state", extra=extra)
         # Publish to HLC manager if available
         try:
             from src.hlc.manager import hlc

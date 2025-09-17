@@ -1,0 +1,163 @@
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"slac_session","msg":"\n\n#################################################\n ###### Starting PySlac version: 0.8.3 #######\n#################################################\n"}
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"util.standards_check","msg":"Timing summary (CCS/ISO 15118)"}
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"util.standards_check","msg":"SLAC: init_timeout=50.000s, atten_results_timeout=EV-defined (<=1200ms)"}
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"util.standards_check","msg":"ISO15118 Shared: SDP_REQ=0.250s, SAP_REQ=2.000s, COMM_SETUP=20.000s, SEQ_TO=60.000s, ONGOING=60.000s"}
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"util.standards_check","msg":"ISO15118-2: SESSION_SETUP=2.000s, SERVICE_DISCOVERY=2.000s, CPD=2.000s, CURRENT_DEMAND=0.250s"}
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"util.standards_check","msg":"ISO15118-20: COMM_SETUP=20.000s, SEQ_TO=60.000s, AC_CL=0.500s, DC_CL=0.500s"}
+{"ts":"2025-09-17T22:07:40","level":"DEBUG","name":"asyncio","msg":"Using selector: EpollSelector"}
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"esp.cp","msg":"ESP CP serial connect","port":"/dev/ttyACM0","baud":115200}
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"hal.esp","msg":"HAL ESP ping","ok":true}
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"hal.esp","msg":"HAL ESP set_mode(dc)"}
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"evse.main","msg":"HAL mode: waiting for CP states to start SLAC","adapter":"esp-uart"}
+{"ts":"2025-09-17T22:07:40","level":"DEBUG","name":"evse.main","msg":"CP transition","from":null,"to":"B"}
+{"ts":"2025-09-17T22:07:40","level":"INFO","name":"evse.main","msg":"Vehicle detected via CP","cp_state":"B"}
+{"ts":"2025-09-17T22:07:40","level":"DEBUG","name":"slac_session","msg":"Session created for evse_id INJPSE0006360 on interface eth1"}
+{"ts":"2025-09-17T22:07:41","level":"INFO","name":"slac_session","msg":"CM_SET_KEY: Started..."}
+{"ts":"2025-09-17T22:07:41","level":"DEBUG","name":"slac_session","msg":"New NMK: b'765a01d37ad95fb2bafe4adfb6d43b86'"}
+{"ts":"2025-09-17T22:07:41","level":"DEBUG","name":"slac_session","msg":"New NID: b'3a62c2d0b79b01'"}
+{"ts":"2025-09-17T22:07:41","level":"DEBUG","name":"slac_session","msg":"Registering NMK and NID into the PLC node..."}
+{"ts":"2025-09-17T22:07:51","level":"INFO","name":"slac_session","msg":"CM_SET_KEY: Finished!"}
+{"ts":"2025-09-17T22:07:51","level":"INFO","name":"evse.main","msg":"CM_SET_KEY succeeded"}
+{"ts":"2025-09-17T22:07:51","level":"DEBUG","name":"slac_session","msg":"CP State Received: B"}
+{"ts":"2025-09-17T22:07:51","level":"DEBUG","name":"slac_session","msg":"CM_SLAC_PARM: Started..."}
+{"ts":"2025-09-17T22:07:57","level":"INFO","name":"hal.esp","msg":"HAL ESP SLAC restart hint (fw) sent","reset_ms":400}
+{"ts":"2025-09-17T22:07:57","level":"INFO","name":"evse.main","msg":"HAL SLAC proactive nudge","reset_ms":400,"cp_mode":"dc"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Sent SLAC_PARM.CNF"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"CM_SLAC_PARM: Finished!"}
+{"ts":"2025-09-17T22:08:02","level":"INFO","name":"slac_session","msg":"Matching ongoing (EVSE ID: INJPSE0006360. Run ID: b'\\xf5\\xea\\xe3\\x7f\\xb4o\\xaeb')."}
+{"ts":"2025-09-17T22:08:02","level":"INFO","name":"evse.main","msg":"SLAC matching in progress for INJPSE0006360"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"CM_START_ATTEN_CHAR: Started..."}
+{"ts":"2025-09-17T22:08:02","level":"INFO","name":"evse.main","msg":"SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=3a:62:c2:d0:b7:9b:01 run_id=f5:ea:e3:7f:b4:6f:ae:62"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"evse.main","msg":"SLAC peer info (extra)","ev_mac":"38:1f:26:33:9d:b0","nid":"3a:62:c2:d0:b7:9b:01","run_id":"f5:ea:e3:7f:b4:6f:ae:62"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"CM_START_ATTEN_CHAR: Finished!"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"CM_MNBC_SOUND: Started..."}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"MNBC Sound received"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Remaining number of sounds: 9"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"ATTEN_Profile Sounds received 1"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 1 / Num expected: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"MNBC Sound received"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Remaining number of sounds: 8"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"ATTEN_Profile Sounds received 2"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 2 / Num expected: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"MNBC Sound received"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Remaining number of sounds: 7"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"ATTEN_Profile Sounds received 3"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 3 / Num expected: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"MNBC Sound received"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Remaining number of sounds: 6"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"ATTEN_Profile Sounds received 4"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 4 / Num expected: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"MNBC Sound received"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Remaining number of sounds: 5"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"ATTEN_Profile Sounds received 5"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 5 / Num expected: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"MNBC Sound received"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Remaining number of sounds: 4"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"ATTEN_Profile Sounds received 6"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 6 / Num expected: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"MNBC Sound received"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Remaining number of sounds: 3"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"ATTEN_Profile Sounds received 7"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 7 / Num expected: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"MNBC Sound received"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Remaining number of sounds: 2"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"ATTEN_Profile Sounds received 8"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 8 / Num expected: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"MNBC Sound received"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Remaining number of sounds: 1"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"ATTEN_Profile Sounds received 9"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 9 / Num expected: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"MNBC Sound received"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Remaining number of sounds: 0"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"ATTEN_Profile Sounds received 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 10 / Num expected: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"CM_MNBC_SOUND: Finished!"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"CM_ATTEN_CHAR Started..."}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Payload Received: \n b'9e94590190b3381f26339db088e1016f6000000000381f26339db0f5eae37fb46fae620000000000000000000000000000000000000000000000000000000000000000000000'"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"CM_ATTEN_CHAR: Finished!"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num sounds received 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num total sounds: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"Num expected sounds: 10"}
+{"ts":"2025-09-17T22:08:02","level":"DEBUG","name":"slac_session","msg":"CM_SLAC_MATCH: Started..."}
+{"ts":"2025-09-17T22:08:03","level":"DEBUG","name":"slac_session","msg":"Payload Received: \n b'9e94590190b3381f26339db088e1017c60000000003e000000000000000000000000000000000000381f26339db000000000000000000000000000000000009e94590190b3f5eae37fb46fae620000000000000000'"}
+{"ts":"2025-09-17T22:08:03","level":"DEBUG","name":"slac_session","msg":"CM_SLAC_MATCH: Finished!"}
+{"ts":"2025-09-17T22:08:03","level":"INFO","name":"slac_session","msg":"PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: INJPSE0006360. Run ID: b'\\xf5\\xea\\xe3\\x7f\\xb4o\\xaeb')."}
+{"ts":"2025-09-17T22:08:03","level":"INFO","name":"evse.main","msg":"SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=3a:62:c2:d0:b7:9b:01 run_id=f5:ea:e3:7f:b4:6f:ae:62"}
+{"ts":"2025-09-17T22:08:03","level":"DEBUG","name":"evse.main","msg":"SLAC peer info (extra)","ev_mac":"38:1f:26:33:9d:b0","nid":"3a:62:c2:d0:b7:9b:01","run_id":"f5:ea:e3:7f:b4:6f:ae:62"}
+{"ts":"2025-09-17T22:08:03","level":"INFO","name":"evse.main","msg":"Launching ISO 15118 SECC"}
+{"ts":"2025-09-17T22:08:03","level":"INFO","name":"evse.main","msg":"EVSE controller=hal","adapter":"esp-uart"}
+{"ts":"2025-09-17T22:08:03","level":"DEBUG","name":"iso15118.secc.controller.simulator","msg":"New Status: ServiceStatus.STARTING"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.shared.exi_codec","msg":"EXI Codec version: 1.55"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.shared.exi_codec","msg":"EXI Codec version: 1.55"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.secc","msg":"Starting 15118 version: 0.31.0"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.secc.comm_session_handler","msg":"Communication session handler started"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.secc.transport.udp_server","msg":"UDP server socket ready"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.secc.transport.udp_server","msg":"UDP server started at address FF02::1%eth1 and port 15118"}
+{"ts":"2025-09-17T22:08:10","level":"DEBUG","name":"iso15118.secc.controller.simulator","msg":"New Status: ServiceStatus.READY"}
+{"ts":"2025-09-17T22:08:10","level":"DEBUG","name":"iso15118.secc.transport.udp_server","msg":"Message received from ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 3): 01fe9000000000021000"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.secc.comm_session_handler","msg":"SDPRequest received: [Security: NO_TLS, Protocol: TCP]"}
+{"ts":"2025-09-17T22:08:10","level":"DEBUG","name":"iso15118.secc.transport.tcp_server","msg":"TCP bind resolve: host=fe80::9c94:59ff:fe01:90b3 scope_id=3 port=56529 iface=eth1"}
+{"ts":"2025-09-17T22:08:10","level":"DEBUG","name":"iso15118.secc.transport.tcp_server","msg":"TCP bind attempt 1/3 on fe80::9c94:59ff:fe01:90b3%eth1:56529"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.secc.transport.tcp_server","msg":"TCP bind succeeded on fe80::9c94:59ff:fe01:90b3%eth1:56529"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.secc.transport.tcp_server","msg":"TCP server started at address fe80::9c94:59ff:fe01:90b3%eth1 and port 56529"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.secc.comm_session_handler","msg":"Sending SDPResponse: [ IP address: fe80::9c94:59ff:fe01:90b3, Port: 56529 , Security: NO_TLS , Transport: TCP ]"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.secc.transport.udp_server","msg":"UDP server has been paused."}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.secc.comm_session_handler","msg":"TCP client connected, client address is ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 3)."}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"hlc","msg":"ISO EVSEID","evse_id":"INJPSE0006360"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.shared.comm_session","msg":"Starting a new communication session"}
+{"ts":"2025-09-17T22:08:10","level":"INFO","name":"iso15118.shared.states","msg":"Entered state SupportedAppProtocol"}
+{"ts":"2025-09-17T22:08:10","level":"DEBUG","name":"iso15118.shared.states","msg":"Waiting for up to Timeouts.V2G_EVCC_COMMUNICATION_SETUP_TIMEOUT s"}
+{"ts":"2025-09-17T22:08:11","level":"INFO","name":"iso15118.shared.comm_session","msg":"supportedAppProtocolReq received"}
+{"ts":"2025-09-17T22:08:11","level":"INFO","name":"iso15118.secc.states.sap_states","msg":"Chosen protocol: DIN_SPEC_70121"}
+{"ts":"2025-09-17T22:08:11","level":"INFO","name":"iso15118.shared.comm_session","msg":"Sent supportedAppProtocolRes"}
+{"ts":"2025-09-17T22:08:11","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"iso15118 state: SupportedAppProtocol"}
+{"ts":"2025-09-17T22:08:11","level":"INFO","name":"hlc","msg":"ISO15118 state","state":"SupportedAppProtocol","iso_state":"SupportedAppProtocol","bms":{"present_soc":null,"present_voltage":null,"target_voltage":0.0,"target_current":0.0,"max_current_limit":null,"max_charge_current":null,"max_voltage":null,"evcc_id":null},"evse":{"present_voltage":1,"present_current":1,"set_voltage":0.0,"set_current":0.0,"rated_max_current":300.0,"rated_max_voltage":920.0}}
+{"ts":"2025-09-17T22:08:11","level":"INFO","name":"iso15118.shared.states","msg":"Entered state SessionSetup"}
+{"ts":"2025-09-17T22:08:11","level":"DEBUG","name":"iso15118.shared.states","msg":"Waiting for up to Timeouts.V2G_EVCC_COMMUNICATIONSETUP_TIMEOUT s"}
+{"ts":"2025-09-17T22:08:11","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"iso15118 state: SessionSetup"}
+{"ts":"2025-09-17T22:08:11","level":"INFO","name":"hlc","msg":"ISO15118 state","state":"SessionSetup","iso_state":"SessionSetup","bms":{"present_soc":null,"present_voltage":null,"target_voltage":0.0,"target_current":0.0,"max_current_limit":null,"max_charge_current":null,"max_voltage":null,"evcc_id":null},"evse":{"present_voltage":1,"present_current":1,"set_voltage":0.0,"set_current":0.0,"rated_max_current":300.0,"rated_max_voltage":920.0}}
+{"ts":"2025-09-17T22:08:12","level":"INFO","name":"iso15118.shared.comm_session","msg":"SessionSetupReq received"}
+{"ts":"2025-09-17T22:08:12","level":"INFO","name":"hlc","msg":"DIN EVSEID derived from ASCII (hexBinary)","raw":"INJPSE0006360","evse_id_din_hex":"494E4A50534530303036333630"}
+{"ts":"2025-09-17T22:08:13","level":"INFO","name":"iso15118.shared.comm_session","msg":"Sent SessionSetupRes"}
+{"ts":"2025-09-17T22:08:13","level":"WARNING","name":"iso15118.shared.comm_session","msg":"Charge-loop processing latency high: 1849 ms"}
+{"ts":"2025-09-17T22:08:13","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"iso15118 state: SessionSetup"}
+{"ts":"2025-09-17T22:08:13","level":"INFO","name":"hlc","msg":"ISO15118 state","state":"SessionSetup","iso_state":"SessionSetup","bms":{"present_soc":null,"present_voltage":null,"target_voltage":0.0,"target_current":0.0,"max_current_limit":null,"max_charge_current":null,"max_voltage":null,"evcc_id":"381F26339DB0"},"evse":{"present_voltage":1,"present_current":1,"set_voltage":0.0,"set_current":0.0,"rated_max_current":300.0,"rated_max_voltage":920.0}}
+{"ts":"2025-09-17T22:08:13","level":"INFO","name":"iso15118.shared.states","msg":"Entered state ServiceDiscovery"}
+{"ts":"2025-09-17T22:08:13","level":"DEBUG","name":"iso15118.shared.states","msg":"Waiting for up to Timeouts.V2G_SECC_SEQUENCE_TIMEOUT s"}
+{"ts":"2025-09-17T22:08:13","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"iso15118 state: ServiceDiscovery"}
+{"ts":"2025-09-17T22:08:13","level":"INFO","name":"hlc","msg":"ISO15118 state","state":"ServiceDiscovery","iso_state":"ServiceDiscovery","bms":{"present_soc":null,"present_voltage":null,"target_voltage":0.0,"target_current":0.0,"max_current_limit":null,"max_charge_current":null,"max_voltage":null,"evcc_id":"381F26339DB0"},"evse":{"present_voltage":1,"present_current":1,"set_voltage":0.0,"set_current":0.0,"rated_max_current":300.0,"rated_max_voltage":920.0}}
+{"ts":"2025-09-17T22:08:13","level":"INFO","name":"iso15118.shared.comm_session","msg":"ServiceDiscoveryReq received"}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"iso15118.shared.comm_session","msg":"Sent ServiceDiscoveryRes"}
+{"ts":"2025-09-17T22:08:14","level":"WARNING","name":"iso15118.shared.comm_session","msg":"Charge-loop processing latency high: 1018 ms"}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"iso15118 state: ServiceDiscovery"}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"hlc","msg":"ISO15118 state","state":"ServiceDiscovery","iso_state":"ServiceDiscovery","bms":{"present_soc":null,"present_voltage":null,"target_voltage":0.0,"target_current":0.0,"max_current_limit":null,"max_charge_current":null,"max_voltage":null,"evcc_id":"381F26339DB0"},"evse":{"present_voltage":1,"present_current":1,"set_voltage":0.0,"set_current":0.0,"rated_max_current":300.0,"rated_max_voltage":920.0}}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"iso15118.shared.states","msg":"Entered state ServicePaymentSelection"}
+{"ts":"2025-09-17T22:08:14","level":"DEBUG","name":"iso15118.shared.states","msg":"Waiting for up to Timeouts.V2G_SECC_SEQUENCE_TIMEOUT s"}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"iso15118 state: ServicePaymentSelection"}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"hlc","msg":"ISO15118 state","state":"ServicePaymentSelection","iso_state":"ServicePaymentSelection","bms":{"present_soc":null,"present_voltage":null,"target_voltage":0.0,"target_current":0.0,"max_current_limit":null,"max_charge_current":null,"max_voltage":null,"evcc_id":"381F26339DB0"},"evse":{"present_voltage":1,"present_current":1,"set_voltage":0.0,"set_current":0.0,"rated_max_current":300.0,"rated_max_voltage":920.0}}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"iso15118.shared.comm_session","msg":"ServicePaymentSelectionReq received"}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"iso15118.shared.comm_session","msg":"Sent ServicePaymentSelectionRes"}
+{"ts":"2025-09-17T22:08:14","level":"WARNING","name":"iso15118.shared.comm_session","msg":"Charge-loop processing latency high: 655 ms"}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"iso15118 state: ServicePaymentSelection"}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"hlc","msg":"ISO15118 state","state":"ServicePaymentSelection","iso_state":"ServicePaymentSelection","bms":{"present_soc":null,"present_voltage":null,"target_voltage":0.0,"target_current":0.0,"max_current_limit":null,"max_charge_current":null,"max_voltage":null,"evcc_id":"381F26339DB0"},"evse":{"present_voltage":1,"present_current":1,"set_voltage":0.0,"set_current":0.0,"rated_max_current":300.0,"rated_max_voltage":920.0}}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"iso15118.shared.states","msg":"Entered state ContractAuthentication"}
+{"ts":"2025-09-17T22:08:14","level":"DEBUG","name":"iso15118.shared.states","msg":"Waiting for up to Timeouts.V2G_SECC_SEQUENCE_TIMEOUT s"}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"iso15118 state: ContractAuthentication"}
+{"ts":"2025-09-17T22:08:14","level":"INFO","name":"hlc","msg":"ISO15118 state","state":"ContractAuthentication","iso_state":"ContractAuthentication","bms":{"present_soc":null,"present_voltage":null,"target_voltage":0.0,"target_current":0.0,"max_current_limit":null,"max_charge_current":null,"max_voltage":null,"evcc_id":"381F26339DB0"},"evse":{"present_voltage":1,"present_current":1,"set_voltage":0.0,"set_current":0.0,"rated_max_current":300.0,"rated_max_voltage":920.0}}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"iso15118.shared.comm_session","msg":"ContractAuthenticationReq received"}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"iso15118.shared.comm_session","msg":"Sent ContractAuthenticationRes"}
+{"ts":"2025-09-17T22:08:15","level":"WARNING","name":"iso15118.shared.comm_session","msg":"Charge-loop processing latency high: 645 ms"}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"iso15118 state: ContractAuthentication"}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"hlc","msg":"ISO15118 state","state":"ContractAuthentication","iso_state":"ContractAuthentication","bms":{"present_soc":null,"present_voltage":null,"target_voltage":0.0,"target_current":0.0,"max_current_limit":null,"max_charge_current":null,"max_voltage":null,"evcc_id":"381F26339DB0"},"evse":{"present_voltage":1,"present_current":1,"set_voltage":0.0,"set_current":0.0,"rated_max_current":300.0,"rated_max_voltage":920.0}}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"iso15118.shared.states","msg":"Entered state ChargeParameterDiscovery"}
+{"ts":"2025-09-17T22:08:15","level":"DEBUG","name":"iso15118.shared.states","msg":"Waiting for up to Timeouts.V2G_SECC_SEQUENCE_TIMEOUT s"}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"iso15118 state: ChargeParameterDiscovery"}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"hlc","msg":"ISO15118 state","state":"ChargeParameterDiscovery","iso_state":"ChargeParameterDiscovery","bms":{"present_soc":null,"present_voltage":null,"target_voltage":0.0,"target_current":0.0,"max_current_limit":null,"max_charge_current":null,"max_voltage":null,"evcc_id":"381F26339DB0"},"evse":{"present_voltage":1,"present_current":1,"set_voltage":0.0,"set_current":0.0,"rated_max_current":300.0,"rated_max_voltage":920.0}}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"iso15118.shared.comm_session","msg":"The data link will SessionStopAction.TERMINATE in 2 seconds and the TCP connection will close in 5 seconds. "}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"iso15118.shared.comm_session","msg":"Reason: TCP peer closed connection"}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"iso15118.shared.comm_session","msg":"v2g_metrics: {\"type\": \"v2g_session_metrics\", \"session_id\": \"82BC2B802318AB15\", \"peer\": \"('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 3)\", \"protocol\": \"DIN_SPEC_70121\", \"successful\": false, \"reason\": \"TCP peer closed connection\", \"rx_decode_errors\": 0, \"rx_validation_errors\": 0, \"rx_invalid_v2gtp\": 0, \"dup_resent_count\": 0, \"dup_resend_enabled\": true, \"dup_window_s\": 2.0, \"dup_resend_max\": 3, \"tx_drop_prob\": 0.0}"}
+{"ts":"2025-09-17T22:08:15","level":"WARNING","name":"iso15118.secc.transport.tcp_server","msg":"Closing TCP server"}
+{"ts":"2025-09-17T22:08:15","level":"INFO","name":"iso15118.secc.transport.udp_server","msg":"UDP server has been resumed."}
+{"ts":"2025-09-17T22:08:17","level":"INFO","name":"iso15118.secc.controller.simulator","msg":"Session ended in ChargeParameterDiscovery (TCP peer closed connection)."}
+{"ts":"2025-09-17T22:08:17","level":"INFO","name":"iso15118.shared.comm_session","msg":"SessionStopAction.TERMINATEd the data link"}
+{"ts":"2025-09-17T22:08:20","level":"INFO","name":"iso15118.shared.comm_session","msg":"TCP connection closed to peer with address ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 3)"}
