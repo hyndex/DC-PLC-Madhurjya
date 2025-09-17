@@ -444,3 +444,65 @@ Artifacts and helpers added in this work
 
 Open item
 - EV closed TCP shortly after first CurrentDemand; collect BMS snapshot and CP monitor traces to decide if this is power‑stage behavior, EV expectation mismatch, or a transient CP event.
+
+---
+
+## 16) BMS Snapshot Logging Fix + End‑to‑End Capture (Sep 17, 2025)
+
+Symptom
+- Despite reaching `CurrentDemand`, the JSON log did not contain structured `"name":"hlc","msg":"ISO15118 state"` lines with `bms{}`/`evse{}` fields, so `wait_bms.py` never produced `/tmp/evse_bms_snapshot.json`.
+
+Root cause
+- The SECC’s session state machine only updated observers (EVSE controller) under a narrow path; on some transitions, the state notification wasn’t emitted, so the HAL controller couldn’t log the consolidated `ISO15118 state` snapshot.
+
+Fix
+- Always notify the EVSE controller of the present protocol state after each message is processed.
+- File: `src/iso15118/iso15118/shared/comm_session.py`
+- Change: move the `await self._update_state_info(self.current_state)` out of the logging exception path so it always runs.
+
+Effect
+- On every state transition, a structured JSON line is logged (logger `hlc`, `msg="ISO15118 state"`) including:
+  - `iso_state` (e.g., CableCheck, PreCharge, CurrentDemand)
+  - `bms`: `present_soc`, `present_voltage`, `target_voltage`, `target_current`, session limits (e.g., `max_current_limit`)
+  - `evse`: measured voltage/current and last commanded setpoints
+- `scripts/wait_bms.py` now finds the first such entry and writes `/tmp/evse_bms_snapshot.json` automatically.
+
+How to capture the snapshot
+```bash
+# Environment
+export EVSE_ID=INJPSE0006360
+export PLC_IFACE=eth1
+export ESP_CP_PORT=/dev/ttyACM0
+export SECC_CONFIG_PATH=$PWD/secc.env
+export SLAC_CONFIG_PATH=$PWD/slac.env
+export EVSE_CP_HOST_HINTS=1
+export EVSE_HAL_ADAPTER=esp-uart   # or esp-periph
+export EVSE_LOG_FORMAT=json
+export EVSE_LOG_FILE=/tmp/evse_run.jsonl
+
+# Launch
+scripts/start_evse_hal.sh --evse-id "$EVSE_ID" --iface "$PLC_IFACE" --port "$ESP_CP_PORT" --adapter "$EVSE_HAL_ADAPTER" &
+
+# Wait for BMS snapshot
+python scripts/wait_bms.py --log /tmp/evse_run.jsonl --timeout 120 && cat /tmp/evse_bms_snapshot.json
+```
+
+Automated wrapper
+```bash
+EVSE_TEE_JSON=/tmp/evse_run.jsonl \
+scripts/run_until_bms.sh --evse-id "$EVSE_ID" --iface "$PLC_IFACE" --port "$ESP_CP_PORT" --adapter "$EVSE_HAL_ADAPTER" --attempts 2 --run-secs 220
+```
+
+DIN/bench fallback (if contactor AUX or DC stage isn’t finalized)
+- Temporarily simulate contactor closure to carry HLC through CableCheck → CurrentDemand:
+  ```bash
+  export EVSE_HAL_ADAPTER=esp-periph
+  export ESP_PERIPH_PORT=/dev/ttyACM0
+  export EVSE_SIM_CONTACTOR=1
+  ```
+  Then rerun the launcher and capture the snapshot as above.
+
+Current status
+- SLAC and HLC consistently reach `CurrentDemand`.
+- EV occasionally drops TCP right after first CurrentDemand; structured `ISO15118 state` logging is in place to capture the targets/measured values for analysis.
+- Next step: use the captured snapshot to compare EV targets vs EVSE delivery and correlate with CP/contactor events.

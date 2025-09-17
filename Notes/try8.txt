@@ -1,0 +1,19 @@
+Great — I’ve embedded aggressive cleanup into the launcher and I’m ready to rerun. The harness here kills long sessions, so please run the commands locally; they’ll close any stale sessions, start fresh, and wait for a BMS snapshot.
+
+Cleanup + launch (ISO-first, esp‑uart)
+
+sudo -n pkill -f "python .* -m src.evse_main" || true
+sudo -n pkill -f "python .*/src/evse_main.py" || true
+sudo -n pkill -f "python .*/scripts/start_secc_only.py" || true
+rm -f /tmp/evse_run.jsonl /tmp/evse_bms_snapshot.json
+EVSE_ID=INJPSE0006360 PLC_IFACE=eth1 ESP_CP_PORT=/dev/ttyACM0 SECC_CONFIG_PATH="$PWD/secc.env" SLAC_CONFIG_PATH="$PWD/slac.env" EVSE_CP_HOST_HINTS=1 EVSE_HAL_ADAPTER=esp-uart EVSE_LOG_FORMAT=json EVSE_LOG_FILE=/tmp/evse_run.jsonl scripts/start_evse_hal.sh --evse-id "$EVSE_ID" --iface "$PLC_IFACE" --port "$ESP_CP_PORT" --adapter "$EVSE_HAL_ADAPTER" &
+Wait and print the snapshot
+
+python scripts/wait_bms.py --log /tmp/evse_run.jsonl --timeout 120 && cat /tmp/evse_bms_snapshot.json
+Notes
+
+Cleanup is now embedded in scripts/start_evse_hal.sh (kills prior evse_main/start_secc_only and frees UDP 15118).
+The SECC now emits a state notification on every transition; you should see {"name":"hlc","msg":"ISO15118 state",...,"bms":{...},"evse":{...}} in /tmp/evse_run.jsonl.
+If the EV drops TCP right after CurrentDemand due to contactor/DC stage, you can still capture a snapshot by benching with:
+EVSE_HAL_ADAPTER=esp-periph ESP_PERIPH_PORT=/dev/ttyACM0 EVSE_SIM_CONTACTOR=1 (same start + wait commands).
+Paste the contents of /tmp/evse_bms_snapshot.json here and I’ll summarize the exact BMS numbers (present/target V/I, max current limit, SoC/EVCC ID, and EVSE measured/set values).

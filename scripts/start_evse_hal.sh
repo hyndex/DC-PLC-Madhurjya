@@ -171,12 +171,15 @@ fi
 # Optional: cleanup any previous EVSE/SECC process to avoid port conflicts
 if [[ "${EVSE_CLEANUP_PREV}" != "0" ]]; then
 echo "[start-evse-hal] Cleaning up previous runs (if any) ..."
-  # Kill Python invocations of src.evse_main
+  # Kill Python invocations of src.evse_main (both -m and script path styles)
   pids=$(pgrep -f "python .* -m src.evse_main" || true)
-  if [[ -n "$pids" ]]; then
-    sudo -n kill -TERM $pids 2>/dev/null || true
+  pids_alt=$(pgrep -f "python .*/src/evse_main.py" || true)
+  pids_secc=$(pgrep -f "python .*/scripts/start_secc_only.py" || true)
+  allpids="${pids} ${pids_alt} ${pids_secc}"
+  if [[ -n "${allpids// }" ]]; then
+    sudo -n kill -TERM ${allpids} 2>/dev/null || true
     sleep 0.2
-    sudo -n kill -KILL $pids 2>/dev/null || true
+    sudo -n kill -KILL ${allpids} 2>/dev/null || true
   fi
   # Free UDP 15118 listener
   if sudo -n ss -ulpn 2>/dev/null | grep -q "*:15118"; then

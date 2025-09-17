@@ -156,6 +156,43 @@ python scripts/wait_bms.py --log /tmp/evse_e2e.jsonl --timeout 0
 cat /tmp/evse_bms_snapshot.json
 ```
 
+### BMS Snapshot Capture (End‑to‑End)
+
+To persist a one‑line JSON snapshot of the EV’s BMS targets (and EVSE measured/set values) once CurrentDemand starts:
+
+- Use JSON logs or a JSON tee and launch in HAL mode:
+  ```bash
+  export EVSE_ID=INJPSE0006360
+  export PLC_IFACE=eth1
+  export ESP_CP_PORT=/dev/ttyACM0
+  export SECC_CONFIG_PATH=$PWD/secc.env
+  export SLAC_CONFIG_PATH=$PWD/slac.env
+  export EVSE_CP_HOST_HINTS=1
+  export EVSE_HAL_ADAPTER=esp-uart       # or esp-periph
+  export EVSE_LOG_FORMAT=json
+  export EVSE_LOG_FILE=/tmp/evse_run.jsonl
+  scripts/start_evse_hal.sh --evse-id "$EVSE_ID" --iface "$PLC_IFACE" --port "$ESP_CP_PORT" --adapter "$EVSE_HAL_ADAPTER"
+  ```
+- In another terminal, wait for the snapshot and print it:
+  ```bash
+  python scripts/wait_bms.py --log /tmp/evse_run.jsonl --timeout 120 && cat /tmp/evse_bms_snapshot.json
+  ```
+
+If you prefer a wrapper that auto‑stops when the snapshot appears, use `scripts/run_until_bms.sh`, e.g.:
+
+```bash
+EVSE_TEE_JSON=/tmp/evse_run.jsonl \
+scripts/run_until_bms.sh --evse-id "$EVSE_ID" --iface "$PLC_IFACE" --port "$ESP_CP_PORT" --adapter "$EVSE_HAL_ADAPTER" --attempts 2 --run-secs 220
+```
+
+Expected snapshot fields:
+- `bms.present_voltage`, `bms.target_voltage`, `bms.target_current`, `bms.max_current_limit`, `bms.evcc_id`
+- `evse.present_voltage`, `evse.present_current`, `evse.set_voltage`, `evse.set_current`, `evse.rated_max_current`, `evse.rated_max_voltage`
+
+Troubleshooting when snapshot does not appear:
+- Ensure you’re on the current code: the SECC session now always emits a state notification that the HAL logs as `"name":"hlc","msg":"ISO15118 state"` lines. These carry the `bms` and `evse` objects. If you do not see them, rebuild/restart.
+- If the EV disconnects right after the first CurrentDemand, verify contactor/AUX and DC stage behavior (voltage/current tracking). You can temporarily set `EVSE_SIM_CONTACTOR=1` (with `esp-periph`) for bench verification.
+
 ### Troubleshooting QCA7000 (qcaspi)
 
 - Health check: `bash scripts/qca_health.sh` (shows driver, overlay, dmesg, iface stats)
