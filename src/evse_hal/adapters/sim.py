@@ -128,3 +128,7 @@ class SimHardware(EVSEHardware):
     # Optional cable lock API for HAL consumers
     def cable_lock(self) -> CableLockSim:
         return self._lock
+
+    def close(self) -> None:
+        """Simulation backend keeps no external handles."""
+        return

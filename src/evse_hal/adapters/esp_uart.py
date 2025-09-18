@@ -224,3 +224,13 @@ class ESPSerialHardware(EVSEHardware):
             except Exception:
                 pass
         logger.info("HAL ESP AC HLC nudge", extra={"reset_ms": reset_ms, "restore_duty": prev_duty})
+
+    def close(self) -> None:
+        try:
+            self._client.close()
+        except Exception:
+            pass
+        try:
+            self._fallback.close()
+        except Exception:
+            pass

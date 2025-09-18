@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import fcntl
 import logging
 import os
 import sys
@@ -69,18 +70,64 @@ from iso15118.secc.secc_settings import Config as SeccConfig
 from iso15118.secc.controller.simulator import SimEVSEController
 from iso15118.secc.controller.interface import ServiceStatus
 from iso15118.secc import SECCHandler
-from iso15118.shared.exi_codec import ExificientEXICodec, EXI
-from iso15118.shared.messages.app_protocol import (
-    SupportedAppProtocolRes,
-    ResponseCodeSAP,
-)
-from iso15118.shared.messages.enums import Namespace
-from iso15118.shared.messages.iso15118_2.body import SessionSetupRes
-from iso15118.shared.messages.iso15118_2.header import MessageHeader
-from iso15118.shared.messages.iso15118_2.msgdef import V2GMessage as V2GMessageV2
-from iso15118.shared.messages.din_spec.body import SessionSetupRes as SessionSetupResDIN
-from iso15118.shared.messages.din_spec.header import MessageHeader as MessageHeaderDIN
-from iso15118.shared.messages.din_spec.msgdef import V2GMessage as V2GMessageDIN
+try:
+    from iso15118.shared.exi_codec import ExificientEXICodec, EXI
+except ImportError:  # pragma: no cover - allow minimal stubs for unit tests
+    from iso15118.shared.exi_codec import ExificientEXICodec  # type: ignore
+
+    class _DummyEXI:
+        def set_exi_codec(self, _codec) -> None:
+            return None
+
+        def to_exi(self, *_args, **_kwargs):
+            return b""
+
+    def EXI():  # type: ignore
+        return _DummyEXI()
+try:
+    from iso15118.shared.messages.app_protocol import (
+        SupportedAppProtocolRes,
+        ResponseCodeSAP,
+    )
+    from iso15118.shared.messages.enums import Namespace
+    from iso15118.shared.messages.iso15118_2.body import SessionSetupRes
+    from iso15118.shared.messages.iso15118_2.header import MessageHeader
+    from iso15118.shared.messages.iso15118_2.msgdef import V2GMessage as V2GMessageV2
+    from iso15118.shared.messages.din_spec.body import SessionSetupRes as SessionSetupResDIN
+    from iso15118.shared.messages.din_spec.header import MessageHeader as MessageHeaderDIN
+    from iso15118.shared.messages.din_spec.msgdef import V2GMessage as V2GMessageDIN
+except Exception:  # pragma: no cover - minimal placeholders for unit tests
+    class ResponseCodeSAP(str):
+        NEGOTIATION_OK = "NEGOTIATION_OK"
+
+    class SupportedAppProtocolRes:  # type: ignore
+        def __init__(self, response_code: str, schema_id: int):
+            self.response_code = response_code
+            self.schema_id = schema_id
+
+    class Namespace(str):
+        SAP = "SAP"
+        ISO_V2_MSG_DEF = "ISO_V2_MSG_DEF"
+        DIN_MSG_DEF = "DIN_MSG_DEF"
+
+    class SessionSetupRes:  # type: ignore
+        def __init__(self, evse_id: str):
+            self.evse_id = evse_id
+
+    class MessageHeader:  # type: ignore
+        def __init__(self, session_id: str):
+            self.session_id = session_id
+
+    class V2GMessageV2:  # type: ignore
+        def __init__(self, header: MessageHeader, body: dict):
+            self.header = header
+            self.body = body
+
+    SessionSetupResDIN = SessionSetupRes  # type: ignore
+    MessageHeaderDIN = MessageHeader  # type: ignore
+
+    class V2GMessageDIN(V2GMessageV2):  # type: ignore
+        pass
 try:
     from util.standards_check import log_timing_summary
 except Exception:
@@ -89,6 +136,80 @@ except Exception:
 
 
 logger = logging.getLogger("evse.main")
+
+
+def _acquire_process_lock(lock_path: Optional[str] = None):
+    """Ensure a single EVSE process instance holds the lock."""
+    target = Path(lock_path or os.environ.get("EVSE_LOCK_PATH", "/tmp/evse_main.lock"))
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    fp = open(target, "w")
+    try:
+        fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        fp.close()
+        raise RuntimeError(
+            f"Another EVSE instance appears to be running (lock file: {target})."
+        ) from exc
+    fp.write(f"{os.getpid()}\n")
+    fp.flush()
+    return fp
+
+
+def _release_process_lock(fp) -> None:
+    if not fp:
+        return
+    try:
+        fcntl.flock(fp.fileno(), fcntl.LOCK_UN)
+    except Exception:
+        pass
+    try:
+        fp.close()
+    except Exception:
+        pass
+
+
+def _resolve_iface_driver_name(iface: str) -> Optional[str]:
+    try:
+        driver_link = Path("/sys/class/net") / iface / "device" / "driver"
+        if not driver_link.exists():
+            return None
+        return driver_link.resolve().name
+    except Exception:
+        return None
+
+
+def _has_ipv6_link_local(iface: str) -> bool:
+    try:
+        with open("/proc/net/if_inet6", "r", encoding="utf-8") as fd:
+            for line in fd:
+                parts = line.split()
+                if len(parts) >= 6 and parts[5] == iface and parts[0].startswith("fe80"):
+                    return True
+    except FileNotFoundError:
+        pass
+    return False
+
+
+def _log_plc_interface_health(iface: str) -> None:
+    driver = _resolve_iface_driver_name(iface)
+    if driver:
+        logger.info("PLC interface detected", extra={"iface": iface, "driver": driver})
+        allowed = {"qca7000", "qcaspi"}
+        if driver not in allowed:
+            logger.warning(
+                "PLC interface driver not in preferred list",
+                extra={"iface": iface, "driver": driver, "expected": sorted(allowed)},
+            )
+    else:
+        logger.warning("Unable to resolve PLC driver", extra={"iface": iface})
+    if not _has_ipv6_link_local(iface):
+        logger.warning(
+            "PLC interface lacks IPv6 link-local address",
+            extra={"iface": iface, "hint": "ensure startup script ran ensure_lladdr"},
+        )
 
 
 class EVSECommunicationController(SlacSessionController):
@@ -119,6 +240,10 @@ class EVSECommunicationController(SlacSessionController):
           and trigger matching on B/C as reported by the CP reader (e.g. ESP).
         """
         controller_mode = os.environ.get("EVSE_CONTROLLER", "sim").lower()
+        try:
+            _log_plc_interface_health(iface)
+        except Exception:
+            logger.debug("PLC interface health check failed", exc_info=True)
         if controller_mode != "hal":
             session = SlacEvseSession(evse_id, iface, self.slac_config)
             # Defer CM_SET_KEY until after SLAC starts to maximize compatibility
@@ -276,335 +401,349 @@ class EVSECommunicationController(SlacSessionController):
                 except Exception:
                     pass
 
-        while True:
+        async def _teardown_session(reason: str) -> None:
+            nonlocal session, session_started_at, last_slac_cp_forwarded, ev_peer_logged, slac_attempts, keyed_once
+            if session is None:
+                return
+            logger.debug("Tearing down SLAC session", extra={"reason": reason})
             try:
-                cp = hal.cp().get_state()
+                await self.process_cp_state(session, "A")
             except Exception:
-                cp = None
+                pass
+            try:
+                await session.leave_logical_network()
+            except Exception:
+                pass
+            try:
+                session.close()
+            except Exception:
+                pass
+            session = None
+            session_started_at = 0.0
+            last_slac_cp_forwarded = None
+            ev_peer_logged = False
+            slac_attempts = 0
+            keyed_once = False
 
-            if cp != last_cp:
-                logger.debug("CP transition", extra={"from": last_cp, "to": cp})
-                last_cp = cp
-                # If a SLAC session is active, forward CP transitions promptly
-                if session is not None and cp is not None:
-                    # Map HAL letters to SLAC controller states (D treated as C)
-                    slac_cp = "C" if cp in {"C", "D"} else (cp if cp in {"A", "B"} else None)
-                    if slac_cp and slac_cp != last_slac_cp_forwarded:
-                        try:
-                            await self.process_cp_state(session, slac_cp)
-                            last_slac_cp_forwarded = slac_cp
-                        except Exception:
-                            pass
-
-            # Emergency states: cut power and unlock immediately
-            if cp in emergency_states:
+        try:
+            while True:
                 try:
-                    hal.contactor().set_closed(False)
+                    cp = hal.cp().get_state()
                 except Exception:
-                    pass
-                await _unlock_cable_best_effort("cp_emergency")
-                # Stop SECC quickly
-                if secc_task is not None:
-                    await _stop_secc("CP emergency state")
-                # Reset any SLAC session state
-                if session is not None:
-                    try:
-                        await self.process_cp_state(session, "A")
-                    except Exception:
-                        pass
-                    try:
-                        await session.leave_logical_network()
-                    except Exception:
-                        pass
-                    session = None
-                    session_started_at = 0.0
-                    slac_attempts = 0
-                # Hint firmware CP to safe if available
-                if _cp_host_hints_enabled():
-                    try:
-                        getattr(hal, "esp_set_mode", lambda _m=None: None)("manual")
-                        getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
-                    except Exception:
-                        pass
-                    # Restore dc mode so CP reports 5% duty when reconnected
-                    try:
-                        getattr(hal, "esp_set_mode", lambda _m=None: None)("dc")
-                    except Exception:
-                        pass
-                # Allow fresh SetKey on next connection
-                keyed_once = False
-
-            elif cp in connected_states:
-                if session is None:
-                    if slac_attempts >= max_slac_attempts:
-                        # Exhausted attempts; wait for CP disconnect or manual retry
-                        if int(asyncio.get_event_loop().time() * 10) % 10 == 0:
-                            logger.warning(
-                                "SLAC attempts exhausted (max=%d); holding until CP disconnect",
-                                max_slac_attempts,
-                            )
-                        await asyncio.sleep(0.5)
-                        continue
-                    # Ensure plug is fully seated and (optionally) locked before PLC
-                    # Small stability wait for CP to avoid starting on a glitch
-                    try:
-                        stable_s = float(os.environ.get("CP_STABLE_BEFORE_START_S", "0.1"))
-                    except Exception:
-                        stable_s = 0.1
-                    if stable_s > 0:
-                        t0 = asyncio.get_event_loop().time()
-                        ok = True
-                        while asyncio.get_event_loop().time() - t0 < stable_s:
+                    cp = None
+    
+                if cp != last_cp:
+                    logger.debug("CP transition", extra={"from": last_cp, "to": cp})
+                    last_cp = cp
+                    # If a SLAC session is active, forward CP transitions promptly
+                    if session is not None and cp is not None:
+                        # Map HAL letters to SLAC controller states (D treated as C)
+                        slac_cp = "C" if cp in {"C", "D"} else (cp if cp in {"A", "B"} else None)
+                        if slac_cp and slac_cp != last_slac_cp_forwarded:
                             try:
-                                if hal.cp().get_state() not in connected_states:
-                                    ok = False
-                                    break
-                            except Exception:
-                                ok = False
-                                break
-                            await asyncio.sleep(0.02)
-                        if not ok:
-                            await asyncio.sleep(0.05)
-                            continue
-
-                    # Try to engage cable lock if present/enforced
-                    locked_ok = await _ensure_locked_before_plc()
-                    if not locked_ok:
-                        logger.warning("Cable lock not confirmed; deferring PLC start")
-                        await asyncio.sleep(0.2)
-                        continue
-
-                    logger.info("Vehicle detected via CP", extra={"cp_state": cp})
-                    session = SlacEvseSession(evse_id, iface, self.slac_config)
-                    # Reset forwarded CP marker for the new session
-                    last_slac_cp_forwarded = None
-                    if not keyed_once:
-                        # Avoid hammering SetKey; apply a small backoff between attempts
-                        now = asyncio.get_event_loop().time()
-                        if (now - last_setkey_ts) >= max(0.0, setkey_backoff_s):
-                            last_setkey_ts = now
-                            try:
-                                await session.evse_set_key()
-                                keyed_once = True
-                                logger.info("CM_SET_KEY succeeded")
-                            except Exception as e:
-                                # Keep keyed_once False so we retry on next loop
-                                logger.warning(
-                                    "CM_SET_KEY failed; will retry",
-                                    extra={"error": str(e)},
-                                )
-                    await self.process_cp_state(session, "B")
-                    last_slac_cp_forwarded = "B"
-                    await asyncio.sleep(0.2)
-                    cur = hal.cp().get_state()
-                    if cur in {"C", "D"}:
-                        await self.process_cp_state(session, "C")
-                        last_slac_cp_forwarded = "C"
-                    session_started_at = asyncio.get_event_loop().time()
-
-                if session and session.state == STATE_MATCHED and secc_task is None:
-                    try:
-                        self._log_slac_peer(session)
-                    except Exception:
-                        pass
-                    await _start_secc_bg()
-
-                if session and session.state != STATE_MATCHED:
-                    # No-op here; CM_SET_KEY already handled above with backoff
-                    # Proactive nudge if we appear stuck in CP=B after initial setup
-                    try:
-                        now = asyncio.get_event_loop().time()
-                        if cp == "B" and session_started_at > 0 and (now - session_started_at) >= max(0.0, first_nudge_s):
-                            if (now - last_nudge_ts) >= max(0.0, nudge_every_s):
-                                if _cp_host_hints_enabled():
-                                    try:
-                                        reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
-                                    except Exception:
-                                        reset_ms = 400
-                                    # Choose AC or DC nudge based on configured CP mode
-                                    cp_mode = os.environ.get("ESP_CP_MODE", os.environ.get("EVSE_CP_MODE", "dc")).strip().lower()
-                                    try:
-                                        if cp_mode in ("ac", "manual"):
-                                            getattr(hal, "ac_hlc_nudge", lambda _ms=None: None)(reset_ms)
-                                        else:
-                                            getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
-                                        last_nudge_ts = now
-                                        logger.info("HAL SLAC proactive nudge", extra={"reset_ms": reset_ms, "cp_mode": cp_mode})
-                                    except Exception:
-                                        pass
-                    except Exception:
-                        pass
-                    # Keep SLAC session informed of steady-state CP even if it hasn't changed recently
-                    try:
-                        slac_cp = (
-                            "C" if cp in {"C", "D"} else (cp if cp in {"A", "B"} else None)
-                        )
-                        if session is not None and slac_cp and slac_cp != last_slac_cp_forwarded:
-                            await self.process_cp_state(session, slac_cp)
-                            last_slac_cp_forwarded = slac_cp
-                    except Exception:
-                        pass
-                    # If EV MAC is known (after SLAC_PARM), log once early
-                    try:
-                        if not ev_peer_logged and getattr(session, "pev_mac", None):
-                            self._log_slac_peer(session)
-                            ev_peer_logged = True
-                    except Exception:
-                        pass
-                    elapsed = asyncio.get_event_loop().time() - session_started_at
-                    env_wait = os.environ.get("SLAC_WAIT_TIMEOUT_S")
-                    timeout_s = (
-                        float(env_wait)
-                        if env_wait is not None
-                        else float(self.slac_config.slac_init_timeout or 50.0)
-                    )
-                    if elapsed > timeout_s:
-                        slac_attempts += 1
-                        logger.warning(
-                            "SLAC match timeout (attempt %d/%d); applying restart hint",
-                            slac_attempts,
-                            max_slac_attempts,
-                        )
-                        if _cp_host_hints_enabled():
-                            try:
-                                reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
-                                getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
-                                logger.info(
-                                    "HAL SLAC restart hint requested",
-                                    extra={"reset_ms": reset_ms, "iface": iface, "timeout_s": timeout_s},
-                                )
+                                await self.process_cp_state(session, slac_cp)
+                                last_slac_cp_forwarded = slac_cp
                             except Exception:
                                 pass
-                        # Gracefully reset SLAC state on the current session
-                        try:
-                            await self.process_cp_state(session, "A")
-                        except Exception:
-                            pass
-                        session = None
-                        session_started_at = 0.0
-                        # If attempts remain, back off briefly before next try
-                        if slac_attempts < max_slac_attempts:
-                            try:
-                                await asyncio.sleep(slac_retry_backoff_s)
-                            except Exception:
-                                pass
-                        else:
-                            # Too many failures; optionally auto-restart matching without requiring a disconnect
-                            auto_restart = os.environ.get("SLAC_AUTO_RESTART", "1").strip().lower() not in ("0", "false", "no")
-                            if auto_restart and (cp in connected_states):
-                                logger.warning(
-                                    "SLAC failed after %d attempts; auto-restarting after backoff",
-                                    slac_attempts,
-                                )
-                                # Proactive nudge before retrying
-                                try:
-                                    reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
-                                except Exception:
-                                    reset_ms = 400
-                                if _cp_host_hints_enabled():
-                                    try:
-                                        getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
-                                        logger.info("HAL SLAC proactive nudge (auto-restart)", extra={"reset_ms": reset_ms})
-                                    except Exception:
-                                        pass
-                                # Reset attempt counter and wait before next try
-                                slac_attempts = 0
-                                try:
-                                    await asyncio.sleep(max(0.2, slac_retry_backoff_s))
-                                except Exception:
-                                    pass
-                                session_started_at = 0.0
-                                session = None
-                                continue
-                            else:
-                                # Surface an error and wait for CP disconnect/replug
-                                logger.error(
-                                    "SLAC initialization failed after %d attempts; waiting for CP disconnect/retry",
-                                    slac_attempts,
-                                )
-                                # Block further attempts until CP disconnect resets the counter
-            else:
-                # Safety first: immediately open contactor on CP disconnect
-                # (host-side cutoff). Default 100 ms to align with IEC 61851.
-                try:
-                    cutoff_s = float(os.environ.get("SECC_CP_DISCONNECT_IMMEDIATE_CUTOFF_S", "0.1"))
-                except Exception:
-                    cutoff_s = 0.1
-                if cutoff_s > 0:
+    
+                # Emergency states: cut power and unlock immediately
+                if cp in emergency_states:
                     try:
                         hal.contactor().set_closed(False)
-                        if _cp_host_hints_enabled():
-                            # Attempt to drive CP to a safe state as a hardware hint
+                    except Exception:
+                        pass
+                    await _unlock_cable_best_effort("cp_emergency")
+                    # Stop SECC quickly
+                    if secc_task is not None:
+                        await _stop_secc("CP emergency state")
+                    # Reset any SLAC session state
+                    await _teardown_session("cp_emergency")
+                    # Hint firmware CP to safe if available
+                    if _cp_host_hints_enabled():
+                        try:
                             getattr(hal, "esp_set_mode", lambda _m=None: None)("manual")
                             getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
-                    except Exception:
-                        pass
-                    # Unlock promptly so user can remove connector
-                    await _unlock_cable_best_effort("cp_disconnect")
-                    # Short delay to satisfy timing without unduly delaying logic
-                    try:
-                        await asyncio.sleep(min(cutoff_s, 0.2))
-                    except Exception:
-                        pass
-                    # Restore dc mode so EV sees 5% duty once reconnected
-                    if _cp_host_hints_enabled():
+                        except Exception:
+                            pass
+                        # Restore dc mode so CP reports 5% duty when reconnected
                         try:
                             getattr(hal, "esp_set_mode", lambda _m=None: None)("dc")
                         except Exception:
                             pass
-                # Grace window to tolerate brief CP flaps before tearing down SECC
-                grace_s = float(os.environ.get("CP_DISCONNECT_GRACE_S", "0.5"))
-                if grace_s > 0:
-                    await asyncio.sleep(grace_s)
+                    # Allow fresh SetKey on next connection
+    
+                elif cp in connected_states:
+                    if session is None:
+                        if slac_attempts >= max_slac_attempts:
+                            # Exhausted attempts; wait for CP disconnect or manual retry
+                            if int(asyncio.get_event_loop().time() * 10) % 10 == 0:
+                                logger.warning(
+                                    "SLAC attempts exhausted (max=%d); holding until CP disconnect",
+                                    max_slac_attempts,
+                                )
+                            await asyncio.sleep(0.5)
+                            continue
+                        # Ensure plug is fully seated and (optionally) locked before PLC
+                        # Small stability wait for CP to avoid starting on a glitch
+                        try:
+                            stable_s = float(os.environ.get("CP_STABLE_BEFORE_START_S", "0.1"))
+                        except Exception:
+                            stable_s = 0.1
+                        if stable_s > 0:
+                            t0 = asyncio.get_event_loop().time()
+                            ok = True
+                            while asyncio.get_event_loop().time() - t0 < stable_s:
+                                try:
+                                    if hal.cp().get_state() not in connected_states:
+                                        ok = False
+                                        break
+                                except Exception:
+                                    ok = False
+                                    break
+                                await asyncio.sleep(0.02)
+                            if not ok:
+                                await asyncio.sleep(0.05)
+                                continue
+    
+                        # Try to engage cable lock if present/enforced
+                        locked_ok = await _ensure_locked_before_plc()
+                        if not locked_ok:
+                            logger.warning("Cable lock not confirmed; deferring PLC start")
+                            await asyncio.sleep(0.2)
+                            continue
+    
+                        logger.info("Vehicle detected via CP", extra={"cp_state": cp})
+                        session = SlacEvseSession(evse_id, iface, self.slac_config)
+                        # Reset forwarded CP marker for the new session
+                        last_slac_cp_forwarded = None
+                        if not keyed_once:
+                            # Avoid hammering SetKey; apply a small backoff between attempts
+                            now = asyncio.get_event_loop().time()
+                            if (now - last_setkey_ts) >= max(0.0, setkey_backoff_s):
+                                last_setkey_ts = now
+                                try:
+                                    await session.evse_set_key()
+                                    keyed_once = True
+                                    logger.info("CM_SET_KEY succeeded")
+                                except Exception as e:
+                                    # Keep keyed_once False so we retry on next loop
+                                    logger.warning(
+                                        "CM_SET_KEY failed; will retry",
+                                        extra={"error": str(e)},
+                                    )
+                        await self.process_cp_state(session, "B")
+                        last_slac_cp_forwarded = "B"
+                        await asyncio.sleep(0.2)
+                        cur = hal.cp().get_state()
+                        if cur in {"C", "D"}:
+                            await self.process_cp_state(session, "C")
+                            last_slac_cp_forwarded = "C"
+                        session_started_at = asyncio.get_event_loop().time()
+    
+                    if session and session.state == STATE_MATCHED and secc_task is None:
+                        try:
+                            self._log_slac_peer(session)
+                        except Exception:
+                            pass
+                        await _start_secc_bg()
+    
+                    if session and session.state != STATE_MATCHED:
+                        # No-op here; CM_SET_KEY already handled above with backoff
+                        # Proactive nudge if we appear stuck in CP=B after initial setup
+                        try:
+                            now = asyncio.get_event_loop().time()
+                            if cp == "B" and session_started_at > 0 and (now - session_started_at) >= max(0.0, first_nudge_s):
+                                if (now - last_nudge_ts) >= max(0.0, nudge_every_s):
+                                    if _cp_host_hints_enabled():
+                                        try:
+                                            reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
+                                        except Exception:
+                                            reset_ms = 400
+                                        # Choose AC or DC nudge based on configured CP mode
+                                        cp_mode = os.environ.get("ESP_CP_MODE", os.environ.get("EVSE_CP_MODE", "dc")).strip().lower()
+                                        try:
+                                            if cp_mode in ("ac", "manual"):
+                                                getattr(hal, "ac_hlc_nudge", lambda _ms=None: None)(reset_ms)
+                                            else:
+                                                getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
+                                            last_nudge_ts = now
+                                            logger.info("HAL SLAC proactive nudge", extra={"reset_ms": reset_ms, "cp_mode": cp_mode})
+                                        except Exception:
+                                            pass
+                        except Exception:
+                            pass
+                        # Keep SLAC session informed of steady-state CP even if it hasn't changed recently
+                        try:
+                            slac_cp = (
+                                "C" if cp in {"C", "D"} else (cp if cp in {"A", "B"} else None)
+                            )
+                            if session is not None and slac_cp and slac_cp != last_slac_cp_forwarded:
+                                await self.process_cp_state(session, slac_cp)
+                                last_slac_cp_forwarded = slac_cp
+                        except Exception:
+                            pass
+                        # If EV MAC is known (after SLAC_PARM), log once early
+                        try:
+                            if not ev_peer_logged and getattr(session, "pev_mac", None):
+                                self._log_slac_peer(session)
+                                ev_peer_logged = True
+                        except Exception:
+                            pass
+                        elapsed = asyncio.get_event_loop().time() - session_started_at
+                        env_wait = os.environ.get("SLAC_WAIT_TIMEOUT_S")
+                        timeout_s = (
+                            float(env_wait)
+                            if env_wait is not None
+                            else float(self.slac_config.slac_init_timeout or 50.0)
+                        )
+                        if elapsed > timeout_s:
+                            slac_attempts += 1
+                            logger.warning(
+                                "SLAC match timeout (attempt %d/%d); applying restart hint",
+                                slac_attempts,
+                                max_slac_attempts,
+                            )
+                            if _cp_host_hints_enabled():
+                                try:
+                                    reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
+                                    getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
+                                    logger.info(
+                                        "HAL SLAC restart hint requested",
+                                        extra={"reset_ms": reset_ms, "iface": iface, "timeout_s": timeout_s},
+                                    )
+                                except Exception:
+                                    pass
+                            # Gracefully reset SLAC state on the current session
+                            await _teardown_session("slac_timeout")
+                            # If attempts remain, back off briefly before next try
+                            if slac_attempts < max_slac_attempts:
+                                try:
+                                    await asyncio.sleep(slac_retry_backoff_s)
+                                except Exception:
+                                    pass
+                            else:
+                                # Too many failures; optionally auto-restart matching without requiring a disconnect
+                                auto_restart = os.environ.get("SLAC_AUTO_RESTART", "1").strip().lower() not in ("0", "false", "no")
+                                if auto_restart and (cp in connected_states):
+                                    logger.warning(
+                                        "SLAC failed after %d attempts; auto-restarting after backoff",
+                                        slac_attempts,
+                                    )
+                                    # Proactive nudge before retrying
+                                    try:
+                                        reset_ms = int(os.environ.get("SLAC_RESTART_HINT_MS", "400"))
+                                    except Exception:
+                                        reset_ms = 400
+                                    if _cp_host_hints_enabled():
+                                        try:
+                                            getattr(hal, "restart_slac_hint", lambda _ms=None: None)(reset_ms)
+                                            logger.info("HAL SLAC proactive nudge (auto-restart)", extra={"reset_ms": reset_ms})
+                                        except Exception:
+                                            pass
+                                    # Reset attempt counter and wait before next try
+                                    slac_attempts = 0
+                                    try:
+                                        await asyncio.sleep(max(0.2, slac_retry_backoff_s))
+                                    except Exception:
+                                        pass
+                                    session_started_at = 0.0
+                                    continue
+                                else:
+                                    # Surface an error and wait for CP disconnect/replug
+                                    logger.error(
+                                        "SLAC initialization failed after %d attempts; waiting for CP disconnect/retry",
+                                        slac_attempts,
+                                    )
+                                    # Block further attempts until CP disconnect resets the counter
+                else:
+                    # Safety first: immediately open contactor on CP disconnect
+                    # (host-side cutoff). Default 100 ms to align with IEC 61851.
                     try:
-                        cp2 = hal.cp().get_state()
+                        cutoff_s = float(os.environ.get("SECC_CP_DISCONNECT_IMMEDIATE_CUTOFF_S", "0.1"))
                     except Exception:
-                        cp2 = None
-                    if cp2 in connected_states:
-                        # still connected; continue
-                        await asyncio.sleep(0.1)
-                        continue
-                if secc_task is not None:
-                    await _stop_secc("CP state not connected")
-                if session is not None:
+                        cutoff_s = 0.1
+                    if cutoff_s > 0:
+                        try:
+                            hal.contactor().set_closed(False)
+                            if _cp_host_hints_enabled():
+                                # Attempt to drive CP to a safe state as a hardware hint
+                                getattr(hal, "esp_set_mode", lambda _m=None: None)("manual")
+                                getattr(hal, "esp_set_pwm", lambda _d, enable=True: None)(100, True)
+                        except Exception:
+                            pass
+                        # Unlock promptly so user can remove connector
+                        await _unlock_cable_best_effort("cp_disconnect")
+                        # Short delay to satisfy timing without unduly delaying logic
+                        try:
+                            await asyncio.sleep(min(cutoff_s, 0.2))
+                        except Exception:
+                            pass
+                        # Restore dc mode so EV sees 5% duty once reconnected
+                        if _cp_host_hints_enabled():
+                            try:
+                                getattr(hal, "esp_set_mode", lambda _m=None: None)("dc")
+                            except Exception:
+                                pass
+                    # Grace window to tolerate brief CP flaps before tearing down SECC
+                    grace_s = float(os.environ.get("CP_DISCONNECT_GRACE_S", "0.5"))
+                    if grace_s > 0:
+                        await asyncio.sleep(grace_s)
+                        try:
+                            cp2 = hal.cp().get_state()
+                        except Exception:
+                            cp2 = None
+                        if cp2 in connected_states:
+                            # still connected; continue
+                            await asyncio.sleep(0.1)
+                            continue
+                    if secc_task is not None:
+                        await _stop_secc("CP state not connected")
+                    await _teardown_session("cp_disconnect")
+                    # Optional: nudge SLAC reset hint on disconnect
                     try:
-                        await self.process_cp_state(session, "A")
+                        ms = int(os.environ.get("SLAC_RESTART_ON_DISCONNECT_MS", "0"))
+                        if ms > 0 and _cp_host_hints_enabled():
+                            getattr(hal, "restart_slac_hint", lambda _ms=None: None)(ms)
+                            logger.info("HAL SLAC restart hint on disconnect", extra={"reset_ms": ms})
                     except Exception:
                         pass
-                    try:
-                        await session.leave_logical_network()
-                    except Exception:
-                        pass
-                    session = None
-                    session_started_at = 0.0
-                    # Reset SLAC attempts on disconnect (fresh start on next plug-in)
-                    slac_attempts = 0
-                    keyed_once = False
-                # Optional: nudge SLAC reset hint on disconnect
+    
+                # Adaptive polling: faster while connected/charging to cut latency
+                base_sleep = 0.2
                 try:
-                    ms = int(os.environ.get("SLAC_RESTART_ON_DISCONNECT_MS", "0"))
-                    if ms > 0 and _cp_host_hints_enabled():
-                        getattr(hal, "restart_slac_hint", lambda _ms=None: None)(ms)
-                        logger.info("HAL SLAC restart hint on disconnect", extra={"reset_ms": ms})
+                    fast_connected = float(os.environ.get("CP_POLL_CONNECTED_S", "0.05"))
                 except Exception:
-                    pass
+                    fast_connected = 0.05
+                try:
+                    fastest_emergency = float(os.environ.get("CP_POLL_EMERGENCY_S", "0.02"))
+                except Exception:
+                    fastest_emergency = 0.02
+                if cp in emergency_states:
+                    await asyncio.sleep(max(0.0, fastest_emergency))
+                elif cp in connected_states or (secc_task is not None):
+                    await asyncio.sleep(max(0.0, fast_connected))
+                else:
+                    await asyncio.sleep(base_sleep)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("HAL controller loop crashed")
+            raise
+        finally:
+            try:
+                if secc_task is not None:
+                    await _stop_secc("controller shutdown")
+            except Exception:
+                pass
+            try:
+                await _teardown_session("controller shutdown")
+            except Exception:
+                pass
+            try:
+                hal.close()
+            except Exception as e:
+                logger.warning("HAL close failed", extra={"error": str(e)})
 
-            # Adaptive polling: faster while connected/charging to cut latency
-            base_sleep = 0.2
-            try:
-                fast_connected = float(os.environ.get("CP_POLL_CONNECTED_S", "0.05"))
-            except Exception:
-                fast_connected = 0.05
-            try:
-                fastest_emergency = float(os.environ.get("CP_POLL_EMERGENCY_S", "0.02"))
-            except Exception:
-                fastest_emergency = 0.02
-            if cp in emergency_states:
-                await asyncio.sleep(max(0.0, fastest_emergency))
-            elif cp in connected_states or (secc_task is not None):
-                await asyncio.sleep(max(0.0, fast_connected))
-            else:
-                await asyncio.sleep(base_sleep)
 
     async def _trigger_matching(self, session: SlacEvseSession) -> None:
         """Simulate CP state transitions to start SLAC and wait for a match."""
@@ -922,7 +1061,20 @@ def main() -> None:
     except Exception:
         pass
 
-    asyncio.run(controller.start(args.evse_id, args.iface))
+    lock_fp = None
+    try:
+        lock_fp = _acquire_process_lock()
+    except RuntimeError as exc:
+        logger.error(str(exc))
+        sys.exit(1)
+
+    try:
+        try:
+            asyncio.run(controller.start(args.evse_id, args.iface))
+        except KeyboardInterrupt:
+            logger.info("EVSE shutdown requested by signal")
+    finally:
+        _release_process_lock(lock_fp)
 
 
 if __name__ == "__main__":

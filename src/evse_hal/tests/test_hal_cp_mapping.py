@@ -1,4 +1,28 @@
+import sys
+import types
+
 import pytest
+
+# Provide lightweight stubs for the iso15118 enums used by the controller when the
+# full package is not installed (common during unit testing).
+if 'iso15118.shared.messages.enums' not in sys.modules:
+    iso_shared = types.ModuleType('iso15118.shared')
+    iso_shared_messages = types.ModuleType('iso15118.shared.messages')
+    iso_shared_enums = types.ModuleType('iso15118.shared.messages.enums')
+
+    class _CpState:
+        A1 = 'A1'
+        B1 = 'B1'
+        C2 = 'C2'
+        D2 = 'D2'
+        E = 'E'
+        F = 'F'
+        UNKNOWN = 'UNKNOWN'
+
+    iso_shared_enums.CpState = _CpState
+    sys.modules['iso15118.shared'] = iso_shared
+    sys.modules['iso15118.shared.messages'] = iso_shared_messages
+    sys.modules['iso15118.shared.messages.enums'] = iso_shared_enums
 
 from src.evse_hal.iso15118_hal_controller import HalEVSEController
 from src.evse_hal.interfaces import EVSEHardware, CPReader, PWMController, ContactorDriver, DCPowerSupply, Meter
@@ -95,6 +119,9 @@ class _StubHAL(EVSEHardware):
     def meter(self) -> Meter:
         return self._meter
 
+    def close(self) -> None:
+        return
+
 
 @pytest.mark.asyncio
 async def test_hal_cp_mapping_basic():
@@ -118,4 +145,3 @@ async def test_hal_cp_mapping_basic():
     assert await ctrl.get_cp_state() == CpState.E
     hal.cp().simulate_state("F")
     assert await ctrl.get_cp_state() == CpState.F
-

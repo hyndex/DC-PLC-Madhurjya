@@ -112,3 +112,8 @@ class EVSEHardware(ABC):
     @abstractmethod
     def meter(self) -> Meter:
         ...
+
+    @abstractmethod
+    def close(self) -> None:
+        """Release any hardware resources held by the adapter."""
+        ...

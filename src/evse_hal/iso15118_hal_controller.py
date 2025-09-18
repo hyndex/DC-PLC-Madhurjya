@@ -27,17 +27,75 @@ except Exception:  # pragma: no cover - allow tests to stub minimal interface
         STOPPING = "stopping"
         ERROR = "error"
         BUSY = "busy"
-from iso15118.shared.messages.enums import (
-    AuthorizationStatus,
-    CpState,
-    Protocol,
-    EnergyTransferModeEnum,
-    IsolationLevel,
-    UnitSymbol,
-)
-from iso15118.shared.messages.iso15118_2.datatypes import MeterInfo as MeterInfoV2
-from iso15118.shared.messages.iso15118_20.common_types import MeterInfo as MeterInfoV20
-from iso15118.shared.states import State
+try:
+    from iso15118.shared.messages.enums import (
+        AuthorizationStatus,
+        CpState,
+        Protocol,
+        EnergyTransferModeEnum,
+        IsolationLevel,
+        UnitSymbol,
+    )
+except Exception:  # pragma: no cover - lightweight fallbacks for tests
+    class AuthorizationStatus(str):
+        ACCEPTED = "ACCEPTED"
+
+    class CpState(str):
+        A1 = "A1"
+        B1 = "B1"
+        C2 = "C2"
+        D2 = "D2"
+        E = "E"
+        F = "F"
+        UNKNOWN = "UNKNOWN"
+
+    class Protocol(str):
+        DIN_SPEC_70121 = "DIN_SPEC_70121"
+        ISO_15118_2 = "ISO_15118_2"
+        ISO_15118_20_AC = "ISO_15118_20_AC"
+        ISO_15118_20_DC = "ISO_15118_20_DC"
+
+    class EnergyTransferModeEnum(str):
+        AC_SINGLE_PHASE_CORE = "AC_SINGLE_PHASE_CORE"
+        AC_THREE_PHASE_CORE = "AC_THREE_PHASE_CORE"
+        DC_CORE = "DC_CORE"
+        DC_EXTENDED = "DC_EXTENDED"
+
+    class IsolationLevel(str):
+        VALID = "VALID"
+
+    class UnitSymbol(str):
+        WATT = "W"
+        AMPERE = "A"
+        VOLTAGE = "V"
+
+try:
+    from iso15118.shared.messages.iso15118_2.datatypes import MeterInfo as MeterInfoV2
+except Exception:  # pragma: no cover - minimal stand-ins for tests
+    from dataclasses import dataclass
+
+    @dataclass
+    class MeterInfoV2:  # type: ignore
+        meter_id: str
+        meter_reading: int
+        t_meter: float
+
+try:
+    from iso15118.shared.messages.iso15118_20.common_types import MeterInfo as MeterInfoV20
+except Exception:  # pragma: no cover
+    from dataclasses import dataclass
+
+    @dataclass
+    class MeterInfoV20:  # type: ignore
+        meter_id: str
+        charged_energy_reading_wh: int
+        meter_timestamp: float
+
+try:
+    from iso15118.shared.states import State
+except Exception:  # pragma: no cover
+    class State:  # type: ignore
+        pass
 import logging
 
 logger = logging.getLogger("hlc")

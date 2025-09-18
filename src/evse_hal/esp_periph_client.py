@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -13,6 +14,18 @@ import serial  # type: ignore
 
 
 logger = logging.getLogger("esp.periph")
+
+
+def _extract_errno(exc: Exception) -> Optional[int]:
+    err = getattr(exc, "errno", None)
+    if err is not None:
+        return err
+    os_error = getattr(exc, "oserror", None)
+    if os_error is not None:
+        return getattr(os_error, "errno", None)
+    if isinstance(exc, OSError):
+        return exc.errno
+    return None
 
 
 @dataclass
@@ -82,6 +95,7 @@ class EspPeriphClient:
         # Auto-arm
         self._auto_arm = auto_arm
         self._armed_until_ms = 0
+        self._last_port_error_ts = 0.0
 
     # ----- Connection lifecycle -----
     def connect(self) -> None:
@@ -118,12 +132,30 @@ class EspPeriphClient:
     # ----- JSON-RPC core -----
     def _open_serial(self) -> None:
         try:
-            self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
+            self._ser = serial.Serial(
+                self._port,
+                self._baud,
+                timeout=self._timeout,
+                exclusive=True,
+            )
             logger.info("ESP periph serial open", extra={"port": self._port, "baud": self._baud})
             self._err_streak = 0
-        except Exception as e:
-            logger.error("ESP periph serial open failed", extra={"port": self._port, "error": str(e)})
-            raise
+            self._last_port_error_ts = 0.0
+        except Exception as exc:  # pragma: no cover - hardware specific
+            err = _extract_errno(exc)
+            hint = None
+            if err in (errno.EBUSY, errno.EACCES):
+                hint = "Port busy – ensure no other process is attached"
+            now = time.time()
+            if (now - self._last_port_error_ts) >= 5.0:
+                logger.error(
+                    "ESP periph serial open failed",
+                    extra={"port": self._port, "error": str(exc), **({"hint": hint} if hint else {})},
+                )
+                self._last_port_error_ts = now
+            raise RuntimeError(
+                f"Unable to open ESP peripheral port {self._port}: {hint or str(exc)}"
+            ) from exc
 
     def _send_line(self, line: str) -> None:
         if not self._ser or not getattr(self._ser, "is_open", False):

@@ -361,3 +361,9 @@ class ESPPeriphHardware(EVSEHardware):
             self._periph.cp_set_pwm(int(duty), enable=enable)
         except Exception:
             pass
+
+    def close(self) -> None:
+        try:
+            self._periph.close()
+        except Exception:
+            pass

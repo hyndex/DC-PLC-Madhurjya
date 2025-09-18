@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -36,6 +37,18 @@ except Exception:
     _DEBUG_IO = False
 
 
+def _extract_errno(exc: Exception) -> Optional[int]:
+    err = getattr(exc, "errno", None)
+    if err is not None:
+        return err
+    os_error = getattr(exc, "oserror", None)
+    if os_error is not None:
+        return getattr(os_error, "errno", None)
+    if isinstance(exc, OSError):
+        return exc.errno
+    return None
+
+
 class EspCpClient:
     """Minimal client for the ESP32-S3 CP helper firmware (JSON over UART).
 
@@ -62,6 +75,7 @@ class EspCpClient:
         self._pong = threading.Event()
         self._err_streak = 0
         self._last_reconnect_ts = 0.0
+        self._last_port_error_ts = 0.0
 
     def connect(self) -> None:
         """(Re)connect the serial port and ensure a single RX thread is running.
@@ -89,9 +103,8 @@ class EspCpClient:
                 pass
             # Open fresh serial
             try:
-                self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
+                self._ser = self._open_serial()
             except Exception as e:
-                logger.error("ESP CP serial open failed", extra={"port": self._port, "error": str(e)})
                 self._ser = None
                 raise
             # Start single RX thread
@@ -99,6 +112,27 @@ class EspCpClient:
             logger.info("ESP CP serial connect", extra={"port": self._port, "baud": self._baud})
             self._rx_thread = threading.Thread(target=self._rx_loop, name="esp-cp-rx", daemon=True)
             self._rx_thread.start()
+
+    def _open_serial(self) -> serial.Serial:
+        try:
+            ser = serial.Serial(self._port, self._baud, timeout=self._timeout, exclusive=True)
+            self._last_port_error_ts = 0.0
+            return ser
+        except Exception as exc:  # pragma: no cover - hardware specific
+            err = _extract_errno(exc)
+            hint = None
+            if err in (errno.EBUSY, errno.EACCES):
+                hint = "Port busy – is another EVSE instance or terminal using it?"
+            now = time.time()
+            if (now - self._last_port_error_ts) >= 5.0:
+                logger.error(
+                    "ESP CP serial open failed",
+                    extra={"port": self._port, "error": str(exc), **({"hint": hint} if hint else {})},
+                )
+                self._last_port_error_ts = now
+            raise RuntimeError(
+                f"Unable to open ESP CP port {self._port}: {hint or str(exc)}"
+            ) from exc
 
     def close(self) -> None:
         self._stop.set()
@@ -242,7 +276,7 @@ class EspCpClient:
                                         self._ser.close()
                                     except Exception:
                                         pass
-                                self._ser = serial.Serial(self._port, self._baud, timeout=self._timeout)
+                                self._ser = self._open_serial()
                                 ser = self._ser
                                 logger.info("ESP CP serial reconnected")
                                 self._err_streak = 0
