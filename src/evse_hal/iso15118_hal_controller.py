@@ -443,16 +443,51 @@ class HalEVSEController(SimEVSEController):
         if abs(di) > max_di:
             tgt_i = cur_i + max_di * (1 if di > 0 else -1)
 
+        # Optional voltage margining
+        # - During PreCharge: default no margin; can subtract a small margin via
+        #   EVSE_PRECHARGE_V_MARGIN_V (>=0) if your rectifier consistently overshoots.
+        # - During CurrentDemand: allow fractional/absolute margin via
+        #   EVSE_DC_V_MARGIN_FRAC and EVSE_DC_V_MARGIN_V (both may be negative/zero).
+        cmd_v = tgt_v
+        try:
+            if is_precharge:
+                m_pre_v = float(os.environ.get("EVSE_PRECHARGE_V_MARGIN_V", "0.0"))
+                if m_pre_v > 0:
+                    cmd_v = max(0.0, tgt_v - m_pre_v)
+            else:
+                m_frac = float(os.environ.get("EVSE_DC_V_MARGIN_FRAC", "0.0"))
+                m_off  = float(os.environ.get("EVSE_DC_V_MARGIN_V", "0.0"))
+                cmd_v = max(0.0, tgt_v * (1.0 - m_frac) + m_off)
+                # Do not intentionally exceed EV's requested target unless explicitly configured
+                max_overshoot = float(os.environ.get("EVSE_DC_V_MAX_CMD_OVERSHOOT_V", "0.0"))
+                if cmd_v > tgt_v + max(0.0, max_overshoot):
+                    cmd_v = tgt_v + max(0.0, max_overshoot)
+        except Exception:
+            cmd_v = tgt_v
+
         # Query present measurements for thermal and context updates
         try:
             v_meas, i_meas = self._hal.supply().get_status()
         except Exception:
             v_meas, i_meas = 0.0, 0.0
 
+        # Overshoot guard: if measured voltage already exceeds EV target by more than
+        # EVSE_DC_V_OVERSHOOT_GUARD_V, bias the commanded voltage slightly below the
+        # target to help the rectifier settle without ringing.
+        try:
+            guard_v = float(os.environ.get("EVSE_DC_V_OVERSHOOT_GUARD_V", "0.0"))
+        except Exception:
+            guard_v = 0.0
+        if not is_precharge and guard_v > 0 and v_meas > (tgt_v + guard_v):
+            try:
+                cmd_v = min(cmd_v, max(0.0, tgt_v - min(guard_v, 5.0)))
+            except Exception:
+                pass
+
         # Thermal derating and fault handling
         dec = self._thermal.update(
             rated_current_a=float(self._rated_dc_max_current_a),
-            target_voltage_v=float(tgt_v),
+            target_voltage_v=float(cmd_v),
             target_current_a=float(tgt_i),
             measured_voltage_v=float(v_meas),
             measured_current_a=float(i_meas),
@@ -471,7 +506,7 @@ class HalEVSEController(SimEVSEController):
 
         # Apply to hardware
         try:
-            self._hal.supply().set_voltage(max(0.0, tgt_v))
+            self._hal.supply().set_voltage(max(0.0, cmd_v))
             self._hal.supply().set_current_limit(max(0.0, allowed_i))
         except Exception:
             pass
@@ -500,7 +535,8 @@ class HalEVSEController(SimEVSEController):
             except Exception:
                 pass
 
-        self._last_set_v, self._last_set_i, self._last_set_ts = tgt_v, tgt_i, now
+        # Persist the commanded values (post-margin, post-derate) for observability
+        self._last_set_v, self._last_set_i, self._last_set_ts = cmd_v, allowed_i, now
         # Update context for reporting
         try:
             self.evse_data_context.present_voltage = float(v_meas)

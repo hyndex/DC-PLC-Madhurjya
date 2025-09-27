@@ -149,6 +149,18 @@ CHILD_ENV=(
   # Let Python entrypoint auto-takeover the lock by terminating a prior holder
   "EVSE_LOCK_STEAL=1"
 )
+# Propagate any additional EVSE_* env vars not explicitly listed above
+# so tuning flags like EVSE_SKIP_CABLE_CHECK and DC limits reach the child.
+while IFS='=' read -r _k _v; do
+  case "${_k}" in
+    EVSE_*)
+      case ",EVSE_ID,EVSE_CONTROLLER,EVSE_HAL_ADAPTER,EVSE_LOG_LEVEL,EVSE_LOG_FORMAT,EVSE_CP_HOST_HINTS," in
+        *",${_k},"*) ;; # already present
+        *) CHILD_ENV+=("${_k}=${!_k}");;
+      esac
+      ;;
+  esac
+done < <(env | grep -E '^EVSE_[A-Za-z0-9_]*=')
 # If no DIN-specific ID provided, default DIN source to the same EVSE_ID for consistency
 [[ -z "${EVSE_ID_DIN:-}" && -n "${EVSE_ID}" ]] && CHILD_ENV+=("EVSE_ID_DIN=${EVSE_ID}")
 [[ -n "${ESP_PORT}" ]] && CHILD_ENV+=("ESP_CP_PORT=${ESP_PORT}")

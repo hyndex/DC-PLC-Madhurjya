@@ -510,6 +510,36 @@ class EVSECommunicationController(SlacSessionController):
             except Exception:
                 pass
 
+        def _ensure_ipv6_ll_and_flags(ifname: str) -> None:
+            """Ensure fe80::/64 link‑local and rx flags on a candidate PLC iface.
+
+            Safe no‑op if already configured. Requires root privileges (start script runs with sudo -E).
+            """
+            try:
+                # Check if LL present
+                has_ll = False
+                with open("/proc/net/if_inet6", "r", encoding="utf-8") as fd:
+                    for line in fd:
+                        parts = line.split()
+                        if len(parts) >= 6 and parts[5] == ifname and parts[0].startswith("fe80"):
+                            has_ll = True
+                            break
+                if not has_ll:
+                    # Compute EUI-64 from MAC
+                    mac_path = Path("/sys/class/net") / ifname / "address"
+                    mac_txt = mac_path.read_text(encoding="utf-8").strip().lower()
+                    o = [int(x, 16) for x in mac_txt.split(":")]
+                    o[0] ^= 0x02  # flip U/L bit
+                    eui = [o[0], o[1], o[2], 0xFF, 0xFE, o[3], o[4], o[5]]
+                    ll = "fe80::{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}:{:02x}{:02x}".format(*eui)
+                    # Bring up and add LL
+                    subprocess.run(["ip", "link", "set", ifname, "up"], check=False)
+                    subprocess.run(["ip", "-6", "addr", "add", f"{ll}/64", "dev", ifname, "scope", "link"], check=False)
+                # Enable flags helpful for SLAC capture
+                subprocess.run(["ip", "link", "set", ifname, "promisc", "on", "multicast", "on", "allmulticast", "on"], check=False)
+            except Exception:
+                pass
+
         async def _teardown_session(reason: str) -> None:
             nonlocal session, session_started_at, last_slac_cp_forwarded, ev_peer_logged, slac_attempts, keyed_once
             if session is None:
@@ -622,27 +652,66 @@ class EVSECommunicationController(SlacSessionController):
                             continue
     
                         logger.info("Vehicle detected via CP", extra={"cp_state": cp})
-                        session = SlacEvseSession(evse_id, iface, self.slac_config)
-                        # Reset forwarded CP marker for the new session
+                        # Try initial iface then fall back to common PLC ifaces if SetKey fails
+                        candidate_ifaces = []
+                        try:
+                            # Start with provided iface
+                            seen = set()
+                            for name in [iface, "plc0", "eth1", "eth0"]:
+                                if name and name not in seen and os.path.isdir(f"/sys/class/net/{name}"):
+                                    candidate_ifaces.append(name)
+                                    seen.add(name)
+                        except Exception:
+                            candidate_ifaces = [iface]
+
+                        session = None
                         last_slac_cp_forwarded = None
+                        # Attempt SetKey on candidates honoring backoff
                         if not keyed_once:
-                            # Avoid hammering SetKey; apply a small backoff between attempts
                             now = asyncio.get_event_loop().time()
-                            if (now - last_setkey_ts) >= max(0.0, setkey_backoff_s):
-                                last_setkey_ts = now
+                            if (now - last_setkey_ts) < max(0.0, setkey_backoff_s):
+                                await asyncio.sleep(max(0.0, setkey_backoff_s - (now - last_setkey_ts)))
+                            last_setkey_ts = asyncio.get_event_loop().time()
+
+                            setkey_ok = False
+                            last_err: Optional[Exception] = None
+                            for ifc_try in candidate_ifaces:
+                                # Ensure IPv6 link‑local and NIC flags on this iface
+                                _ensure_ipv6_ll_and_flags(ifc_try)
                                 try:
-                                    await session.evse_set_key()
+                                    # Log health and attempt on this iface
+                                    try:
+                                        _log_plc_interface_health(ifc_try)
+                                    except Exception:
+                                        pass
+                                    sess_try = SlacEvseSession(evse_id, ifc_try, self.slac_config)
+                                    await sess_try.evse_set_key()
+                                    # Success on this iface
+                                    session = sess_try
+                                    iface = ifc_try
                                     keyed_once = True
-                                    logger.info("CM_SET_KEY succeeded")
+                                    setkey_ok = True
+                                    logger.info("CM_SET_KEY succeeded", extra={"iface": iface})
+                                    break
                                 except Exception as e:
-                                    # Keep keyed_once False so we retry on next loop
-                                    logger.warning(
-                                        "CM_SET_KEY failed; will retry",
-                                        extra={"error": str(e)},
-                                    )
-                                    cm_set_key_fail_count += 1
-                                    if cm_set_key_fail_count == 1:
-                                        await _plc_soft_reset_proactive()
+                                    last_err = e
+                                    logger.warning("CM_SET_KEY failed on iface", extra={"iface": ifc_try, "error": str(e)})
+                                    # Try next candidate
+                                    continue
+                            if not setkey_ok:
+                                cm_set_key_fail_count += 1
+                                if cm_set_key_fail_count == 1:
+                                    await _plc_soft_reset_proactive()
+                                # Defer retry to next loop iteration
+                                logger.warning(
+                                    "CM_SET_KEY failed; will retry",
+                                    extra={"attempt": cm_set_key_fail_count, "last_error": str(last_err) if last_err else None},
+                                )
+                                await asyncio.sleep(slac_retry_backoff_s)
+                                continue
+                        # If SetKey already done earlier, create session bound to current iface
+                        if session is None:
+                            session = SlacEvseSession(evse_id, iface, self.slac_config)
                         await self.process_cp_state(session, "B")
                         last_slac_cp_forwarded = "B"
                         await asyncio.sleep(0.2)

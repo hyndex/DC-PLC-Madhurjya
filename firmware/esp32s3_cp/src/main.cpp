@@ -241,11 +241,13 @@ static bool can_setup_mcp2515() {
 #define CP_1_PWM_RESOLUTION 12
 #define CP_1_MAX_DUTY_CYCLE 4095
 #define CP_1_READ_PIN       1
-static int g_t12=2440, g_t9=2080; 
-#ifndef TH_STEP_MV
-#define TH_STEP_MV 380
-#endif
-static int g_t6=(g_t9-TH_STEP_MV), g_t3=(g_t6-TH_STEP_MV), g_t0=(g_t3-TH_STEP_MV);
+// CP state thresholds (millivolts). Requested mapping:
+//   A > 2300, B > 2000, C > 1700, D > 1450, E > 1250
+static int g_t12 = 2300;
+static int g_t9  = 2000;
+static int g_t6  = 1700;
+static int g_t3  = 1450;
+static int g_t0  = 1250;
 static int g_hys=0, g_hys_ab=0;
 #ifndef MEAS_PERIOD_MS
 #define MEAS_PERIOD_MS 20
@@ -855,6 +857,45 @@ static void process_line(String &line) {
       send_res(res.as<JsonVariant>()); return;
     }
 
+    // --- System API ---
+    if (!strcmp(method, "sys.ping")) {
+      StaticJsonDocument<96> res; res["ok"]=true; send_res(res.as<JsonVariant>()); return;
+    }
+    if (!strcmp(method, "sys.info")) {
+      StaticJsonDocument<256> res;
+      res["mode"] = (g_periph_mode==MODE_HW)?"hw":"sim";
+      JsonArray caps = res.createNestedArray("capabilities");
+      caps.add("contactor"); caps.add("dc"); caps.add("meter"); caps.add("cp");
+      JsonObject thr = res.createNestedObject("cp_thresholds");
+      thr["t12"]=g_t12; thr["t9"]=g_t9; thr["t6"]=g_t6; thr["t3"]=g_t3; thr["t0"]=g_t0;
+      send_res(res.as<JsonVariant>()); return;
+    }
+    if (!strcmp(method, "sys.set_mode")) {
+      const char* m = doc["params"]["mode"] | "";
+      if (!strcasecmp(m,"hw")) g_periph_mode=MODE_HW; else g_periph_mode=MODE_SIM;
+      StaticJsonDocument<96> res; res["mode"]=(g_periph_mode==MODE_HW)?"hw":"sim"; send_res(res.as<JsonVariant>()); return;
+    }
+    if (!strcmp(method, "sys.arm")) {
+      StaticJsonDocument<96> res; res["armed_until_ms"] = (uint32_t)(millis()+800); send_res(res.as<JsonVariant>()); return;
+    }
+
+    // --- Contactor API ---
+    if (!strcmp(method, "contactor.set")) {
+      bool on = doc["params"]["on"] | false;
+      g_contactor_cmd = on;
+      if (g_periph_mode==MODE_HW) { hw_contactor_set(on); delay(60); g_contactor_aux = hw_contactor_aux(); }
+      else { delay(20); g_contactor_aux = on; }
+      // Emit event
+      StaticJsonDocument<160> evt; evt["type"]="evt"; evt["id"]=0; evt["ts"]=millis(); evt["method"]="evt:contactor.change";
+      JsonObject er = evt.createNestedObject("result"); er["on"]=g_contactor_cmd; er["aux_ok"]=g_contactor_aux;
+      rpc_send(evt);
+      StaticJsonDocument<128> res; res["ok"]=true; res["commanded"]=g_contactor_cmd; res["aux_ok"]=g_contactor_aux; send_res(res.as<JsonVariant>()); return;
+    }
+    if (!strcmp(method, "contactor.check")) {
+      if (g_periph_mode==MODE_HW) { g_contactor_aux = hw_contactor_aux(); }
+      StaticJsonDocument<128> res; res["ok"]=true; res["commanded"]=g_contactor_cmd; res["aux_ok"]=g_contactor_aux; send_res(res.as<JsonVariant>()); return;
+    }
+
     if (!strcmp(method, "dc.comm.check")) {
       uint32_t to = doc["params"]["timeout_ms"] | 800;
       bool gv=false, gi=false, gs=false, gh=false;
@@ -883,15 +924,61 @@ static void process_line(String &line) {
       StaticJsonDocument<192> res; res["v"]=v; res["i"]=i; res["p"]=p; res["e"]=g_meter_e_kwh; send_res(res.as<JsonVariant>()); return;
     }
 
-    /* keep your existing sys.*, contactor.*, meter.*, temps.* handlers … */
-    // (omit here for brevity; keep from your working HAL)
+    /* other handlers can be added here (temps.*, etc.) */
 
     // Fallback
     StaticJsonDocument<128> e; e["code"]=-32601; e["message"]="unknown_method"; send_res(JsonObject(), e); return;
   }
 
-  // Legacy path: keep your existing handlers as-is
-  // (omit here for brevity; copy from your working HAL if needed)
+  // CP helper plain-JSON command path (no "type", has "cmd")
+  const char* cpcmd = doc["cmd"] | "";
+  if (cpcmd && cpcmd[0]) {
+    if (!strcmp(cpcmd, "get_status")) { send_status_json(); return; }
+    if (!strcmp(cpcmd, "set_mode")) {
+      const char* m = doc["mode"] | "";
+      if (!strcasecmp(m, "manual")) g_mode = OpMode::MANUAL; else g_mode = OpMode::DC_AUTO;
+      if (g_mode==OpMode::MANUAL) apply_pwm_manual(); else apply_dc_auto_output(g_last_cp_state);
+      send_status_json(); return;
+    }
+    if (!strcmp(cpcmd, "set_pwm")) {
+      int duty = (int)(doc["duty"] | 0);
+      bool en = doc.containsKey("enable") ? (bool)doc["enable"] : true;
+      g_pwm_duty_pct = (uint16_t)(duty<0?0:(duty>100?100:duty));
+      g_pwm_enabled = en;
+      if (g_mode==OpMode::MANUAL) apply_pwm_manual();
+      send_status_json(); return;
+    }
+    if (!strcmp(cpcmd, "enable_pwm")) {
+      g_pwm_enabled = (bool)(doc["enable"] | true);
+      if (g_mode==OpMode::MANUAL) apply_pwm_manual();
+      send_status_json(); return;
+    }
+    if (!strcmp(cpcmd, "restart_slac_hint")) {
+      uint32_t ms = (uint32_t)(doc["ms"] | 400);
+      OpMode prev = g_mode;
+      g_mode = OpMode::MANUAL; g_pwm_duty_pct = 100; g_pwm_enabled = true; apply_pwm_manual();
+      delay(ms);
+      g_mode = OpMode::DC_AUTO; apply_dc_auto_output(g_last_cp_state);
+      (void)prev; // unused
+      send_status_json(); return;
+    }
+    if (!strcmp(cpcmd, "reset")) { ESP.restart(); return; }
+    if (!strcmp(cpcmd, "cp.set_thresholds")) {
+      if (doc.containsKey("t12")) g_t12 = (int)doc["t12"];
+      if (doc.containsKey("t9"))  g_t9  = (int)doc["t9"];
+      if (doc.containsKey("t6"))  g_t6  = (int)doc["t6"];
+      if (doc.containsKey("t3"))  g_t3  = (int)doc["t3"];
+      if (doc.containsKey("t0"))  g_t0  = (int)doc["t0"];
+      send_status_json(); return;
+    }
+    if (!strcmp(cpcmd, "cp.auto_cal")) {
+      int smin=0,srob=0,savg=0,spk=0; read_cp_mv_burst(smin,srob,savg,spk);
+      g_t12 = srob - 100; if (g_t12<1800) g_t12=1800; g_t9 = g_t12-300; g_t6=g_t9-300; g_t3=g_t6-250; g_t0=g_t3-200;
+      send_status_json(); return;
+    }
+    // Unknown cmd -> ignore
+    return;
+  }
 }
 
 /* ================= Status JSON (kept) ======================= */
@@ -983,8 +1070,13 @@ void loop() {
     bool burst_has_B = (spk >= g_t9);
     g_belowB_run = burst_has_B ? 0 : (uint16_t)(((uint32_t)g_belowB_run + 1U) > 1000U ? 1000U : ((uint32_t)g_belowB_run + 1U));
     g_last_cp_mv_robust = rb_push_and_max(g_last_cp_mv);
-    char tentative = classify_state_from_mv(g_last_cp_mv_robust); char new_state = tentative;
-    if (g_last_cp_state=='B' && (tentative!='B') && g_belowB_run < B_DEMOTE_BURSTS) new_state='B';
+    char tentative = classify_state_from_mv(g_last_cp_mv_robust);
+    char new_state = tentative;
+    // Allow immediate promotion to 'A' when CP is clearly high.
+    // Keep a short hysteresis only for transitions B->(C/D/E).
+    if (g_last_cp_state=='B' && (tentative!='B') && tentative!='A' && g_belowB_run < B_DEMOTE_BURSTS) {
+      new_state='B';
+    }
     if (new_state!=g_last_cp_state) { char prev=g_last_cp_state; g_last_cp_state=new_state; if(g_mode==OpMode::DC_AUTO) apply_dc_auto_output(g_last_cp_state); else apply_pwm_manual();
       Serial.printf("[%lu] CP %c->%c (winMAX=%d last=%d pk=%d)\n", now, prev, g_last_cp_state, g_last_cp_mv_robust, g_last_cp_mv, g_last_cp_mv_peak_in_burst);
     } else { if(g_mode==OpMode::DC_AUTO) apply_dc_auto_output(g_last_cp_state); else apply_pwm_manual(); }
