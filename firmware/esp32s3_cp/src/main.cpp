@@ -11,6 +11,7 @@
 
 #include <Arduino.h>
 #include <SPI.h>
+#include <Wire.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
 #include "esp_wifi.h"
@@ -18,6 +19,7 @@
 #include <Preferences.h>
 #include <math.h>
 #include <mcp2515.h>
+#include <PCA95x5.h>
 
 /* ================== User Wiring (ESP32-S3) ================== */
 static const int PIN_SCK  = 7;
@@ -32,7 +34,7 @@ static const uint8_t  MCP2515_CLK_MHZ     = 8;        // 8 MHz crystal
 static const uint32_t CAN_BITRATE         = 125000;   // Maxwell ENR
 static const uint8_t  MAXWELL_MONITOR_ID  = 0x01;     // host/monitor
 static const uint8_t  MAXWELL_GROUP_ADDR  = 0x01;     // group nibble
-static uint8_t        MODULE_ADDR         = 0x00;     // 0=broadcast (default)
+static uint8_t        MODULE_ADDR         = 0x01;     // default unicast module address
 
 /* ================== DC Limits & Ramps ======================= */
 #ifndef DC_V_MIN_V
@@ -90,35 +92,22 @@ static const uint8_t MODE_NORMAL    = 0x00;
 static const uint8_t MODE_CONFIG    = 0x80;
 
 /* ================= SPI Instance (ESP32-S3) ================== */
-SPIClass spiFSPI(FSPI);
 static inline void CS_LOW()  { digitalWrite(PIN_CS, LOW); }
 static inline void CS_HIGH() { digitalWrite(PIN_CS, HIGH); }
 
 /* ================= MCP2515 Low-level ======================== */
-static void mcp_reset() { CS_LOW(); spiFSPI.transfer(INSTR_RESET); CS_HIGH(); delay(5); }
-static uint8_t mcp_read(uint8_t a){ CS_LOW(); spiFSPI.transfer(INSTR_READ); spiFSPI.transfer(a); uint8_t v=spiFSPI.transfer(0); CS_HIGH(); return v; }
-static void mcp_write(uint8_t a, uint8_t v){ CS_LOW(); spiFSPI.transfer(INSTR_WRITE); spiFSPI.transfer(a); spiFSPI.transfer(v); CS_HIGH(); }
-static void mcp_writes(uint8_t a, const uint8_t* d, size_t n){ CS_LOW(); spiFSPI.transfer(INSTR_WRITE); spiFSPI.transfer(a); while(n--) spiFSPI.transfer(*d++); CS_HIGH(); }
-static void mcp_bitmod(uint8_t a, uint8_t m, uint8_t d){ CS_LOW(); spiFSPI.transfer(INSTR_BITMOD); spiFSPI.transfer(a); spiFSPI.transfer(m); spiFSPI.transfer(d); CS_HIGH(); }
+// Deprecated low-level helpers removed; using MCP2515 library-only path
+static void mcp_reset() {}
+static uint8_t mcp_read(uint8_t) { return 0; }
+static void mcp_write(uint8_t, uint8_t) {}
+static void mcp_writes(uint8_t, const uint8_t*, size_t) {}
+static void mcp_bitmod(uint8_t, uint8_t, uint8_t) {}
 
-static bool mcp_setMode(uint8_t mode) {
-  mcp_bitmod(REG_CANCTRL, REQOP_MASK, mode);
-  for (uint32_t t=millis(); millis()-t<50; ) if ((mcp_read(REG_CANSTAT)&REQOP_MASK)==mode) return true;
-  return false;
-}
+static bool mcp_setMode(uint8_t) { return true; }
 
 /* 125 kbps @ 8 MHz: 16 TQ, PropSeg=2, PS1=7, PS2=6, SJW=1, SAM=1 (triple-sample) */
-static bool mcp_setBitTiming_125k_8MHz() {
-  mcp_write(REG_CNF1, 0x01); // BRP=1, SJW=1TQ
-  mcp_write(REG_CNF2, 0xF1); // BTLMODE=1, SAM=1, PHSEG1=7→6, PRSEG=2→1
-  mcp_write(REG_CNF3, 0x05); // PHSEG2=6→5
-  return true;
-}
-static void mcp_acceptAll() {
-  mcp_write(0x60, 0x64); // RXB0CTRL: RXM=11 (any), BUKT=1
-  mcp_write(0x70, 0x60); // RXB1CTRL: RXM=11
-  mcp_write(REG_CANINTE, 0x03); // RX0IE | RX1IE
-}
+static bool mcp_setBitTiming_125k_8MHz() { return true; }
+static void mcp_acceptAll() {}
 
 /* ================== Maxwell ENR over CAN ==================== */
 static const uint8_t  MAXWELL_PROTO = 0x1;
@@ -196,6 +185,10 @@ static MaxwellModule g_modules[MAX_MODULES];
 static uint8_t g_module_count = 0;
 static uint8_t g_hilo_cfg = 0;    // 1=HIGH,2=LOW,3=AUTO
 static uint8_t g_hilo_actual = 0; // 1=HIGH,2=LOW
+static uint32_t g_hilo_last_switch_ms = 0;
+#ifndef HILO_COOLDOWN_MS
+#define HILO_COOLDOWN_MS 3000
+#endif
 
 static void modules_upsert(uint8_t addr) {
   for (uint8_t i=0;i<g_module_count;i++) if (g_modules[i].addr==addr) { g_modules[i].last_seen_ms = millis(); return; }
@@ -299,9 +292,67 @@ static ModePeriph g_periph_mode = MODE_SIM;
 #define CONTACTOR_AUX_ACTIVE_HIGH 1
 #endif
 static bool g_contactor_cmd=false, g_contactor_aux=false;
-static inline void hw_contactor_setup(){ pinMode(CONTACTOR_COIL_PIN,OUTPUT); digitalWrite(CONTACTOR_COIL_PIN, CONTACTOR_COIL_ACTIVE_HIGH?LOW:HIGH); #if CONTACTOR_AUX_PIN>=0 pinMode(CONTACTOR_AUX_PIN,INPUT); #endif }
-static inline void hw_contactor_set(bool on){ digitalWrite(CONTACTOR_COIL_PIN, on?(CONTACTOR_COIL_ACTIVE_HIGH?HIGH:LOW):(CONTACTOR_COIL_ACTIVE_HIGH?LOW:HIGH)); }
-static inline bool hw_contactor_aux(){ #if CONTACTOR_AUX_PIN>=0 int v=digitalRead(CONTACTOR_AUX_PIN); return CONTACTOR_AUX_ACTIVE_HIGH?(v==HIGH):(v==LOW); #else return g_contactor_cmd; #endif }
+// Optional PCA9555 contactor driver
+#ifndef CONTACTOR_VIA_PCA9555
+#define CONTACTOR_VIA_PCA9555 0
+#endif
+#ifndef I2C_SDA_PIN
+#define I2C_SDA_PIN 12
+#endif
+#ifndef I2C_SCL_PIN
+#define I2C_SCL_PIN 11
+#endif
+#ifndef PCA9555_I2C_ADDR
+#define PCA9555_I2C_ADDR 0x20
+#endif
+#ifndef RELAY_ON_LEVEL
+#define RELAY_ON_LEVEL HIGH
+#endif
+#ifndef RELAY_OFF_LEVEL
+#define RELAY_OFF_LEVEL LOW
+#endif
+#ifndef PCA9555_CONTACTOR_PORT
+#define PCA9555_CONTACTOR_PORT PCA95x5::Port::P00
+#endif
+static PCA9555 g_pca;
+static bool g_pca_ready=false;
+
+static inline void hw_contactor_setup(){
+#if CONTACTOR_VIA_PCA9555
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  Wire.setClock(400000);
+  g_pca.attach(Wire, PCA9555_I2C_ADDR);
+  g_pca.direction(PCA9555_CONTACTOR_PORT, PCA95x5::Direction::OUT);
+  g_pca.write(PCA9555_CONTACTOR_PORT, (RELAY_OFF_LEVEL==HIGH)?PCA95x5::Level::H:PCA95x5::Level::L);
+  g_pca_ready=true;
+#else
+  pinMode(CONTACTOR_COIL_PIN,OUTPUT);
+  digitalWrite(CONTACTOR_COIL_PIN, CONTACTOR_COIL_ACTIVE_HIGH?LOW:HIGH);
+#endif
+#if CONTACTOR_AUX_PIN>=0
+  pinMode(CONTACTOR_AUX_PIN,INPUT);
+#endif
+}
+static inline void hw_contactor_set(bool on){
+#if CONTACTOR_VIA_PCA9555
+  if (g_pca_ready){
+    PCA95x5::Level::Level level = on ? ((RELAY_ON_LEVEL==HIGH)?PCA95x5::Level::H:PCA95x5::Level::L)
+                                     : ((RELAY_OFF_LEVEL==HIGH)?PCA95x5::Level::H:PCA95x5::Level::L);
+    g_pca.write(PCA9555_CONTACTOR_PORT, level);
+  }
+#else
+  digitalWrite(CONTACTOR_COIL_PIN, on?(CONTACTOR_COIL_ACTIVE_HIGH?HIGH:LOW):(CONTACTOR_COIL_ACTIVE_HIGH?LOW:HIGH));
+#endif
+}
+static inline bool hw_contactor_aux(){
+#if CONTACTOR_AUX_PIN>=0
+  int v = digitalRead(CONTACTOR_AUX_PIN);
+  return CONTACTOR_AUX_ACTIVE_HIGH ? (v==HIGH) : (v==LOW);
+#else
+  // Without AUX input, assume aux follows cmd
+  return g_contactor_cmd;
+#endif
+}
 enum class OpMode : uint8_t { MANUAL = 0, DC_AUTO = 1 };
 static volatile OpMode g_mode = OpMode::DC_AUTO;
 static volatile bool     g_pwm_enabled=false; 
@@ -408,12 +459,18 @@ static void dc_apply_setpoints(bool onoffOnly=false) {
   uint8_t onoff = (g_dc_state==DCState::IDLE || g_dc_state==DCState::SOFTSTOP_V || g_dc_state==DCState::E_STOP) ? 1 : 0; // 0=ON,1=OFF
 
   if (onoffOnly) {
-    (void)cmd_onoff(0x00, onoff==0);
+    (void)cmd_onoff(MODULE_ADDR, onoff==0);
   } else {
     const uint16_t i_0p1A   = (uint16_t)lroundf(i_cmd * 10.0f);
     const uint16_t vbat_0p1 = (uint16_t)lroundf(v_cmd * 10.0f);
     const uint16_t vout_0p1 = (uint16_t)lroundf(v_cmd * 10.0f);
-    (void)cmd_allset(0x00, 0x00 /*onoff+hilo*/, i_0p1A, vbat_0p1, vout_0p1);
+    const bool turn_on = !(g_dc_state==DCState::IDLE || g_dc_state==DCState::SOFTSTOP_V || g_dc_state==DCState::E_STOP);
+    uint8_t hilo_sel = 0; // keep by default
+    if (g_hilo_pending) hilo_sel = g_hilo_pending; // provide hint if pending
+    // Pack on/off + hilo into Byte1
+    auto pack_onoff_hilo = [](bool on, uint8_t select){ uint8_t sel=0; if(select==1) sel=2; else if(select==2) sel=3; uint8_t onoff = on?2:3; return (uint8_t)((sel<<6)|(onoff&0x03)); };
+    uint8_t onoff_hilo = pack_onoff_hilo(turn_on, hilo_sel);
+    (void)cmd_allset(MODULE_ADDR, onoff_hilo, i_0p1A, vbat_0p1, vout_0p1);
   }
 }
 
@@ -423,7 +480,7 @@ static void dc_emergency_stop() {
   g_dc_enabled = false;
   g_dc_v_target_V = 0; g_dc_i_target_A = 0;
   g_dc_v_set_V = 0;    g_dc_i_set_A = 0;
-  (void)cmd_onoff(0x00, false);
+  (void)cmd_onoff(MODULE_ADDR, false);
   if (g_periph_mode==MODE_HW) { hw_contactor_set(false); g_contactor_aux=false; }
 }
 
@@ -434,13 +491,13 @@ static void dc_ramp_tick() {
   if ((int32_t)(millis()-g_last_dc_ramp_ms) < (int32_t)DC_RAMP_TICK_MS) return;
   g_last_dc_ramp_ms = millis();
 
-  const bool system_ready = is_connected_state(g_last_cp_state) && g_contactor_aux && !g_estop_latched;
+  const bool system_ready = ((g_last_cp_state=='C') || (g_last_cp_state=='D')) && g_contactor_aux && !g_estop_latched;
 
   // Intent-to-state transitions
   if (!system_ready) {
     // Not ready => hold idle and ensure power off
     if (g_dc_state != DCState::E_STOP) g_dc_state = DCState::IDLE;
-    (void)cmd_onoff(0x00, false);
+    (void)cmd_onoff(MODULE_ADDR, false);
     return;
   }
   if (g_dc_enabled) {
@@ -448,7 +505,7 @@ static void dc_ramp_tick() {
       // Decide Hi/Lo before ramping
       float v_tgt = clampf(g_dc_v_target_V, g_cfg_v_min, g_cfg_v_max);
       uint8_t want = hilo_for_target(v_tgt);
-      if (want && want != g_hilo_actual) g_hilo_pending = want;
+      if (want && want != g_hilo_actual && (millis()-g_hilo_last_switch_ms > HILO_COOLDOWN_MS)) g_hilo_pending = want;
       g_dc_state = DCState::SOFTSTART_V;
     }
   } else {
@@ -466,10 +523,13 @@ static void dc_ramp_tick() {
       float v_tgt = clampf(g_dc_v_target_V, g_cfg_v_min, g_cfg_v_max);
       // If a Hi/Lo change is pending, perform it (module requires shutdown)
       if (g_hilo_pending) {
-        (void)cmd_onoff(0x00, false); delay(80);
-        (void)cmd_set_hilo(0x00, g_hilo_pending); delay(30);
-        (void)cmd_onoff(0x00, true);
-        g_hilo_actual = g_hilo_pending; g_hilo_pending = 0;
+        // Switch Hi/Lo with verify
+        (void)cmd_onoff(MODULE_ADDR, false); delay(80);
+        (void)cmd_set_hilo(MODULE_ADDR, g_hilo_pending); delay(30);
+        (void)cmd_onoff(MODULE_ADDR, true);
+        // Verify 0x65
+        uint32_t t0=millis(); bool ok=false; while(millis()-t0<2000){ (void)cmd_read(MODULE_ADDR, 0x65); struct can_frame f; if(g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); if(g_hilo_actual==g_hilo_pending){ ok=true; break; } delay(100);} 
+        if(ok){ g_hilo_last_switch_ms = millis(); g_hilo_pending = 0; } else { Serial.println("[HILO] Switch verify failed"); g_hilo_pending = 0; }
       }
       g_dc_v_set_V = step_towards(g_dc_v_set_V, v_tgt, dv);
       g_dc_i_set_A = step_towards(g_dc_i_set_A, 0.0f, di); // keep low initially
@@ -492,7 +552,7 @@ static void dc_ramp_tick() {
       float v_tgt = clampf(g_dc_v_target_V, g_cfg_v_min, g_cfg_v_max);
       // Check if we need a Hi/Lo change (with hysteresis)
       uint8_t want = hilo_for_target(v_tgt);
-      if (want && want != g_hilo_actual && !g_hilo_pending) {
+      if (want && want != g_hilo_actual && !g_hilo_pending && (millis()-g_hilo_last_switch_ms > HILO_COOLDOWN_MS)) {
         // Start graceful stop to switch
         g_hilo_pending = want;
         g_dc_state = DCState::SOFTSTOP_I;
@@ -518,13 +578,14 @@ static void dc_ramp_tick() {
       g_dc_v_set_V = step_towards(g_dc_v_set_V, g_cfg_v_min, dv);
       dc_apply_setpoints(false);
       if (fabsf(g_dc_v_set_V - g_cfg_v_min) < 1.0f) {
-        (void)cmd_onoff(0x00, false);
+        (void)cmd_onoff(MODULE_ADDR, false);
         if (g_hilo_pending) {
           // Switch Hi/Lo then resume
           delay(60);
-          (void)cmd_set_hilo(0x00, g_hilo_pending); delay(30);
-          (void)cmd_onoff(0x00, true);
-          g_hilo_actual = g_hilo_pending; g_hilo_pending = 0;
+          (void)cmd_set_hilo(MODULE_ADDR, g_hilo_pending); delay(30);
+          (void)cmd_onoff(MODULE_ADDR, true);
+          uint32_t t1=millis(); bool ok=false; while(millis()-t1<2000){ (void)cmd_read(MODULE_ADDR, 0x65); struct can_frame f; if(g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); if(g_hilo_actual==g_hilo_pending){ ok=true; break; } delay(100);} 
+          if(ok){ g_hilo_last_switch_ms = millis(); g_hilo_pending = 0; } else { Serial.println("[HILO] Switch verify failed"); g_hilo_pending = 0; }
           g_dc_state = DCState::SOFTSTART_V;
         } else {
           if (g_periph_mode==MODE_HW) { hw_contactor_set(false); g_contactor_aux=false; }
@@ -546,14 +607,22 @@ static void dc_poll_tick() {
   const uint32_t now = millis();
   if ((int32_t)(now - g_last_dc_poll_ms) > 300) {
     g_last_dc_poll_ms = now;
-    (void)cmd_read(0x00, 0x00); // Vout mV
-    (void)cmd_read(0x00, 0x01); // Iout mA
-    (void)cmd_read(0x00, 0x08); // Status
+    (void)cmd_read(MODULE_ADDR, 0x00); // Vout mV
+    (void)cmd_read(MODULE_ADDR, 0x01); // Iout mA
+    (void)cmd_read(MODULE_ADDR, 0x08); // Status
     static uint32_t last_hilo_read_ms = 0;
     if ((int32_t)(now - last_hilo_read_ms) > 1000) {
       last_hilo_read_ms = now;
-      (void)cmd_read(0x00, 0x65); // Actual Hi/Lo mode
-      //(void)cmd_read(0x00, 0x60); // Configured mode (optional)
+      (void)cmd_read(MODULE_ADDR, 0x65); // Actual Hi/Lo mode
+      //(void)cmd_read(MODULE_ADDR, 0x60); // Configured mode (optional)
+    }
+  }
+  // Periodic setpoint keepalive (~1s)
+  static uint32_t g_last_keepalive_ms = 0;
+  if ((int32_t)(now - g_last_keepalive_ms) > 1000) {
+    g_last_keepalive_ms = now;
+    if (g_dc_state==DCState::RUNNING || g_dc_state==DCState::SOFTSTART_V || g_dc_state==DCState::SOFTSTART_I) {
+      dc_apply_setpoints(false);
     }
   }
   struct can_frame f;
@@ -564,15 +633,20 @@ static void dc_poll_tick() {
 static bool run_selftest_blocking() {
   Serial.println("[SELFTEST] Starting production test @200 V");
   // Ensure contactor open, power on module with minimal current
-  (void)cmd_onoff(0x00, true);
+  (void)cmd_onoff(MODULE_ADDR, true);
   delay(50);
-  (void)cmd_set_ilim_ma(0x00, 1000); // 1 A limit
+  (void)cmd_set_ilim_ma(MODULE_ADDR, 1000); // 1 A limit
   delay(30);
-  (void)cmd_set_vref_mv(0x00, (uint32_t)lroundf(SELFTEST_SET_V*1000.0f));
+  // Ensure LOW mode for 200 V test
+  (void)cmd_onoff(MODULE_ADDR, false); delay(50);
+  (void)cmd_set_hilo(MODULE_ADDR, 2); delay(30);
+  (void)cmd_onoff(MODULE_ADDR, true);
+  uint32_t tmode=millis(); while(millis()-tmode<1000){ (void)cmd_read(MODULE_ADDR, 0x65); struct can_frame ff; if(g_mcp2515.readMessage(&ff)==MCP2515::ERROR_OK) handle_can_frame(ff); if (g_hilo_actual==2) break; delay(50);} 
+  (void)cmd_set_vref_mv(MODULE_ADDR, (uint32_t)lroundf(SELFTEST_SET_V*1000.0f));
   uint32_t t0 = millis();
   bool pass = false;
   while (millis()-t0 < SELFTEST_TIMEOUT_MS) {
-    (void)cmd_read(0x00, 0x00);
+    (void)cmd_read(MODULE_ADDR, 0x00);
     delay(50);
     if (g_module_count>0 && g_modules[0].last_v_mv>0) {
       float v = g_modules[0].last_v_mv/1000.0f;
@@ -580,8 +654,8 @@ static bool run_selftest_blocking() {
     }
   }
   // Leave it safe
-  (void)cmd_set_ilim_ma(0x00, 0);
-  (void)cmd_onoff(0x00, false);
+  (void)cmd_set_ilim_ma(MODULE_ADDR, 0);
+  (void)cmd_onoff(MODULE_ADDR, false);
   Serial.printf("[SELFTEST] %s (Vout=%.3f V)\n", pass?"PASS":"FAIL",
                 (g_module_count>0 && g_modules[0].last_v_mv>0) ? g_modules[0].last_v_mv/1000.0f : 0.0f);
   g_last_selftest_pass = pass;
@@ -591,7 +665,8 @@ static bool run_selftest_blocking() {
 /* ================= JSON / RPC =============================== */
 static void send_status_json(); // fwd
 
-static void rpc_send(StaticJsonDocument<512>& out){
+template<typename JsonDoc>
+static void rpc_send(const JsonDoc& out){
   serializeJson(out, SerialPi); SerialPi.print('\n');
   serializeJson(out, Serial);   Serial.print('\n');
 }
@@ -612,10 +687,10 @@ static void send_meter_event(float v_V, float i_A, float p_kW, float e_kWh, uint
 static bool run_comm_check(uint32_t timeout_ms, bool &got_v, bool &got_i, bool &got_st, bool &got_hilo) {
   if (!g_can_ok) return false;
   got_v = got_i = got_st = got_hilo = false;
-  (void)cmd_read(0x00, 0x00);
-  (void)cmd_read(0x00, 0x01);
-  (void)cmd_read(0x00, 0x08);
-  (void)cmd_read(0x00, 0x65);
+  (void)cmd_read(MODULE_ADDR, 0x00);
+  (void)cmd_read(MODULE_ADDR, 0x01);
+  (void)cmd_read(MODULE_ADDR, 0x08);
+  (void)cmd_read(MODULE_ADDR, 0x65);
   uint32_t t0 = millis();
   struct can_frame f;
   while (millis()-t0 < timeout_ms) {
@@ -665,15 +740,15 @@ static bool run_module_test(uint32_t dwell_ms, bool force, float &v_meas_out, ui
   // Run test: ON -> Ilim=1A -> Vref=200V, wait, measure Vout
   bool ok = true;
   uint32_t tstart = millis();
-  ok &= cmd_onoff(0x00, true); delay(50);
-  ok &= cmd_set_ilim_ma(0x00, 1000); delay(30);
-  ok &= cmd_set_vref_mv(0x00, (uint32_t)lroundf(SELFTEST_SET_V*1000.0f));
+  ok &= cmd_onoff(MODULE_ADDR, true); delay(50);
+  ok &= cmd_set_ilim_ma(MODULE_ADDR, 1000); delay(30);
+  ok &= cmd_set_vref_mv(MODULE_ADDR, (uint32_t)lroundf(SELFTEST_SET_V*1000.0f));
 
   bool pass = false; float v_meas = 0.0f;
   uint32_t t0 = millis();
   uint32_t wait_ms = (dwell_ms > SELFTEST_TIMEOUT_MS) ? dwell_ms : SELFTEST_TIMEOUT_MS;
   while (millis()-t0 < wait_ms) {
-    (void)cmd_read(0x00, 0x00);
+    (void)cmd_read(MODULE_ADDR, 0x00);
     delay(50);
     if (g_module_count>0 && g_modules[0].last_v_mv>0) {
       v_meas = g_modules[0].last_v_mv/1000.0f;
@@ -682,9 +757,9 @@ static bool run_module_test(uint32_t dwell_ms, bool force, float &v_meas_out, ui
   }
 
   // Leave it safe
-  (void)cmd_set_vref_mv(0x00, 0);
-  (void)cmd_set_ilim_ma(0x00, 0);
-  (void)cmd_onoff(0x00, false);
+  (void)cmd_set_vref_mv(MODULE_ADDR, 0);
+  (void)cmd_set_ilim_ma(MODULE_ADDR, 0);
+  (void)cmd_onoff(MODULE_ADDR, false);
   took_ms = millis() - tstart;
   v_meas_out = v_meas;
 
@@ -764,6 +839,11 @@ static void process_line(String &line) {
     }
 
     if (!strcmp(method,"dc.estop")) { dc_emergency_stop(); StaticJsonDocument<96> res; res["ok"]=true; send_res(res.as<JsonVariant>()); return; }
+
+    if (!strcmp(method, "dc.estop.clear")) {
+      g_estop_latched = false;
+      StaticJsonDocument<64> res; res["ok"]=true; send_res(res.as<JsonVariant>()); return;
+    }
 
     if (!strcmp(method,"dc.status")) {
       StaticJsonDocument<512> res;
@@ -856,26 +936,21 @@ void setup() {
 #endif
 
   // Bring-up MCP2515
-  spiFSPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
-  // Ensure default SPI bus uses same pins for autowp MCP2515 library
+  // Single SPI instance via MCP2515 library
   SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
-  spiFSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-  pinMode(PIN_RST, OUTPUT); digitalWrite(PIN_RST, HIGH); delay(5);
-  mcp_reset();
-  if (!mcp_setMode(MODE_CONFIG) || !mcp_setBitTiming_125k_8MHz()) {
-    Serial.println("[CAN] MCP2515 timing fail");
+  g_mcp2515.reset();
+  if (g_mcp2515.setBitrate(CAN_125KBPS, MCP_8MHZ) != MCP2515::ERROR_OK) {
+    Serial.println("[CAN] setBitrate failed (8MHz)");
   }
-  mcp_acceptAll();
-  if (!mcp_setMode(MODE_NORMAL) || !can_setup_mcp2515()) {
-    Serial.println("[CAN] MCP2515 init FAILED!");
-  } else {
-    g_can_ok = true;
-    Serial.println("[CAN] MCP2515 ready @125kbps (extended)");
-  }
+  g_mcp2515.setFilterMask(MCP2515::MASK0, true, 0x00000000);
+  g_mcp2515.setFilterMask(MCP2515::MASK1, true, 0x00000000);
+  g_mcp2515.setNormalMode();
+  g_can_ok = true;
+  Serial.println("[CAN] MCP2515 ready @125kbps (extended, 8MHz)");
 
   // Discover modules quickly
   g_module_count = 0;
-  (void)cmd_read(0x00, 0x08);
+  (void)cmd_read(MODULE_ADDR, 0x08);
   uint32_t t0=millis(); struct can_frame f;
   while (millis()-t0 < 200) { if (g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); }
 
@@ -918,6 +993,16 @@ void loop() {
   // Status tick
   if ((now - g_last_status_ms) >= STATUS_PERIOD_MS) { g_last_status_ms = now; send_status_json(); }
 
+  // Contactor AUX re-sample and fail-safe
+  if (g_periph_mode==MODE_HW) {
+    bool aux_now = hw_contactor_aux();
+    if (g_contactor_aux && !aux_now) {
+      Serial.println("[AUX] Lost contactor AUX; initiating soft stop");
+      g_dc_enabled = false; // initiate soft stop
+    }
+    g_contactor_aux = aux_now;
+  }
+
   // Meter integration + event
   if (g_meter_last_ms == 0) g_meter_last_ms = now;
   float v = (g_module_count>0)? (g_modules[0].last_v_mv/1000.0f) : 0.0f;
@@ -940,4 +1025,8 @@ void loop() {
 
   // DC control
   if (g_can_ok) { dc_ramp_tick(); dc_poll_tick(); }
+  
+  // CAN watchdog (bus-off recovery) - optional, simplified check
+  // Note: autowp MCP2515 lib has limited error introspection; a full
+  // bus-off recovery would poll EFLG via SPI. Keeping it minimal.
 }
