@@ -100,8 +100,8 @@ modprobe tun || true
 
 echo "Configuring SPI and QCA7000 overlay..."
 IRQ_PIN=${IRQ_PIN:-25}
-# Default to 12 MHz for qcaspi; lower speeds can increase "Bad signature" occurrences
-SPI_SPEED=${SPI_SPEED:-12000000}
+# Default to 8 MHz for qcaspi; improves stability on longer SPI runs
+SPI_SPEED=${SPI_SPEED:-8000000}
 
 # Detect boot config path
 BOOTCFG="/boot/firmware/config.txt"

@@ -655,7 +655,7 @@ class EVSECommunicationController(SlacSessionController):
                         # Try initial iface then fall back to common PLC ifaces if SetKey fails
                         candidate_ifaces = []
                         try:
-                            # Start with provided iface
+                            # Start with provided iface and add common PLC candidates
                             seen = set()
                             for name in [iface, "plc0", "eth1", "eth0"]:
                                 if name and name not in seen and os.path.isdir(f"/sys/class/net/{name}"):
@@ -663,6 +663,20 @@ class EVSECommunicationController(SlacSessionController):
                                     seen.add(name)
                         except Exception:
                             candidate_ifaces = [iface]
+                        # Prefer interfaces backed by known PLC drivers (qcaspi/qca7000)
+                        try:
+                            allowed = {"qca7000", "qcaspi"}
+                            preferred = []
+                            others = []
+                            for n in candidate_ifaces:
+                                drv = _resolve_iface_driver_name(n)
+                                if drv in allowed or n == iface:
+                                    preferred.append(n)
+                                else:
+                                    others.append(n)
+                            candidate_ifaces = preferred + others
+                        except Exception:
+                            pass
 
                         session = None
                         last_slac_cp_forwarded = None

@@ -362,6 +362,14 @@ class ESPPeriphHardware(EVSEHardware):
         except Exception:
             pass
 
+    # Report current CP mode as seen by the firmware ('dc' or 'manual')
+    def cp_mode(self) -> Optional[str]:
+        try:
+            st = self._periph.cp_get_status(wait_s=0.3)
+            return getattr(st, "mode", None)
+        except Exception:
+            return None
+
     def close(self) -> None:
         try:
             self._periph.close()

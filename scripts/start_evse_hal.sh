@@ -9,6 +9,14 @@ set -Eeuo pipefail
 # --- Helpers ---
 find_iface() {
   if [[ -n "${PLC_IFACE:-}" ]]; then echo "${PLC_IFACE}"; return; fi
+  # Prefer an interface driven by qcaspi/qca7000
+  for n in /sys/class/net/*; do
+    i=$(basename "$n")
+    if ethtool -i "$i" 2>/dev/null | grep -qi '^driver:\s*qcaspi\|^driver:\s*qca7000'; then
+      echo "$i"; return;
+    fi
+  done
+  # Common names
   if ip link show plc0 >/dev/null 2>&1; then echo plc0; return; fi
   if ip link show eth1 >/dev/null 2>&1; then echo eth1; return; fi
   if ip link show eth0 >/dev/null 2>&1; then echo eth0; return; fi
@@ -58,6 +66,25 @@ ensure_lladdr() {
   sudo -n ip -6 addr add "${ll}/64" dev "$nic" scope link 2>/dev/null || true
 }
 
+# Heuristic: if PLC iface shows qcaspi and unhealthy stats, auto soft reset
+maybe_auto_plc_reset() {
+  local nic="$1"
+  # Allow opt-out
+  if [[ "${EVSE_PLC_SOFT_RESET_AUTO:-1}" == "0" ]]; then return; fi
+  # Respect explicit request precedence
+  if [[ "${EVSE_PLC_SOFT_RESET:-0}" != "0" ]]; then return; fi
+  if ! ethtool -i "$nic" 2>/dev/null | grep -qi '^driver:\s*qcaspi'; then return; fi
+  # Look for non-zero reset/bad signature counters
+  if ethtool -S "$nic" 2>/dev/null | awk -F: '/(Triggered resets|Device resets|Bad signature)/{gsub(/ /,""); if($2+0>0) f=1} END{exit !f}'; then
+    echo "[start-evse-hal] qcaspi stats suggest instability; auto soft-resetting ..."
+    # Allow override of speed/burst via EVSE_PLC_AUTO_SOFT_RESET_*; default to 8 MHz / 5000
+    QCASPI_CLKSPEED="${EVSE_PLC_AUTO_SOFT_RESET_SPEED:-8000000}" \
+    QCASPI_BURST="${EVSE_PLC_AUTO_SOFT_RESET_BURST:-5000}" \
+    QCASPI_PLUGGABLE="${QCASPI_PLUGGABLE:-1}" \
+    sudo -n bash scripts/plc_soft_reset.sh || true
+  fi
+}
+
 usage() {
   cat <<EOF
 Usage: $0 [--evse-id EVSE-1] [--iface IFACE] [--port /dev/serial0] [--adapter esp-uart] [--json [FILE]]
@@ -73,6 +100,10 @@ Environment overrides:
   SECC_CONFIG_PATH  Path to SECC .env (optional)
   SLAC_CONFIG_PATH  Path to PySLAC .env (optional)
   CERT_STORE_PATH   Path to certificates (PKI_PATH) (optional)
+  EVSE_PLC_SOFT_RESET_AUTO  Auto soft-reset qcaspi on bad stats (default: 1)
+  EVSE_PLC_SOFT_RESET       Force pre-run soft reset (default: 0)
+  EVSE_PLC_AUTO_SOFT_RESET_SPEED  qcaspi clock (Hz) for reset (default: 8000000)
+  EVSE_PLC_AUTO_SOFT_RESET_BURST  qcaspi burst len for reset (default: 5000)
 
 Examples:
   $0 --evse-id EVSE-1            # auto-detect iface/port, text logs
@@ -214,7 +245,10 @@ echo "[start-evse-hal] Cleaning up previous runs (if any) ..."
   fi
 fi
 
-# Optional PLC soft reset (driver rebinding) for QCA7000/qcaspi before SLAC
+# Heuristic pre-run PLC soft reset if stats look unhealthy
+maybe_auto_plc_reset "${IFACE}"
+
+# Optional PLC soft reset (driver rebinding) for QCA7000/qcaspi before SLAC (explicit)
 if [[ "${EVSE_PLC_SOFT_RESET:-0}" != "0" ]]; then
   if [[ -x "scripts/plc_soft_reset.sh" ]]; then
     echo "[start-evse-hal] Performing PLC soft reset (qcaspi) ..."

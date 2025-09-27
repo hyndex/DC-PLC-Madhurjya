@@ -1,0 +1,178 @@
+jpi@jpi:~/Desktop/DC-PLC-Madhurjya $ EVSE_PLC_SOFT_RESET=1 EVSE_PLC_AUTO_SOFT_RESET_SPEED=8000000 EVSE_PLC_AUTO_SOFT_RESET_BURST=5000 PLC_IFACE=eth1 EVSE_CP_HOST_HINTS=1 EVSE_TEE_JSON=/tmp/evse_e2e.jsonl scripts/start_evse_hal.sh --evse-id INJPSE0006360 --adapter esp-periph --port /dev/ttyACM0 --json /tmp/evse_e2e.jsonl
+[start-evse-hal] EVSE_ID=INJPSE0006360 IFACE=eth1 ADAPTER=esp-periph PORT=/dev/ttyACM0
+[start-evse-hal] LOG_LEVEL=INFO LOG_FORMAT=text (tee -> /tmp/evse_e2e.jsonl)
+[start-evse-hal] Python=/opt/evse-venv/bin/python
+[start-evse-hal] Cleaning up previous runs (if any) ...
+[start-evse-hal] Performing PLC soft reset (qcaspi) ...
+[plc-soft-reset] Bringing PLC interface down (if present) ...
+[plc-soft-reset] Attempting module reload (qcaspi) ...
+[plc-soft-reset] Rebinding SPI device if driver path exists ...
+[plc-soft-reset] Waiting for netdev ...
+[plc-soft-reset] Detected PLC if: eth1
+[plc-soft-reset] Bringing iface up and permissive ...
+[plc-soft-reset] ethtool driver stats:
+NIC statistics:
+     Triggered resets: 1
+     Device resets: 0
+     Reset timeouts: 0
+     Read errors: 0
+     Write errors: 0
+     Read buffer errors: 0
+     Write buffer errors: 0
+     Out of memory: 0
+     Write buffer misses: 0
+     Transmit ring full: 0
+     SPI errors: 0
+     Write verify errors: 0
+     Buffer available errors: 0
+     Bad signature: 0
+[plc-soft-reset] Done.
+[start-evse-hal] Pre-warming EXI codec ...
+2025-09-27 21:35:06,543 INFO slac_session: 
+
+#################################################
+ ###### Starting PySlac version: 0.8.3 #######
+#################################################
+
+2025-09-27 21:35:06,545 INFO util.standards_check: Timing summary (CCS/ISO 15118)
+2025-09-27 21:35:06,548 INFO util.standards_check: SLAC: init_timeout=50.000s, atten_results_timeout=EV-defined (<=1200ms)
+2025-09-27 21:35:06,550 INFO util.standards_check: ISO15118 Shared: SDP_REQ=0.250s, SAP_REQ=2.000s, COMM_SETUP=20.000s, SEQ_TO=60.000s, ONGOING=60.000s
+2025-09-27 21:35:06,552 INFO util.standards_check: ISO15118-2: SESSION_SETUP=2.000s, SERVICE_DISCOVERY=2.000s, CPD=2.000s, CURRENT_DEMAND=0.250s
+2025-09-27 21:35:06,555 INFO util.standards_check: ISO15118-20: COMM_SETUP=20.000s, SEQ_TO=60.000s, AC_CL=0.500s, DC_CL=0.500s
+2025-09-27 21:35:06,560 INFO evse.main: PLC interface detected
+2025-09-27 21:35:06,608 INFO esp.periph: ESP periph serial open
+2025-09-27 21:35:06,664 INFO hal.esp.periph: ESP periph info
+2025-09-27 21:35:06,823 INFO evse.main: HAL mode: waiting for CP states to start SLAC
+2025-09-27 21:35:06,887 INFO hal.esp.periph: CP state (init)
+2025-09-27 21:35:08,151 INFO evse.main: Cable unlocked
+2025-09-27 21:35:10,334 INFO evse.main: Cable unlocked
+2025-09-27 21:35:12,579 INFO evse.main: Cable unlocked
+2025-09-27 21:35:13,543 INFO hal.esp.periph: CP state
+2025-09-27 21:35:13,669 INFO evse.main: Vehicle detected via CP
+2025-09-27 21:35:13,675 INFO evse.main: PLC interface detected
+2025-09-27 21:35:13,696 INFO slac_session: CM_SET_KEY: Started...
+2025-09-27 21:35:23,708 INFO slac_session: CM_SET_KEY: Finished!
+2025-09-27 21:35:23,709 INFO evse.main: CM_SET_KEY succeeded
+2025-09-27 21:35:30,027 INFO evse.main: HAL SLAC proactive nudge
+2025-09-27 21:35:30,705 INFO slac_session: Matching ongoing (EVSE ID: INJPSE0006360. Run ID: b'\xd0[\xccG\x8a\x19\x9d\xbe').
+2025-09-27 21:35:30,706 INFO evse.main: SLAC matching in progress for INJPSE0006360
+2025-09-27 21:35:30,797 INFO evse.main: SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=ac:59:6d:68:c8:3d:07 run_id=d0:5b:cc:47:8a:19:9d:be
+2025-09-27 21:35:31,651 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: INJPSE0006360. Run ID: b'\xd0[\xccG\x8a\x19\x9d\xbe').
+2025-09-27 21:35:31,699 INFO evse.main: SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=ac:59:6d:68:c8:3d:07 run_id=d0:5b:cc:47:8a:19:9d:be
+2025-09-27 21:35:31,701 INFO evse.main: Launching ISO 15118 SECC
+2025-09-27 21:35:31,725 INFO evse.main: EVSE controller=hal
+2025-09-27 21:35:34,568 INFO iso15118.shared.exi_codec: EXI Codec version: 1.55
+2025-09-27 21:35:34,569 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.SAP): {"supportedAppProtocolRes": {"ResponseCode": "OK_SuccessfulNegotiation", "SchemaID": 0}}
+2025-09-27 21:35:34,718 INFO iso15118.shared.exi_codec: EXI Codec version: 1.55
+2025-09-27 21:35:34,719 INFO iso15118.secc: Starting 15118 version: 0.31.0
+2025-09-27 21:35:34,720 INFO iso15118.secc.comm_session_handler: Communication session handler started
+2025-09-27 21:35:34,722 INFO iso15118.secc.transport.udp_server: UDP server socket ready
+2025-09-27 21:35:34,723 INFO iso15118.secc.transport.udp_server: UDP server started at address FF02::1%eth1 and port 15118
+2025-09-27 21:35:34,813 INFO iso15118.secc.comm_session_handler: SDPRequest received: [Security: NO_TLS, Protocol: TCP]
+2025-09-27 21:35:34,817 INFO iso15118.secc.transport.tcp_server: TCP bind succeeded on fe80::84f4:7eff:fefb:ca7e%eth1:59966
+2025-09-27 21:35:34,818 INFO iso15118.secc.transport.tcp_server: TCP server started at address fe80::84f4:7eff:fefb:ca7e%eth1 and port 59966
+2025-09-27 21:35:34,830 INFO iso15118.secc.comm_session_handler: Sending SDPResponse: [ IP address: fe80::84f4:7eff:fefb:ca7e, Port: 59966 , Security: NO_TLS , Transport: TCP ]
+2025-09-27 21:35:34,926 INFO iso15118.secc.transport.udp_server: UDP server has been paused.
+2025-09-27 21:35:34,927 INFO iso15118.secc.comm_session_handler: TCP client connected, client address is ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 31).
+2025-09-27 21:35:34,927 INFO hlc: ISO EVSEID
+2025-09-27 21:35:34,951 INFO iso15118.shared.comm_session: Starting a new communication session
+2025-09-27 21:35:34,952 INFO iso15118.shared.states: Entered state SupportedAppProtocol
+2025-09-27 21:35:35,265 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.SAP): {"supportedAppProtocolReq":{"AppProtocol":[{"ProtocolNamespace":"urn:din:70121:2012:MsgDef","VersionNumberMajor":2,"VersionNumberMinor":0,"SchemaID":1,"Priority":2},{"ProtocolNamespace":"urn:iso:15118:2:2013:MsgDef","VersionNumberMajor":2,"VersionNumberMinor":0,"SchemaID":0,"Priority":1}]}}
+2025-09-27 21:35:35,266 INFO iso15118.shared.comm_session: supportedAppProtocolReq received
+2025-09-27 21:35:35,267 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.SAP): {"supportedAppProtocolRes": {"ResponseCode": "OK_SuccessfulNegotiation", "SchemaID": 0}}
+2025-09-27 21:35:35,273 INFO iso15118.secc.states.sap_states: Chosen protocol: ISO_15118_2
+2025-09-27 21:35:35,274 INFO iso15118.shared.comm_session: Sent supportedAppProtocolRes
+2025-09-27 21:35:35,275 INFO iso15118.secc.controller.simulator: iso15118 state: SupportedAppProtocol
+2025-09-27 21:35:35,276 INFO hlc: ISO15118 state
+2025-09-27 21:35:35,280 INFO iso15118.shared.states: Entered state SessionSetup
+2025-09-27 21:35:35,281 INFO iso15118.secc.controller.simulator: iso15118 state: SessionSetup
+2025-09-27 21:35:35,281 INFO hlc: ISO15118 state
+2025-09-27 21:35:35,758 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"00"},"Body":{"SessionSetupReq":{"EVCCID":"381F26339DB0"}}}}
+2025-09-27 21:35:35,759 INFO iso15118.shared.comm_session: SessionSetupReq received
+2025-09-27 21:35:35,760 INFO hlc: ISO EVSEID
+2025-09-27 21:35:35,761 INFO iso15118.secc.quirks: EVCC identified: 381F26339DB0
+2025-09-27 21:35:35,762 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "945C37796CB02E4D"}, "Body": {"SessionSetupRes": {"ResponseCode": "OK_NewSessionEstablished", "EVSEID": "INJPSE0006360", "EVSETimeStamp": 1758998135}}}}
+2025-09-27 21:35:36,072 INFO iso15118.shared.comm_session: Sent SessionSetupRes
+2025-09-27 21:35:36,073 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 748 ms
+2025-09-27 21:35:36,074 INFO iso15118.secc.controller.simulator: iso15118 state: SessionSetup
+2025-09-27 21:35:36,074 INFO hlc: ISO15118 state
+2025-09-27 21:35:36,075 INFO iso15118.shared.states: Entered state ServiceDiscovery
+2025-09-27 21:35:36,076 INFO iso15118.secc.controller.simulator: iso15118 state: ServiceDiscovery
+2025-09-27 21:35:36,077 INFO hlc: ISO15118 state
+2025-09-27 21:35:36,333 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"945C37796CB02E4D"},"Body":{"ServiceDiscoveryReq":{}}}}
+2025-09-27 21:35:36,333 INFO iso15118.shared.comm_session: ServiceDiscoveryReq received
+2025-09-27 21:35:36,380 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "945C37796CB02E4D"}, "Body": {"ServiceDiscoveryRes": {"ResponseCode": "OK", "PaymentOptionList": {"PaymentOption": ["ExternalPayment"]}, "ChargeService": {"ServiceID": 1, "ServiceName": "AC_DC_Charging", "ServiceCategory": "EVCharging", "FreeService": false, "SupportedEnergyTransferMode": {"EnergyTransferMode": ["DC_core", "DC_extended"]}}}}}}
+2025-09-27 21:35:36,626 INFO iso15118.shared.comm_session: Sent ServiceDiscoveryRes
+2025-09-27 21:35:36,627 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 508 ms
+2025-09-27 21:35:36,628 INFO iso15118.secc.controller.simulator: iso15118 state: ServiceDiscovery
+2025-09-27 21:35:36,628 INFO hlc: ISO15118 state
+2025-09-27 21:35:36,832 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"945C37796CB02E4D"},"Body":{"PaymentServiceSelectionReq":{"SelectedPaymentOption":"ExternalPayment","SelectedServiceList":{"SelectedService":[{"ServiceID":1}]}}}}}
+2025-09-27 21:35:36,834 INFO iso15118.shared.comm_session: PaymentServiceSelectionReq received
+2025-09-27 21:35:36,835 INFO iso15118.shared.states: Entered state PaymentServiceSelection
+2025-09-27 21:35:36,837 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "945C37796CB02E4D"}, "Body": {"PaymentServiceSelectionRes": {"ResponseCode": "OK"}}}}
+2025-09-27 21:35:37,018 INFO iso15118.shared.comm_session: Sent PaymentServiceSelectionRes
+2025-09-27 21:35:37,019 INFO iso15118.secc.controller.simulator: iso15118 state: PaymentServiceSelection
+2025-09-27 21:35:37,020 INFO hlc: ISO15118 state
+2025-09-27 21:35:37,224 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"945C37796CB02E4D"},"Body":{"AuthorizationReq":{}}}}
+2025-09-27 21:35:37,225 INFO iso15118.shared.comm_session: AuthorizationReq received
+2025-09-27 21:35:37,225 INFO iso15118.shared.states: Entered state Authorization
+2025-09-27 21:35:37,226 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "945C37796CB02E4D"}, "Body": {"AuthorizationRes": {"ResponseCode": "OK", "EVSEProcessing": "Finished"}}}}
+2025-09-27 21:35:37,400 INFO iso15118.shared.comm_session: Sent AuthorizationRes
+2025-09-27 21:35:37,401 INFO iso15118.secc.controller.simulator: iso15118 state: Authorization
+2025-09-27 21:35:37,401 INFO hlc: ISO15118 state
+2025-09-27 21:35:37,401 INFO iso15118.shared.states: Entered state ChargeParameterDiscovery
+2025-09-27 21:35:37,401 INFO iso15118.secc.controller.simulator: iso15118 state: ChargeParameterDiscovery
+2025-09-27 21:35:37,402 INFO hlc: ISO15118 state
+2025-09-27 21:35:37,618 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"945C37796CB02E4D"},"Body":{"ChargeParameterDiscoveryReq":{"RequestedEnergyTransferMode":"DC_extended","DC_EVChargeParameter":{"DC_EVStatus":{"EVReady":false,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVMaximumCurrentLimit":{"Multiplier":-1,"Unit":"A","Value":650},"EVMaximumVoltageLimit":{"Multiplier":-1,"Unit":"V","Value":3750}}}}}}
+2025-09-27 21:35:37,619 INFO iso15118.shared.comm_session: ChargeParameterDiscoveryReq received
+2025-09-27 21:35:37,661 INFO iso15118.secc.controller.simulator: Send rated limits to CS.
+2025-09-27 21:35:37,662 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"SalesTariff": {"Id": "id1", "SalesTariffID": 10, "NumEPriceLevels": 1, "SalesTariffEntry": [{"EPriceLevel": 1, "RelativeTimeInterval": {"start": 0, "duration": 86400}}]}}
+2025-09-27 21:35:37,846 WARNING iso15118.secc.states.iso15118_2_states: Can't read private key to needed to create signature for SalesTariff: Key file not found at location /home/jpi/Desktop/DC-PLC-Madhurjya/pki/iso15118_2/private_keys/moSubCA2.key
+2025-09-27 21:35:37,850 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "945C37796CB02E4D"}, "Body": {"ChargeParameterDiscoveryRes": {"ResponseCode": "OK", "EVSEProcessing": "Finished", "SAScheduleList": {"SAScheduleTuple": [{"SAScheduleTupleID": 1, "PMaxSchedule": {"PMaxScheduleEntry": [{"PMax": {"Value": 11000, "Multiplier": 0, "Unit": "W"}, "RelativeTimeInterval": {"start": 0, "duration": 86400}}]}, "SalesTariff": {"Id": "id1", "SalesTariffID": 10, "NumEPriceLevels": 1, "SalesTariffEntry": [{"EPriceLevel": 1, "RelativeTimeInterval": {"start": 0, "duration": 86400}}]}}]}, "DC_EVSEChargeParameter": {"DC_EVSEStatus": {"NotificationMaxDelay": 100, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEMaximumCurrentLimit": {"Value": 300, "Multiplier": 0, "Unit": "A"}, "EVSEMaximumPowerLimit": {"Value": 276, "Multiplier": 3, "Unit": "W"}, "EVSEMaximumVoltageLimit": {"Value": 920, "Multiplier": 0, "Unit": "V"}, "EVSEMinimumCurrentLimit": {"Value": 0, "Multiplier": 0, "Unit": "A"}, "EVSEMinimumVoltageLimit": {"Value": 150, "Multiplier": 0, "Unit": "V"}, "EVSEPeakCurrentRipple": {"Value": 5, "Multiplier": 0, "Unit": "A"}}}}}}
+2025-09-27 21:35:38,020 INFO iso15118.shared.comm_session: Sent ChargeParameterDiscoveryRes
+2025-09-27 21:35:38,021 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 543 ms
+2025-09-27 21:35:38,022 INFO iso15118.secc.controller.simulator: iso15118 state: ChargeParameterDiscovery
+2025-09-27 21:35:38,022 INFO hlc: ISO15118 state
+2025-09-27 21:35:38,023 INFO iso15118.shared.states: Entered state CableCheck
+2025-09-27 21:35:38,023 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:35:38,024 INFO hlc: ISO15118 state
+2025-09-27 21:35:40,389 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"945C37796CB02E4D"},"Body":{"CableCheckReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56}}}}}
+2025-09-27 21:35:40,389 INFO iso15118.shared.comm_session: CableCheckReq received
+2025-09-27 21:35:40,622 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "945C37796CB02E4D"}, "Body": {"CableCheckRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEProcessing": "Ongoing"}}}}
+2025-09-27 21:35:40,773 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:35:40,773 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 516 ms
+2025-09-27 21:35:40,774 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:35:40,774 INFO hlc: ISO15118 state
+2025-09-27 21:35:41,038 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=9f5980622c) within 2.0s; resending last response #1
+2025-09-27 21:35:41,039 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:35:41,040 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:35:41,040 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:35:41,041 INFO hlc: ISO15118 state
+2025-09-27 21:35:41,312 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=9f5980622c) within 2.0s; resending last response #2
+2025-09-27 21:35:41,313 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:35:41,313 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:35:41,313 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:35:41,313 INFO hlc: ISO15118 state
+2025-09-27 21:35:41,515 INFO hal.esp.periph: CP state
+2025-09-27 21:35:41,627 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=9f5980622c) within 2.0s; resending last response #3
+2025-09-27 21:35:41,628 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:35:41,629 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:35:41,629 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:35:41,630 INFO hlc: ISO15118 state
+2025-09-27 21:35:42,100 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"945C37796CB02E4D"},"Body":{"CableCheckReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56}}}}}
+2025-09-27 21:35:42,101 INFO iso15118.shared.comm_session: CableCheckReq received
+2025-09-27 21:35:43,108 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "945C37796CB02E4D", "Notification": {"FaultCode": "ParsingError", "FaultMsg": "Contactor didnt close for Cable Check"}}, "Body": {"CableCheckRes": {"ResponseCode": "FAILED", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEProcessing": "Finished"}}}}
+2025-09-27 21:35:43,270 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:35:43,271 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1373 ms
+2025-09-27 21:35:43,272 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:35:43,272 INFO hlc: ISO15118 state
+2025-09-27 21:35:44,276 ERROR hal.esp.periph: Contactor set failed
+2025-09-27 21:35:45,482 INFO iso15118.shared.comm_session: The data link will SessionStopAction.TERMINATE in 2 seconds and the TCP connection will close in 5 seconds. 
+2025-09-27 21:35:45,482 INFO iso15118.shared.comm_session: Reason: Contactor didnt close for Cable Check
+2025-09-27 21:35:45,482 INFO iso15118.shared.comm_session: v2g_metrics: {"type": "v2g_session_metrics", "session_id": "945C37796CB02E4D", "peer": "('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 31)", "protocol": "ISO_15118_2", "successful": false, "reason": "Contactor didnt close for Cable Check", "rx_decode_errors": 0, "rx_validation_errors": 0, "rx_invalid_v2gtp": 0, "dup_resent_count": 0, "dup_resend_enabled": true, "dup_window_s": 2.0, "dup_resend_max": 3, "tx_drop_prob": 0.0}
+2025-09-27 21:35:45,483 WARNING iso15118.secc.transport.tcp_server: Closing TCP server
+2025-09-27 21:35:45,504 INFO iso15118.secc.transport.udp_server: UDP server has been resumed.
+2025-09-27 21:35:45,597 INFO hal.esp.periph: CP state
+2025-09-27 21:35:47,494 INFO iso15118.secc.controller.simulator: Session ended in CableCheck (Contactor didnt close for Cable Check).
+2025-09-27 21:35:47,495 INFO iso15118.shared.comm_session: SessionStopAction.TERMINATEd the data link
+2025-09-27 21:35:50,496 INFO iso15118.shared.comm_session: TCP connection closed to peer with address ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 31)

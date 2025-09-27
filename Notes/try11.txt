@@ -1,0 +1,316 @@
+jpi@jpi:~/Desktop/DC-PLC-Madhurjya $ EVSE_PLC_SOFT_RESET=1 EVSE_PLC_AUTO_SOFT_RESET_SPEED=8000000 EVSE_PLC_AUTO_SOFT_RESET_BURST=5000 PLC_IFACE=eth1 EVSE_CP_HOST_HINTS=1 EVSE_TEE_JSON=/tmp/evse_e2e.jsonl scripts/start_evse_hal.sh --evse-id INJPSE0006360 --adapter esp-periph --port /dev/ttyACM0 --json /tmp/evse_e2e.jsonl
+[start-evse-hal] EVSE_ID=INJPSE0006360 IFACE=eth1 ADAPTER=esp-periph PORT=/dev/ttyACM0
+[start-evse-hal] LOG_LEVEL=INFO LOG_FORMAT=text (tee -> /tmp/evse_e2e.jsonl)
+[start-evse-hal] Python=/opt/evse-venv/bin/python
+[start-evse-hal] Cleaning up previous runs (if any) ...
+[start-evse-hal] Performing PLC soft reset (qcaspi) ...
+[plc-soft-reset] Bringing PLC interface down (if present) ...
+[plc-soft-reset] Attempting module reload (qcaspi) ...
+[plc-soft-reset] Rebinding SPI device if driver path exists ...
+[plc-soft-reset] Waiting for netdev ...
+[plc-soft-reset] Detected PLC if: eth1
+[plc-soft-reset] Bringing iface up and permissive ...
+[plc-soft-reset] ethtool driver stats:
+NIC statistics:
+     Triggered resets: 1
+     Device resets: 0
+     Reset timeouts: 0
+     Read errors: 0
+     Write errors: 0
+     Read buffer errors: 0
+     Write buffer errors: 0
+     Out of memory: 0
+     Write buffer misses: 0
+     Transmit ring full: 0
+     SPI errors: 0
+     Write verify errors: 0
+     Buffer available errors: 0
+     Bad signature: 0
+[plc-soft-reset] Done.
+[start-evse-hal] Pre-warming EXI codec ...
+2025-09-27 21:32:52,033 INFO slac_session: 
+
+#################################################
+ ###### Starting PySlac version: 0.8.3 #######
+#################################################
+
+2025-09-27 21:32:52,034 INFO util.standards_check: Timing summary (CCS/ISO 15118)
+2025-09-27 21:32:52,034 INFO util.standards_check: SLAC: init_timeout=50.000s, atten_results_timeout=EV-defined (<=1200ms)
+2025-09-27 21:32:52,034 INFO util.standards_check: ISO15118 Shared: SDP_REQ=0.250s, SAP_REQ=2.000s, COMM_SETUP=20.000s, SEQ_TO=60.000s, ONGOING=60.000s
+2025-09-27 21:32:52,035 INFO util.standards_check: ISO15118-2: SESSION_SETUP=2.000s, SERVICE_DISCOVERY=2.000s, CPD=2.000s, CURRENT_DEMAND=0.250s
+2025-09-27 21:32:52,035 INFO util.standards_check: ISO15118-20: COMM_SETUP=20.000s, SEQ_TO=60.000s, AC_CL=0.500s, DC_CL=0.500s
+2025-09-27 21:32:52,037 INFO evse.main: PLC interface detected
+2025-09-27 21:32:52,068 INFO esp.periph: ESP periph serial open
+2025-09-27 21:32:52,115 INFO hal.esp.periph: ESP periph info
+2025-09-27 21:32:52,263 INFO evse.main: HAL mode: waiting for CP states to start SLAC
+2025-09-27 21:32:52,327 INFO hal.esp.periph: CP state (init)
+2025-09-27 21:32:52,453 INFO evse.main: Vehicle detected via CP
+2025-09-27 21:32:52,467 INFO evse.main: PLC interface detected
+2025-09-27 21:32:52,500 INFO slac_session: CM_SET_KEY: Started...
+2025-09-27 21:33:02,503 INFO slac_session: CM_SET_KEY: Finished!
+2025-09-27 21:33:02,504 INFO evse.main: CM_SET_KEY succeeded
+2025-09-27 21:33:03,145 INFO slac_session: Matching ongoing (EVSE ID: INJPSE0006360. Run ID: b'\xf5\xea\xe3\x7f\xb4o\xaeb').
+2025-09-27 21:33:03,145 INFO evse.main: SLAC matching in progress for INJPSE0006360
+2025-09-27 21:33:03,223 INFO evse.main: SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=74:51:92:0d:31:ae:0a run_id=f5:ea:e3:7f:b4:6f:ae:62
+2025-09-27 21:33:04,126 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: INJPSE0006360. Run ID: b'\xf5\xea\xe3\x7f\xb4o\xaeb').
+2025-09-27 21:33:04,199 INFO evse.main: SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=74:51:92:0d:31:ae:0a run_id=f5:ea:e3:7f:b4:6f:ae:62
+2025-09-27 21:33:04,200 INFO evse.main: Launching ISO 15118 SECC
+2025-09-27 21:33:04,226 INFO evse.main: EVSE controller=hal
+2025-09-27 21:33:07,043 INFO iso15118.shared.exi_codec: EXI Codec version: 1.55
+2025-09-27 21:33:07,044 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.SAP): {"supportedAppProtocolRes": {"ResponseCode": "OK_SuccessfulNegotiation", "SchemaID": 0}}
+2025-09-27 21:33:07,188 INFO iso15118.shared.exi_codec: EXI Codec version: 1.55
+2025-09-27 21:33:07,189 INFO iso15118.secc: Starting 15118 version: 0.31.0
+2025-09-27 21:33:07,190 INFO iso15118.secc.comm_session_handler: Communication session handler started
+2025-09-27 21:33:07,193 INFO iso15118.secc.transport.udp_server: UDP server socket ready
+2025-09-27 21:33:07,196 INFO iso15118.secc.transport.udp_server: UDP server started at address FF02::1%eth1 and port 15118
+2025-09-27 21:33:07,625 INFO iso15118.secc.comm_session_handler: SDPRequest received: [Security: NO_TLS, Protocol: TCP]
+2025-09-27 21:33:07,630 INFO iso15118.secc.transport.tcp_server: TCP bind succeeded on fe80::4cf9:88ff:fe0b:9fbc%eth1:59200
+2025-09-27 21:33:07,631 INFO iso15118.secc.transport.tcp_server: TCP server started at address fe80::4cf9:88ff:fe0b:9fbc%eth1 and port 59200
+2025-09-27 21:33:07,643 INFO iso15118.secc.comm_session_handler: Sending SDPResponse: [ IP address: fe80::4cf9:88ff:fe0b:9fbc, Port: 59200 , Security: NO_TLS , Transport: TCP ]
+2025-09-27 21:33:07,709 INFO iso15118.secc.transport.udp_server: UDP server has been paused.
+2025-09-27 21:33:07,710 INFO iso15118.secc.comm_session_handler: TCP client connected, client address is ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 29).
+2025-09-27 21:33:07,712 INFO hlc: ISO EVSEID
+2025-09-27 21:33:07,881 INFO iso15118.shared.comm_session: Starting a new communication session
+2025-09-27 21:33:07,882 INFO iso15118.shared.states: Entered state SupportedAppProtocol
+2025-09-27 21:33:08,248 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.SAP): {"supportedAppProtocolReq":{"AppProtocol":[{"ProtocolNamespace":"urn:din:70121:2012:MsgDef","VersionNumberMajor":2,"VersionNumberMinor":0,"SchemaID":1,"Priority":2},{"ProtocolNamespace":"urn:iso:15118:2:2013:MsgDef","VersionNumberMajor":2,"VersionNumberMinor":0,"SchemaID":0,"Priority":1}]}}
+2025-09-27 21:33:08,250 INFO iso15118.shared.comm_session: supportedAppProtocolReq received
+2025-09-27 21:33:08,251 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.SAP): {"supportedAppProtocolRes": {"ResponseCode": "OK_SuccessfulNegotiation", "SchemaID": 0}}
+2025-09-27 21:33:08,256 INFO iso15118.secc.states.sap_states: Chosen protocol: ISO_15118_2
+2025-09-27 21:33:08,257 INFO iso15118.shared.comm_session: Sent supportedAppProtocolRes
+2025-09-27 21:33:08,258 INFO iso15118.secc.controller.simulator: iso15118 state: SupportedAppProtocol
+2025-09-27 21:33:08,260 INFO hlc: ISO15118 state
+2025-09-27 21:33:08,266 INFO iso15118.shared.states: Entered state SessionSetup
+2025-09-27 21:33:08,267 INFO iso15118.secc.controller.simulator: iso15118 state: SessionSetup
+2025-09-27 21:33:08,267 INFO hlc: ISO15118 state
+2025-09-27 21:33:08,737 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"00"},"Body":{"SessionSetupReq":{"EVCCID":"381F26339DB0"}}}}
+2025-09-27 21:33:08,738 INFO iso15118.shared.comm_session: SessionSetupReq received
+2025-09-27 21:33:08,739 INFO hlc: ISO EVSEID
+2025-09-27 21:33:08,739 INFO iso15118.secc.quirks: EVCC identified: 381F26339DB0
+2025-09-27 21:33:08,740 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"SessionSetupRes": {"ResponseCode": "OK_NewSessionEstablished", "EVSEID": "INJPSE0006360", "EVSETimeStamp": 1758997988}}}}
+2025-09-27 21:33:09,067 INFO iso15118.shared.comm_session: Sent SessionSetupRes
+2025-09-27 21:33:09,068 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 753 ms
+2025-09-27 21:33:09,070 INFO iso15118.secc.controller.simulator: iso15118 state: SessionSetup
+2025-09-27 21:33:09,070 INFO hlc: ISO15118 state
+2025-09-27 21:33:09,071 INFO iso15118.shared.states: Entered state ServiceDiscovery
+2025-09-27 21:33:09,072 INFO iso15118.secc.controller.simulator: iso15118 state: ServiceDiscovery
+2025-09-27 21:33:09,072 INFO hlc: ISO15118 state
+2025-09-27 21:33:09,677 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"ServiceDiscoveryReq":{}}}}
+2025-09-27 21:33:09,678 INFO iso15118.shared.comm_session: ServiceDiscoveryReq received
+2025-09-27 21:33:09,702 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"ServiceDiscoveryRes": {"ResponseCode": "OK", "PaymentOptionList": {"PaymentOption": ["ExternalPayment"]}, "ChargeService": {"ServiceID": 1, "ServiceName": "AC_DC_Charging", "ServiceCategory": "EVCharging", "FreeService": false, "SupportedEnergyTransferMode": {"EnergyTransferMode": ["DC_core", "DC_extended"]}}}}}}
+2025-09-27 21:33:10,174 INFO iso15118.shared.comm_session: Sent ServiceDiscoveryRes
+2025-09-27 21:33:10,180 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 1062 ms
+2025-09-27 21:33:10,181 INFO iso15118.secc.controller.simulator: iso15118 state: ServiceDiscovery
+2025-09-27 21:33:10,188 INFO hlc: ISO15118 state
+2025-09-27 21:33:10,504 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PaymentServiceSelectionReq":{"SelectedPaymentOption":"ExternalPayment","SelectedServiceList":{"SelectedService":[{"ServiceID":1}]}}}}}
+2025-09-27 21:33:10,506 INFO iso15118.shared.comm_session: PaymentServiceSelectionReq received
+2025-09-27 21:33:10,506 INFO iso15118.shared.states: Entered state PaymentServiceSelection
+2025-09-27 21:33:10,509 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PaymentServiceSelectionRes": {"ResponseCode": "OK"}}}}
+2025-09-27 21:33:10,756 INFO iso15118.shared.comm_session: Sent PaymentServiceSelectionRes
+2025-09-27 21:33:10,757 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 529 ms
+2025-09-27 21:33:10,758 INFO iso15118.secc.controller.simulator: iso15118 state: PaymentServiceSelection
+2025-09-27 21:33:10,759 INFO hlc: ISO15118 state
+2025-09-27 21:33:10,994 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"AuthorizationReq":{}}}}
+2025-09-27 21:33:10,996 INFO iso15118.shared.comm_session: AuthorizationReq received
+2025-09-27 21:33:10,996 INFO iso15118.shared.states: Entered state Authorization
+2025-09-27 21:33:10,998 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"AuthorizationRes": {"ResponseCode": "OK", "EVSEProcessing": "Finished"}}}}
+2025-09-27 21:33:11,176 INFO iso15118.shared.comm_session: Sent AuthorizationRes
+2025-09-27 21:33:11,177 INFO iso15118.secc.controller.simulator: iso15118 state: Authorization
+2025-09-27 21:33:11,177 INFO hlc: ISO15118 state
+2025-09-27 21:33:11,178 INFO iso15118.shared.states: Entered state ChargeParameterDiscovery
+2025-09-27 21:33:11,178 INFO iso15118.secc.controller.simulator: iso15118 state: ChargeParameterDiscovery
+2025-09-27 21:33:11,179 INFO hlc: ISO15118 state
+2025-09-27 21:33:11,437 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"ChargeParameterDiscoveryReq":{"RequestedEnergyTransferMode":"DC_extended","DC_EVChargeParameter":{"DC_EVStatus":{"EVReady":false,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVMaximumCurrentLimit":{"Multiplier":-1,"Unit":"A","Value":650},"EVMaximumVoltageLimit":{"Multiplier":-1,"Unit":"V","Value":3750}}}}}}
+2025-09-27 21:33:11,438 INFO iso15118.shared.comm_session: ChargeParameterDiscoveryReq received
+2025-09-27 21:33:11,501 INFO iso15118.secc.controller.simulator: Send rated limits to CS.
+2025-09-27 21:33:11,504 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"SalesTariff": {"Id": "id1", "SalesTariffID": 10, "NumEPriceLevels": 1, "SalesTariffEntry": [{"EPriceLevel": 1, "RelativeTimeInterval": {"start": 0, "duration": 86400}}]}}
+2025-09-27 21:33:11,691 WARNING iso15118.secc.states.iso15118_2_states: Can't read private key to needed to create signature for SalesTariff: Key file not found at location /home/jpi/Desktop/DC-PLC-Madhurjya/pki/iso15118_2/private_keys/moSubCA2.key
+2025-09-27 21:33:11,696 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"ChargeParameterDiscoveryRes": {"ResponseCode": "OK", "EVSEProcessing": "Finished", "SAScheduleList": {"SAScheduleTuple": [{"SAScheduleTupleID": 1, "PMaxSchedule": {"PMaxScheduleEntry": [{"PMax": {"Value": 11000, "Multiplier": 0, "Unit": "W"}, "RelativeTimeInterval": {"start": 0, "duration": 86400}}]}, "SalesTariff": {"Id": "id1", "SalesTariffID": 10, "NumEPriceLevels": 1, "SalesTariffEntry": [{"EPriceLevel": 1, "RelativeTimeInterval": {"start": 0, "duration": 86400}}]}}]}, "DC_EVSEChargeParameter": {"DC_EVSEStatus": {"NotificationMaxDelay": 100, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEMaximumCurrentLimit": {"Value": 300, "Multiplier": 0, "Unit": "A"}, "EVSEMaximumPowerLimit": {"Value": 276, "Multiplier": 3, "Unit": "W"}, "EVSEMaximumVoltageLimit": {"Value": 920, "Multiplier": 0, "Unit": "V"}, "EVSEMinimumCurrentLimit": {"Value": 0, "Multiplier": 0, "Unit": "A"}, "EVSEMinimumVoltageLimit": {"Value": 150, "Multiplier": 0, "Unit": "V"}, "EVSEPeakCurrentRipple": {"Value": 5, "Multiplier": 0, "Unit": "A"}}}}}}
+2025-09-27 21:33:11,864 INFO iso15118.shared.comm_session: Sent ChargeParameterDiscoveryRes
+2025-09-27 21:33:11,865 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 553 ms
+2025-09-27 21:33:11,865 INFO iso15118.secc.controller.simulator: iso15118 state: ChargeParameterDiscovery
+2025-09-27 21:33:11,866 INFO hlc: ISO15118 state
+2025-09-27 21:33:11,866 INFO iso15118.shared.states: Entered state CableCheck
+2025-09-27 21:33:11,867 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:33:11,868 INFO hlc: ISO15118 state
+2025-09-27 21:33:13,884 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"CableCheckReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56}}}}}
+2025-09-27 21:33:13,884 INFO iso15118.shared.comm_session: CableCheckReq received
+2025-09-27 21:33:14,109 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"CableCheckRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEProcessing": "Ongoing"}}}}
+2025-09-27 21:33:14,265 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:14,265 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 514 ms
+2025-09-27 21:33:14,266 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:33:14,266 INFO hlc: ISO15118 state
+2025-09-27 21:33:14,532 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=f5e22289f4) within 2.0s; resending last response #1
+2025-09-27 21:33:14,533 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:14,533 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:14,533 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:33:14,533 INFO hlc: ISO15118 state
+2025-09-27 21:33:14,792 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=f5e22289f4) within 2.0s; resending last response #2
+2025-09-27 21:33:14,792 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:14,793 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:14,793 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:33:14,793 INFO hlc: ISO15118 state
+2025-09-27 21:33:15,017 INFO hal.esp.periph: CP state
+2025-09-27 21:33:15,053 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=f5e22289f4) within 2.0s; resending last response #3
+2025-09-27 21:33:15,054 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:15,055 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:15,055 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:33:15,056 INFO hlc: ISO15118 state
+2025-09-27 21:33:15,504 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"CableCheckReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56}}}}}
+2025-09-27 21:33:15,505 INFO iso15118.shared.comm_session: CableCheckReq received
+2025-09-27 21:33:16,012 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"CableCheckRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEProcessing": "Ongoing"}}}}
+2025-09-27 21:33:16,172 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:16,173 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 820 ms
+2025-09-27 21:33:16,174 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:33:16,175 INFO hlc: ISO15118 state
+2025-09-27 21:33:16,460 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=f5e22289f4) within 2.0s; resending last response #1
+2025-09-27 21:33:16,461 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:16,461 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:16,462 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:33:16,462 INFO hlc: ISO15118 state
+2025-09-27 21:33:16,793 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=f5e22289f4) within 2.0s; resending last response #2
+2025-09-27 21:33:16,794 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:16,794 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:16,794 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:33:16,795 INFO hlc: ISO15118 state
+2025-09-27 21:33:17,052 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=f5e22289f4) within 2.0s; resending last response #3
+2025-09-27 21:33:17,053 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:17,054 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:17,054 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:33:17,055 INFO hlc: ISO15118 state
+2025-09-27 21:33:17,440 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"CableCheckReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56}}}}}
+2025-09-27 21:33:17,441 INFO iso15118.shared.comm_session: CableCheckReq received
+2025-09-27 21:33:17,442 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"CableCheckRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEProcessing": "Finished"}}}}
+2025-09-27 21:33:17,595 INFO iso15118.shared.comm_session: Sent CableCheckRes
+2025-09-27 21:33:17,596 INFO iso15118.secc.controller.simulator: iso15118 state: CableCheck
+2025-09-27 21:33:17,597 INFO hlc: ISO15118 state
+2025-09-27 21:33:17,597 INFO iso15118.shared.states: Entered state PreCharge
+2025-09-27 21:33:17,598 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:17,599 INFO hlc: ISO15118 state
+2025-09-27 21:33:17,789 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3307},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:17,790 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:17,846 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:18,055 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:18,056 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:18,058 INFO hlc: ISO15118 state
+2025-09-27 21:33:18,471 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3306},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:18,473 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:18,553 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:18,748 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:18,749 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:18,749 INFO hlc: ISO15118 state
+2025-09-27 21:33:19,141 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3307},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:19,142 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:19,227 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:19,390 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:19,390 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:19,391 INFO hlc: ISO15118 state
+2025-09-27 21:33:19,654 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=6e0e73a469) within 2.0s; resending last response #1
+2025-09-27 21:33:19,655 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:19,655 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:19,656 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:19,656 INFO hlc: ISO15118 state
+2025-09-27 21:33:20,075 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3308},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:20,076 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:20,178 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:20,331 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:20,331 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:20,332 INFO hlc: ISO15118 state
+2025-09-27 21:33:20,719 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3306},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:20,720 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:20,800 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:20,944 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:20,945 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:20,945 INFO hlc: ISO15118 state
+2025-09-27 21:33:21,342 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3307},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:21,342 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:21,397 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:21,567 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:21,567 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:21,567 INFO hlc: ISO15118 state
+2025-09-27 21:33:21,832 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=6e0e73a469) within 2.0s; resending last response #1
+2025-09-27 21:33:21,833 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:21,833 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:21,833 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:21,833 INFO hlc: ISO15118 state
+2025-09-27 21:33:22,105 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=6e0e73a469) within 2.0s; resending last response #2
+2025-09-27 21:33:22,105 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:22,105 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:22,106 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:22,106 INFO hlc: ISO15118 state
+2025-09-27 21:33:22,649 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3306},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:22,650 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:22,705 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:22,877 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:22,878 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:22,878 INFO hlc: ISO15118 state
+2025-09-27 21:33:23,278 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3307},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:23,279 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:23,342 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:23,513 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:23,519 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:23,520 INFO hlc: ISO15118 state
+2025-09-27 21:33:23,772 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=6e0e73a469) within 2.0s; resending last response #1
+2025-09-27 21:33:23,772 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:23,773 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:23,773 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:23,773 INFO hlc: ISO15118 state
+2025-09-27 21:33:24,140 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3308},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:24,141 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:24,231 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:24,403 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:24,403 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:24,404 INFO hlc: ISO15118 state
+2025-09-27 21:33:24,778 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3307},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:24,779 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:24,860 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:25,011 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:25,012 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:25,013 INFO hlc: ISO15118 state
+2025-09-27 21:33:25,278 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=6e0e73a469) within 2.0s; resending last response #1
+2025-09-27 21:33:25,278 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:25,278 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:25,278 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:25,279 INFO hlc: ISO15118 state
+2025-09-27 21:33:25,592 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=6e0e73a469) within 2.0s; resending last response #2
+2025-09-27 21:33:25,592 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:25,592 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:25,593 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:25,593 INFO hlc: ISO15118 state
+2025-09-27 21:33:25,988 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3306},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:25,989 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:26,045 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:26,209 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:26,210 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:26,210 INFO hlc: ISO15118 state
+2025-09-27 21:33:26,580 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3307},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:26,581 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:26,680 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:26,847 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:26,847 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:26,847 INFO hlc: ISO15118 state
+2025-09-27 21:33:27,112 WARNING iso15118.shared.comm_session: Duplicate request detected (hash=6e0e73a469) within 2.0s; resending last response #1
+2025-09-27 21:33:27,113 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:27,113 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:27,114 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:27,114 INFO hlc: ISO15118 state
+2025-09-27 21:33:27,510 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"97196BF908A11096"},"Body":{"PreChargeReq":{"DC_EVStatus":{"EVReady":true,"EVErrorCode":"NO_ERROR","EVRESSSOC":56},"EVTargetVoltage":{"Multiplier":-1,"Unit":"V","Value":3306},"EVTargetCurrent":{"Multiplier":-1,"Unit":"A","Value":20}}}}}
+2025-09-27 21:33:27,514 INFO iso15118.shared.comm_session: PreChargeReq received
+2025-09-27 21:33:27,605 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "97196BF908A11096"}, "Body": {"PreChargeRes": {"ResponseCode": "OK", "DC_EVSEStatus": {"NotificationMaxDelay": 0, "EVSENotification": "None", "EVSEIsolationStatus": "Valid", "EVSEStatusCode": "EVSE_Ready"}, "EVSEPresentVoltage": {"Value": 0, "Multiplier": 0, "Unit": "V"}}}}}
+2025-09-27 21:33:27,781 INFO iso15118.shared.comm_session: Sent PreChargeRes
+2025-09-27 21:33:27,782 INFO iso15118.secc.controller.simulator: iso15118 state: PreCharge
+2025-09-27 21:33:27,782 INFO hlc: ISO15118 state
+2025-09-27 21:33:29,105 INFO iso15118.shared.comm_session: The data link will SessionStopAction.TERMINATE in 2 seconds and the TCP connection will close in 5 seconds. 
+2025-09-27 21:33:29,105 INFO iso15118.shared.comm_session: Reason: TCP peer closed connection
+2025-09-27 21:33:29,105 INFO iso15118.shared.comm_session: v2g_metrics: {"type": "v2g_session_metrics", "session_id": "97196BF908A11096", "peer": "('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 29)", "protocol": "ISO_15118_2", "successful": false, "reason": "TCP peer closed connection", "rx_decode_errors": 0, "rx_validation_errors": 0, "rx_invalid_v2gtp": 0, "dup_resent_count": 0, "dup_resend_enabled": true, "dup_window_s": 2.0, "dup_resend_max": 3, "tx_drop_prob": 0.0}
+2025-09-27 21:33:29,106 WARNING iso15118.secc.transport.tcp_server: Closing TCP server
+2025-09-27 21:33:29,147 INFO hal.esp.periph: CP state
+2025-09-27 21:33:29,148 INFO iso15118.secc.transport.udp_server: UDP server has been resumed.
+2025-09-27 21:33:31,106 INFO iso15118.secc.controller.simulator: Session ended in PreCharge (TCP peer closed connection).
+2025-09-27 21:33:31,107 INFO iso15118.shared.comm_session: SessionStopAction.TERMINATEd the data link
+2025-09-27 21:33:34,159 INFO iso15118.shared.comm_session: TCP connection closed to peer with address ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 29)
+2025-09-27 21:34:08,928 INFO hal.esp.periph: CP state
+2025-09-27 21:34:10,217 INFO evse.main: Cable unlocked
+2025-09-27 21:34:10,941 INFO evse.main: SECC stopped
+2025-09-27 21:34:10,943 INFO slac_session: CM_SET_KEY: Started...
+^C2025-09-27 21:34:13,376 INFO evse.main: EVSE shutdown requested by signal
+jpi@jpi:~/Desktop/DC-PLC-Madhurjya $ 

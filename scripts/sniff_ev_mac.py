@@ -45,16 +45,30 @@ async def main() -> int:
     ap.add_argument("--timeout", type=float, default=60.0)
     args = ap.parse_args()
 
-    s = create_socket(args.iface, port=0)
+    # Allow auto-detection when iface is 'auto'
+    iface = args.iface
+    if iface == "auto":
+        try:
+            import subprocess, shlex
+            for n in subprocess.check_output(shlex.split("bash -lc 'ls /sys/class/net'"), text=True).split():
+                try:
+                    out = subprocess.check_output(["ethtool", "-i", n], text=True, stderr=subprocess.DEVNULL)
+                except Exception:
+                    continue
+                if "driver: qcaspi" in out.lower() or "driver: qca7000" in out.lower():
+                    iface = n; break
+        except Exception:
+            pass
+    s = create_socket(iface, port=0)
     try:
         local_mac = get_if_hwaddr(args.iface)
     except Exception:
         local_mac = None
     deadline = asyncio.get_event_loop().time() + args.timeout
-    print(f"[sniff] Waiting up to {args.timeout}s on {args.iface} for CM_SLAC_PARM.REQ ...", flush=True)
+    print(f"[sniff] Waiting up to {args.timeout}s on {iface} for CM_SLAC_PARM.REQ ...", flush=True)
     while asyncio.get_event_loop().time() < deadline:
         try:
-            data = await asyncio.wait_for(readeth(s, args.iface, rcv_frame_size=60), timeout=1.0)
+            data = await asyncio.wait_for(readeth(s, iface, rcv_frame_size=60), timeout=1.0)
         except asyncio.TimeoutError:
             continue
         try:

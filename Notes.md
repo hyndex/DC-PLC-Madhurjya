@@ -238,6 +238,73 @@ Change:
 
 ## 9) How to Run (Cheat Sheet)
 
+DC, HAL, stable PLC @ 8 MHz, JSON tee
+
+```
+export EVSE_ID=INJPSE0006360
+export PLC_IFACE=eth1
+export ESP_CP_PORT=/dev/ttyACM0
+export EVSE_HAL_ADAPTER=esp-periph      # or esp-uart
+export EVSE_CP_HOST_HINTS=1
+export EVSE_LOG_FORMAT=json
+export EVSE_TEE_JSON=/tmp/evse_e2e.jsonl
+
+# Prefer pre‑run soft reset, 8 MHz/5000 burst
+export EVSE_PLC_SOFT_RESET=1
+export EVSE_PLC_AUTO_SOFT_RESET=1
+export EVSE_PLC_AUTO_SOFT_RESET_SPEED=8000000
+export EVSE_PLC_AUTO_SOFT_RESET_BURST=5000
+
+scripts/start_evse_hal.sh --evse-id "$EVSE_ID" --iface "$PLC_IFACE" --port "$ESP_CP_PORT" --adapter "$EVSE_HAL_ADAPTER" --json "$EVSE_TEE_JSON"
+```
+
+If PLC is still unstable, try `EVSE_PLC_AUTO_SOFT_RESET_SPEED=6000000`.
+
+Capture early EV MAC (optional)
+
+```
+sudo -E python scripts/sniff_ev_mac.py --iface auto --timeout 90
+```
+
+Shorten SetKey wait for testing
+
+```
+echo 'SLAC_INIT_TIMEOUT=25.0' >> slac.env
+```
+
+---
+
+## 10) Timeline of what we tried (End‑to‑End)
+
+1. Ran HAL with defaults; saw `CM_SET_KEY` timeouts after ~50 s and “PLC interface driver not in preferred list” warnings.
+2. Verified PLC NIC (eth1) driver `qcaspi`, and stats showed frequent resets and “Bad signature”.
+3. Forced launcher to use eth1 explicitly and added a visible pre‑run soft reset → intermittent improvements.
+4. Reduced qcaspi SPI clock to 8 MHz and tuned burst to 5000; added auto soft‑reset when driver stats suggest instability.
+5. Prioritized PLC‑capable NICs for CM_SET_KEY attempts; honored `SLAC_INIT_TIMEOUT` from slac.env to speed test cycles.
+6. Confirmed SECC startup and HLC flow readiness; improved logging and sniffer convenience (`--iface auto`).
+
+Outcome: SLAC reliability improved; SET_KEY succeeds more consistently; launcher auto‑heals common qcaspi faults; documentation and examples updated.
+
+---
+
+## 11) Adapter Behavior (esp-uart vs esp-periph)
+
+- `esp-uart` (CP-only):
+  - Hardware: CP reader + PWM from ESP32‑S3 CP firmware (UART JSON).
+  - Simulated: contactor, DC supply, energy meter – the EV will still see the real DC bus, so CableCheck/PreCharge will fail without a real rectifier/contactor.
+  - Use for SLAC/ISO protocol bring‑up. Expect HLC to abort once power is needed.
+
+- `esp-periph` (full HAL):
+  - Hardware: CP reader/PWM, contactor control, DC set/enable, meter via ESP peripheral coprocessor (`EspPeriphClient`).
+  - Use for real DC charge sessions. Ensure contactor AUX feedback and DC module wiring.
+
+Bench toggles:
+- `EVSE_SIM_CONTACTOR=1` – assume contactor closed (bench only).
+- `EVSE_SIM_SUPPLY=1` – mirror setpoints in presented V/A for logging only.
+
+Command implications:
+- Your command with `--adapter esp-uart` uses simulated contactor/DC/meter; only CP comes from ESP. To drive real hardware end‑to‑end, switch to `--adapter esp-periph`.
+
 DC (to get BMS/Precharge):
 - Hardware: CCS Combo‑2 (DC) cable; EV must be DC-capable and in
   DC‑ready state.

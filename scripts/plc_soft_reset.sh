@@ -10,7 +10,7 @@ if lsmod | grep -q '^qcaspi'; then
   sleep 0.3
 fi
 # Prefer pluggable=1 by default to tolerate hot-plug/reset; allow override via env
-modprobe qcaspi qcaspi_clkspeed=${QCASPI_CLKSPEED:-12000000} qcaspi_burst_len=${QCASPI_BURST:-5000} qcaspi_pluggable=${QCASPI_PLUGGABLE:-1} || {
+modprobe qcaspi qcaspi_clkspeed=${QCASPI_CLKSPEED:-8000000} qcaspi_burst_len=${QCASPI_BURST:-5000} qcaspi_pluggable=${QCASPI_PLUGGABLE:-1} || {
   echo "[plc-soft-reset] modprobe qcaspi failed" >&2; exit 1;
 }
 

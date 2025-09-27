@@ -31,7 +31,7 @@
 ### SPI wiring
 - Verify MOSI, MISO, SCK, CS and INT connections between the Raspberry Pi and the QCA7000 modem.
 - Keep leads short (\<10 cm) and check for swapped pins.
-- Confirm `/boot/config.txt` contains `dtoverlay=qca7000,int_pin=23,speed=12000000` after running the setup script.
+- Confirm `/boot/config.txt` contains `dtoverlay=qca7000,int_pin=23,speed=8000000` after running the setup script.
 
 ### Interface names
 - After reboot, use `ip link` to discover the PLC interface name (e.g. `eth1`, `plc0`). Update `src/iso15118/.env` if it differs from the default.

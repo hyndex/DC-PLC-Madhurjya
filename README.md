@@ -20,6 +20,23 @@ matched via SLAC, ISO 15118 communication continues on the same
 interface. Each component is replaceable, enabling custom hardware
 front‑ends or SECC implementations.
 
+### HAL Adapters: Which parts are hardware vs simulated?
+
+The EVSE HAL exposes five primitives: CP reader, PWM, contactor, DC supply (rectifier), and energy meter. Two adapters are provided:
+
+- `esp-uart` (CP helper only)
+  - Hardware: CP reader + PWM via ESP32‑S3 CP firmware (UART JSON).
+  - Simulated: contactor, DC supply, energy meter (in‑process simulation).
+  - Use for protocol bring‑up (SLAC/ISO phases). Real DC power is not switched; EV will usually abort at CableCheck/PreCharge without a real DC path.
+
+- `esp-periph` (CP + contactor + DC + meter)
+  - Hardware: CP reader/PWM, contactor control, DC set/enable, meter reads via ESP32‑S3 peripheral coprocessor firmware.
+  - Use for real DC charging. Wire contactor AUX, DC rectifier control, and meter to the ESP periph firmware.
+
+Bench toggles (optional):
+- `EVSE_SIM_CONTACTOR=1` – treat contactor as always closed (bench only).
+- `EVSE_SIM_SUPPLY=1` – present voltage/current mirror last setpoints in logs (for testing logic only; EV still sees the real bus).
+
 ## Getting Started
 
 ### Prerequisites
@@ -119,6 +136,11 @@ python src/evse_main.py \
   --slac-config slac.env \
   --secc-config secc.env \
   --controller hal
+
+# For real DC power with ESP peripheral (contactor + rectifier + meter):
+# scripts/start_evse_hal.sh auto-detects PLC iface and sets IPv6 LL.
+EVSE_TEE_JSON=/tmp/evse_e2e.jsonl \
+scripts/start_evse_hal.sh --evse-id EVSE-1 --adapter esp-periph --port /dev/ttyACM0 --json /tmp/evse_e2e.jsonl
 ```
 
 What you’ll see:
@@ -193,13 +215,17 @@ Troubleshooting when snapshot does not appear:
 - Ensure you’re on the current code: the SECC session now always emits a state notification that the HAL logs as `"name":"hlc","msg":"ISO15118 state"` lines. These carry the `bms` and `evse` objects. If you do not see them, rebuild/restart.
 - If the EV disconnects right after the first CurrentDemand, verify contactor/AUX and DC stage behavior (voltage/current tracking). You can temporarily set `EVSE_SIM_CONTACTOR=1` (with `esp-periph`) for bench verification.
 
+Adapter implications for power delivery
+- With `esp-uart`: contactor/DC/meter are simulated; the EV sees the actual bus (likely 0 V) and will fail CableCheck/PreCharge. Use this mode to validate SLAC/ISO flows only.
+- With `esp-periph`: the HAL commands real contactor and DC setpoints through the ESP peripheral. Ensure wiring to the rectifier and meter is correct; HLC will proceed to CurrentDemand when PreCharge targets are met.
+
 ### Troubleshooting QCA7000 (qcaspi)
 
 - Health check: `bash scripts/qca_health.sh` (shows driver, overlay, dmesg, iface stats)
 - Robust soft‑reset (auto‑detect iface, pluggable=1 by default):
   ```bash
   export EVSE_PLC_SOFT_RESET=1
-  export QCASPI_PLUGGABLE=1 QCASPI_CLKSPEED=8000000 QCASPI_BURST=3000
+  export QCASPI_PLUGGABLE=1 QCASPI_CLKSPEED=8000000 QCASPI_BURST=5000
   scripts/start_evse_hal.sh --evse-id EVSE-1 --port /dev/ttyACM0 --adapter esp-uart
   ```
 - Persist options: `/etc/modprobe.d/qcaspi.conf` → `options qcaspi qcaspi_pluggable=1 qcaspi_clkspeed=8000000 qcaspi_burst_len=3000`
@@ -558,6 +584,35 @@ How to get a valid snapshot
 - Duplicate EV requests: last response auto-resent within a short window.
 - PLC interface readiness and IPv6: launcher ensures link-local and
   promisc/allmulti on the PLC netdev.
+
+---
+
+## September 2025 Stabilization: PLC reliability and SPI speed
+
+What we changed
+- Default PLC SPI clock reduced from 12 MHz to 8 MHz for qcaspi to improve stability on longer SPI runs and reduce “Bad signature” events.
+  - `setup_rpi.sh` now writes `dtoverlay=qca7000,...,speed=8000000`.
+  - `scripts/plc_soft_reset.sh` defaults to `QCASPI_CLKSPEED=8000000` and `QCASPI_BURST=5000`.
+- Launcher (`scripts/start_evse_hal.sh`) improvements:
+  - Prefers a PLC netdev driven by `qcaspi`/`qca7000` when auto‑detecting.
+  - Heuristic auto soft‑reset when `ethtool -S` counters (resets/bad signature) suggest instability (can be disabled via `EVSE_PLC_SOFT_RESET_AUTO=0`).
+  - New envs: `EVSE_PLC_SOFT_RESET_AUTO`, `EVSE_PLC_SOFT_RESET`, `EVSE_PLC_AUTO_SOFT_RESET_SPEED`, `EVSE_PLC_AUTO_SOFT_RESET_BURST`.
+- SLAC:
+  - CM_SET_KEY wait now honors `SLAC_INIT_TIMEOUT` from `slac.env`.
+  - SetKey attempts prefer PLC‑capable ifaces first to avoid noise on non‑PLC NICs.
+
+How to use
+- Run with explicit PLC iface and pre‑run reset:
+  ```bash
+  EVSE_PLC_SOFT_RESET=1 PLC_IFACE=eth1 \
+  EVSE_PLC_AUTO_SOFT_RESET_SPEED=8000000 EVSE_PLC_AUTO_SOFT_RESET_BURST=5000 \
+  scripts/start_evse_hal.sh --evse-id INJPSE0006360 --adapter esp-periph --port /dev/ttyACM0 --json /tmp/evse_e2e.jsonl
+  ```
+- If counters keep increasing, try `EVSE_PLC_AUTO_SOFT_RESET_SPEED=6000000`.
+
+Verification
+- Check driver: `ethtool -i eth1 | grep -i '^driver'` → `qcaspi`.
+- Check health: `ethtool -S eth1` → watch “Device resets”/“Bad signature”.
 - Consistent IDs: `EVSE_ID` propagated to both SLAC and ISO; DIN hexBinary
   derived when needed.
 

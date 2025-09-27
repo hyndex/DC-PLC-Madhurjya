@@ -15,3 +15,18 @@ else:  # pragma: no cover - fallback to default path resolution
 
 __path__ = search_path
 __all__ = [module.name for module in pkgutil.iter_modules(__path__)]
+
+# Expose __version__ expected by downstream imports in src/iso15118
+_version = "0.0.0"
+try:
+    init_file = _pkg_root / "__init__.py"
+    if init_file.is_file():
+        txt = init_file.read_text(encoding="utf-8", errors="ignore")
+        for line in txt.splitlines():
+            line = line.strip()
+            if line.startswith("__version__") and "=" in line:
+                _version = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+except Exception:
+    pass
+__version__ = _version
