@@ -289,7 +289,8 @@ struct Meter { float v; float i; float p; float e; };
 enum ModePeriph { MODE_SIM = 0, MODE_HW = 1 };
 static ModePeriph g_periph_mode = MODE_SIM;
 #ifndef CONTACTOR_COIL_PIN
-#define CONTACTOR_COIL_PIN 7
+// Unused when CONTACTOR_VIA_PCA9555=1; keep -1 to avoid GPIO conflicts
+#define CONTACTOR_COIL_PIN -1
 #endif
 #ifndef CONTACTOR_COIL_ACTIVE_HIGH
 #define CONTACTOR_COIL_ACTIVE_HIGH 1
@@ -302,8 +303,9 @@ static ModePeriph g_periph_mode = MODE_SIM;
 #endif
 static bool g_contactor_cmd=false, g_contactor_aux=false;
 // Optional PCA9555 contactor driver
+// Use PCA9555 exclusively for the contactor coil
 #ifndef CONTACTOR_VIA_PCA9555
-#define CONTACTOR_VIA_PCA9555 0
+#define CONTACTOR_VIA_PCA9555 1
 #endif
 #ifndef I2C_SDA_PIN
 #define I2C_SDA_PIN 12
@@ -321,7 +323,8 @@ static bool g_contactor_cmd=false, g_contactor_aux=false;
 #define RELAY_OFF_LEVEL LOW
 #endif
 #ifndef PCA9555_CONTACTOR_PORT
-#define PCA9555_CONTACTOR_PORT PCA95x5::Port::P00
+// Use PCA9555 pin 1 for Relay (P01)
+#define PCA9555_CONTACTOR_PORT PCA95x5::Port::P01
 #endif
 static PCA9555 g_pca;
 static bool g_pca_ready=false;

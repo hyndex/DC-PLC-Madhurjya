@@ -347,7 +347,7 @@ The ESP32‑S3 peripheral firmware provides Control Pilot (CP) handling, contact
 - CP PWM out: `GPIO38` (LEDC 1 kHz)
 - CP ADC in: `GPIO1` (12‑bit ADC)
 - UART to Pi: RX=`GPIO44`, TX=`GPIO43` (115200 baud)
-- Contactor coil: `GPIO7` (active‑high default); AUX input optional (define at build)
+- Contactor coil: PCA9555 P01 (I2C expander); AUX input optional
 - MCP2515 (CAN 2.0B, extended 29‑bit): 125 kbit/s
   - CS=`GPIO41`, RST=`GPIO40`, SCK=`GPIO48`, MOSI=`GPIO47`, MISO=`GPIO21`, INT=optional GPIO
   - Use a 3.3 V CAN transceiver (e.g., SN65HVD230). If using 5 V TJA1050 boards, add level shifting or replace transceiver.
