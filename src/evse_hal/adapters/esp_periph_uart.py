@@ -370,6 +370,13 @@ class ESPPeriphHardware(EVSEHardware):
         except Exception:
             return None
 
+    # Expose DC enable gate so bench/sim contactor paths can still turn DC on/off
+    def dc_enable(self, on: bool) -> None:
+        try:
+            self._periph.dc_enable(bool(on))
+        except Exception:
+            pass
+
     def close(self) -> None:
         try:
             self._periph.close()

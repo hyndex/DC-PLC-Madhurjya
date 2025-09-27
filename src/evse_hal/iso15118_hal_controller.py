@@ -252,9 +252,13 @@ class HalEVSEController(SimEVSEController):
         - When HLC stops, do not force-open here; "stop_charger()" handles
           graceful ramp-down and opening with auxiliary verification.
         """
-        # Bench mode: if EVSE_SIM_CONTACTOR is set, treat contactor operations as NOOPs
+        # Bench mode: if EVSE_SIM_CONTACTOR is set, skip physical contactor but enable DC output
         try:
             if os.environ.get("EVSE_SIM_CONTACTOR", "0").strip().lower() not in ("0", "false", "no", ""):
+                try:
+                    getattr(self._hal, "dc_enable", lambda _on: None)(bool(is_ongoing))
+                except Exception:
+                    pass
                 return
         except Exception:
             pass
@@ -383,6 +387,53 @@ class HalEVSEController(SimEVSEController):
                 multiplier=ripple_mul, value=ripple_val, unit=UnitSymbol.AMPERE
             ),
         )
+
+    # Advertise DC capability limits consistent with configured ratings
+    async def get_evse_max_voltage_limit(self):  # type: ignore[override]
+        try:
+            max_v = float(os.environ.get("EVSE_DC_MAX_VOLTAGE_V", str(self._rated_dc_max_voltage_v)))
+        except Exception:
+            max_v = float(getattr(self, "_rated_dc_max_voltage_v", 920.0))
+        from iso15118.shared.messages.datatypes import PVEVSEMaxVoltageLimit
+        return PVEVSEMaxVoltageLimit(multiplier=0, value=int(round(max_v)), unit=UnitSymbol.VOLTAGE)
+
+    async def get_evse_max_current_limit(self):  # type: ignore[override]
+        try:
+            max_a = float(os.environ.get("EVSE_DC_MAX_CURRENT_A", str(self._rated_dc_max_current_a)))
+        except Exception:
+            max_a = float(getattr(self, "_rated_dc_max_current_a", 300.0))
+        from iso15118.shared.messages.datatypes import PVEVSEMaxCurrentLimit
+        return PVEVSEMaxCurrentLimit(multiplier=0, value=int(round(max_a)), unit=UnitSymbol.AMPERE)
+
+    async def get_evse_max_power_limit(self):  # type: ignore[override]
+        try:
+            max_v = float(os.environ.get("EVSE_DC_MAX_VOLTAGE_V", str(self._rated_dc_max_voltage_v)))
+        except Exception:
+            max_v = float(getattr(self, "_rated_dc_max_voltage_v", 920.0))
+        try:
+            max_a = float(os.environ.get("EVSE_DC_MAX_CURRENT_A", str(self._rated_dc_max_current_a)))
+        except Exception:
+            max_a = float(getattr(self, "_rated_dc_max_current_a", 300.0))
+        try:
+            max_w = float(os.environ.get("EVSE_DC_MAX_POWER_W", max_v * max_a))
+        except Exception:
+            max_w = max_v * max_a
+        # Choose multiplier/value such that 1 <= value < 1000
+        def pv(value: float):
+            if value <= 0:
+                return 0, 0
+            mul = 0
+            v = float(value)
+            while v >= 1000.0:
+                v /= 10.0
+                mul += 1
+            while v < 1.0:
+                v *= 10.0
+                mul -= 1
+            return int(round(v)), mul
+        val, mul = pv(max_w)
+        from iso15118.shared.messages.datatypes import PVEVSEMaxPowerLimit
+        return PVEVSEMaxPowerLimit(multiplier=mul, value=val, unit=UnitSymbol.WATT)
 
     async def get_evse_present_voltage(self, protocol):  # type: ignore[override]
         # Allow supply simulation for bench bring-up without power electronics
@@ -641,9 +692,13 @@ class HalEVSEController(SimEVSEController):
         return CpState.UNKNOWN
 
     async def stop_charger(self) -> None:
-        # Bench mode: skip contactor control when simulating
+        # Bench mode: skip physical contactor, but disable DC output
         try:
             if os.environ.get("EVSE_SIM_CONTACTOR", "0").strip().lower() not in ("0", "false", "no", ""):
+                try:
+                    getattr(self._hal, "dc_enable", lambda _on: None)(False)
+                except Exception:
+                    pass
                 # Reset CableCheck internal state
                 self._cc_close_issued = False
                 self._cc_close_ts = 0.0
