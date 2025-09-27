@@ -94,6 +94,8 @@ static const uint8_t MODE_CONFIG    = 0x80;
 /* ================= SPI Instance (ESP32-S3) ================== */
 static inline void CS_LOW()  { digitalWrite(PIN_CS, LOW); }
 static inline void CS_HIGH() { digitalWrite(PIN_CS, HIGH); }
+// Forward declaration (definition near end of file)
+static void mcp2515_write_reg_raw(uint8_t reg, uint8_t val);
 
 // Minimal direct MCP2515 register write via FSPI (override CNF registers)
 // helper declared later after FSPI defined
