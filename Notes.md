@@ -238,7 +238,7 @@ Change:
 
 ## 9) How to Run (Cheat Sheet)
 
-DC, HAL, stable PLC @ 8 MHz, JSON tee
+DC, HAL, stable PLC @ 8 MHz, JSON tee (bench E2E with simulated contactor/supply)
 
 ```
 export EVSE_ID=INJPSE0006360
@@ -254,6 +254,10 @@ export EVSE_PLC_SOFT_RESET=1
 export EVSE_PLC_AUTO_SOFT_RESET=1
 export EVSE_PLC_AUTO_SOFT_RESET_SPEED=8000000
 export EVSE_PLC_AUTO_SOFT_RESET_BURST=5000
+
+# Bench toggles to pass CableCheck/PreCharge without real contactor/meter
+export EVSE_SIM_CONTACTOR=1
+export EVSE_SIM_SUPPLY=1
 
 scripts/start_evse_hal.sh --evse-id "$EVSE_ID" --iface "$PLC_IFACE" --port "$ESP_CP_PORT" --adapter "$EVSE_HAL_ADAPTER" --json "$EVSE_TEE_JSON"
 ```

@@ -252,6 +252,12 @@ class HalEVSEController(SimEVSEController):
         - When HLC stops, do not force-open here; "stop_charger()" handles
           graceful ramp-down and opening with auxiliary verification.
         """
+        # Bench mode: if EVSE_SIM_CONTACTOR is set, treat contactor operations as NOOPs
+        try:
+            if os.environ.get("EVSE_SIM_CONTACTOR", "0").strip().lower() not in ("0", "false", "no", ""):
+                return
+        except Exception:
+            pass
         try:
             cont = self._hal.contactor()
         except Exception:
@@ -635,6 +641,15 @@ class HalEVSEController(SimEVSEController):
         return CpState.UNKNOWN
 
     async def stop_charger(self) -> None:
+        # Bench mode: skip contactor control when simulating
+        try:
+            if os.environ.get("EVSE_SIM_CONTACTOR", "0").strip().lower() not in ("0", "false", "no", ""):
+                # Reset CableCheck internal state
+                self._cc_close_issued = False
+                self._cc_close_ts = 0.0
+                return
+        except Exception:
+            pass
         # Open contactor to cut DC power immediately
         try:
             self._hal.contactor().set_closed(False)
