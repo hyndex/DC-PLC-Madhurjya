@@ -96,15 +96,7 @@ static inline void CS_LOW()  { digitalWrite(PIN_CS, LOW); }
 static inline void CS_HIGH() { digitalWrite(PIN_CS, HIGH); }
 
 // Minimal direct MCP2515 register write via FSPI (override CNF registers)
-static void mcp2515_write_reg_raw(uint8_t reg, uint8_t val) {
-  spiFSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-  CS_LOW();
-  spiFSPI.transfer(0x02); // INSTRUCTION_WRITE
-  spiFSPI.transfer(reg);
-  spiFSPI.transfer(val);
-  CS_HIGH();
-  spiFSPI.endTransaction();
-}
+// helper declared later after FSPI defined
 
 /* ================= MCP2515 Low-level ======================== */
 // Deprecated low-level helpers removed; using MCP2515 library-only path
@@ -1175,12 +1167,4 @@ void loop() {
   // bus-off recovery would poll EFLG via SPI. Keeping it minimal.
 }
 // Minimal direct MCP2515 register write via FSPI (used to override CNF on 8 MHz)
-static void mcp2515_write_reg_raw(uint8_t reg, uint8_t val) {
-  spiFSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-  CS_LOW();
-  spiFSPI.transfer(0x02); // INSTRUCTION_WRITE
-  spiFSPI.transfer(reg);
-  spiFSPI.transfer(val);
-  CS_HIGH();
-  spiFSPI.endTransaction();
-}
+// helper declared later after FSPI defined
