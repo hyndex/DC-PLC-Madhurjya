@@ -21,6 +21,7 @@ import sys
 from pathlib import Path
 import signal
 import time
+import subprocess
 from typing import Optional
 
 # Ensure local 'src' (this directory) is importable so subpackages like
@@ -357,6 +358,8 @@ class EVSECommunicationController(SlacSessionController):
         last_cp: Optional[str] = None
         # Track last CP letter forwarded to PySLAC so we propagate transitions
         last_slac_cp_forwarded: Optional[str] = None
+        # CM_SET_KEY failure counter for proactive PLC soft reset
+        cm_set_key_fail_count: int = 0
         # SLAC init retry control per plug-in
         # Allow more retries by default for field robustness
         try:
@@ -472,6 +475,40 @@ class EVSECommunicationController(SlacSessionController):
                     logger.info("Cable unlocked", extra={"reason": reason})
                 except Exception:
                     pass
+
+        async def _plc_soft_reset_proactive() -> None:
+            """Optionally perform a PLC soft reset (qcaspi rebind) when SLAC setup fails.
+
+            Controlled by EVSE_PLC_AUTO_SOFT_RESET (default 1). Tunables:
+              - EVSE_PLC_AUTO_SOFT_RESET_SPEED (Hz, e.g., 8000000)
+              - EVSE_PLC_AUTO_SOFT_RESET_BURST (e.g., 3000)
+              - QCASPI_PLUGGABLE (default 1)
+            """
+            try:
+                if os.environ.get("EVSE_PLC_AUTO_SOFT_RESET", "1").strip().lower() in ("0", "false", "no", "off", ""):
+                    return
+                env = os.environ.copy()
+                if env.get("EVSE_PLC_AUTO_SOFT_RESET_SPEED"):
+                    env["QCASPI_CLKSPEED"] = env["EVSE_PLC_AUTO_SOFT_RESET_SPEED"]
+                if env.get("EVSE_PLC_AUTO_SOFT_RESET_BURST"):
+                    env["QCASPI_BURST"] = env["EVSE_PLC_AUTO_SOFT_RESET_BURST"]
+                env.setdefault("QCASPI_PLUGGABLE", env.get("QCASPI_PLUGGABLE", "1"))
+                repo_root = Path(__file__).resolve().parents[1]
+                script = repo_root / "scripts" / "plc_soft_reset.sh"
+                if script.is_file():
+                    proc = await asyncio.create_subprocess_exec(
+                        "bash", str(script), stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL, env=env
+                    )
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=6.0)
+                    except asyncio.TimeoutError:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                await asyncio.sleep(0.3)
+            except Exception:
+                pass
 
         async def _teardown_session(reason: str) -> None:
             nonlocal session, session_started_at, last_slac_cp_forwarded, ev_peer_logged, slac_attempts, keyed_once
@@ -603,6 +640,9 @@ class EVSECommunicationController(SlacSessionController):
                                         "CM_SET_KEY failed; will retry",
                                         extra={"error": str(e)},
                                     )
+                                    cm_set_key_fail_count += 1
+                                    if cm_set_key_fail_count == 1:
+                                        await _plc_soft_reset_proactive()
                         await self.process_cp_state(session, "B")
                         last_slac_cp_forwarded = "B"
                         await asyncio.sleep(0.2)

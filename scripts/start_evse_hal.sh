@@ -232,6 +232,12 @@ fi
 # Ensure IPv6 link‑local is configured on the chosen interface
 ensure_lladdr "${IFACE}"
 
+# Best-effort NIC tuning to improve SLAC reliability (safe no-ops when unsupported)
+sudo -n ethtool -K "${IFACE}" gro off lro off rxvlan off txvlan off 2>/dev/null || true
+sudo -n ethtool -G "${IFACE}" rx 512 tx 512 2>/dev/null || true
+# Increase socket/driver buffers for raw packet capture
+sudo -n sysctl -w net.core.rmem_max=33554432 net.core.rmem_default=262144 net.core.netdev_max_backlog=5000 >/dev/null 2>&1 || true
+
 # Re-detect interface if the selected one disappeared after PLC reset
 if ! ip link show "${IFACE}" >/dev/null 2>&1; then
   new_iface=$(find_iface)
