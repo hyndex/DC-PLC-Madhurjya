@@ -18,7 +18,7 @@
 #include "esp_bt.h"
 #include <Preferences.h>
 #include <math.h>
-#include <mcp2515.h>
+#include "MaxwellENR_MCP2515.hpp"
 #include <PCA95x5.h>
 
 /* ================== User Wiring (ESP32-S3) ================== */
@@ -94,11 +94,6 @@ static const uint8_t MODE_CONFIG    = 0x80;
 /* ================= SPI Instance (ESP32-S3) ================== */
 static inline void CS_LOW()  { digitalWrite(PIN_CS, LOW); }
 static inline void CS_HIGH() { digitalWrite(PIN_CS, HIGH); }
-// Forward declaration (definition near end of file)
-static void mcp2515_write_reg_raw(uint8_t reg, uint8_t val);
-
-// Minimal direct MCP2515 register write via FSPI (override CNF registers)
-// helper declared later after FSPI defined
 
 /* ================= MCP2515 Low-level ======================== */
 // Deprecated low-level helpers removed; using MCP2515 library-only path
@@ -131,50 +126,29 @@ static inline uint8_t b0_group_type(uint8_t group, uint8_t msgType) { return (ui
 static inline void be_put_u32(uint8_t* p, uint32_t v) { p[0]=(uint8_t)(v>>24); p[1]=(uint8_t)(v>>16); p[2]=(uint8_t)(v>>8); p[3]=(uint8_t)v; }
 static inline void be_put_u16(uint8_t* p, uint16_t v) { p[0]=(uint8_t)(v>>8);  p[1]=(uint8_t)v; }
 
-// Use FSPI explicitly (align with working reference)
-static SPIClass spiFSPI(FSPI);
-static MCP2515 g_mcp2515(PIN_CS, 1000000, &spiFSPI);
+// Maxwell wrapper (raw MCP2515 + Maxwell protocol)
+static jp::MaxwellENR_MCP2515::Config g_mxCfg; // defaults match our wiring
+static jp::MaxwellENR_MCP2515         g_maxwell(g_mxCfg);
 static bool    g_can_ok = false;
 
 /* --- Maxwell commands (unicast/broadcast) --- */
-static bool maxwell_send(uint32_t id, const uint8_t* data, uint8_t len) {
-  if (!g_can_ok) return false;
-  struct can_frame f;
-  f.can_id  = (id & CAN_ID_MASK_ALL) | CAN_EFF_FLAG;
-  f.can_dlc = (len > 8) ? 8 : len;
-  for (uint8_t i=0;i<f.can_dlc;i++) f.data[i] = data[i];
-  return (g_mcp2515.sendMessage(&f) == MCP2515::ERROR_OK);
-}
-static bool cmd_set_vref_mv(uint8_t moduleAddr, uint32_t mv) {
-  uint8_t d[8] = { b0_group_type(MAXWELL_GROUP_ADDR, 0x0), 0x02, 0,0, 0,0,0,0 }; // SetData, Vref mV
-  be_put_u32(&d[4], mv);
-  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ID, moduleAddr), d, 8);
-}
-static bool cmd_set_ilim_ma(uint8_t moduleAddr, uint32_t ma) {
-  uint8_t d[8] = { b0_group_type(MAXWELL_GROUP_ADDR, 0x0), 0x03, 0,0, 0,0,0,0 }; // SetData, Ilim mA
-  be_put_u32(&d[4], ma);
-  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ID, moduleAddr), d, 8);
-}
-static bool cmd_onoff(uint8_t moduleAddr, bool on) {
-  uint8_t d[8] = { b0_group_type(MAXWELL_GROUP_ADDR, 0x0), 0x04, 0,0, 0,0,0,0 }; // SetData, Power 0=ON/1=OFF
-  be_put_u32(&d[4], on ? 0 : 1);
-  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ID, moduleAddr), d, 8);
-}
-static bool cmd_read(uint8_t moduleAddr, uint8_t what) {
-  uint8_t d[8] = { b0_group_type(MAXWELL_GROUP_ADDR, 0x2), what, 0,0,0,0,0,0 };  // ReadData
-  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ID, moduleAddr), d, 8);
-}
-static bool cmd_allset(uint8_t moduleAddr, uint8_t onoff_hilo, uint16_t i_0p1A, uint16_t vbat_0p1V, uint16_t vout_0p1V) {
-  uint8_t d[8] = { b0_group_type(MAXWELL_GROUP_ADDR, 0x0B), onoff_hilo, 0,0, 0,0, 0,0 }; // AllSetData
-  be_put_u16(&d[2], i_0p1A); be_put_u16(&d[4], vbat_0p1V); be_put_u16(&d[6], vout_0p1V);
-  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ID, moduleAddr), d, 8);
-}
-
-// Hi/Lo mode commands
-static bool cmd_set_hilo(uint8_t moduleAddr, uint8_t mode /*1=HIGH,2=LOW,3=AUTO*/) {
-  uint8_t d[8] = { b0_group_type(MAXWELL_GROUP_ADDR, 0x0), 0x5F, 0,0, 0,0,0,0 };
-  be_put_u32(&d[4], (uint32_t)mode);
-  return maxwell_send(build_maxwell_can_id(MAXWELL_MONITOR_ID, moduleAddr), d, 8);
+// Bridge functions -> Maxwell wrapper
+static bool cmd_set_vref_mv(uint8_t /*moduleAddr*/, uint32_t mv) { return g_maxwell.setVref_mV(mv); }
+static bool cmd_set_ilim_ma(uint8_t /*moduleAddr*/, uint32_t ma) { return g_maxwell.setILimit_mA(ma); }
+static bool cmd_onoff(uint8_t /*moduleAddr*/, bool on)           { return g_maxwell.powerOn(on); }
+static bool cmd_allset(uint8_t, uint8_t, uint16_t, uint16_t, uint16_t) { return false; }
+static bool cmd_set_hilo(uint8_t /*moduleAddr*/, uint8_t mode /*1=HIGH,2=LOW,3=AUTO*/) { return g_maxwell.setHiLoMode((jp::MaxwellENR_MCP2515::HiLoMode)mode); }
+static bool cmd_read(uint8_t /*moduleAddr*/, uint8_t what) {
+  uint32_t val=0;
+  switch (what) {
+    case 0x00: if (g_maxwell.readVout_mV(val)) { if (g_module_count==0){ g_modules[0].addr=MODULE_ADDR; g_module_count=1; } g_modules[0].last_v_mv=val; return true; } break;
+    case 0x01: if (g_maxwell.readIout_mA(val)) { if (g_module_count==0){ g_modules[0].addr=MODULE_ADDR; g_module_count=1; } g_modules[0].last_i_ma=val; return true; } break;
+    case 0x60: { jp::MaxwellENR_MCP2515::HiLoMode m; if (g_maxwell.readHiLoModeCfg(m)) { g_hilo_cfg=(uint8_t)m; return true; } } break;
+    case 0x65: { jp::MaxwellENR_MCP2515::HiLoMode m; if (g_maxwell.readHiLoModeActual(m)) { g_hilo_actual=(uint8_t)m; return true; } } break;
+    case 0x08: { bool ok = g_maxwell.commProbe(); if (ok){ if (g_module_count==0){ g_modules[0].addr=MODULE_ADDR; g_module_count=1; } g_modules[0].last_status = 1; } return ok; }
+    default: break;
+  }
+  return false;
 }
 
 /* ================== Telemetry cache ========================= */
@@ -204,39 +178,10 @@ static void modules_upsert(uint8_t addr) {
     g_module_count++;
   }
 }
-static void handle_can_frame(const struct can_frame& f) {
-  const uint32_t id = f.can_id & CAN_ID_MASK_ALL;
-  const uint8_t  proto   = (id >> 25) & 0x0F;
-  const uint8_t  modAddr = (id >> 14) & 0x7F;
-  if (proto != MAXWELL_PROTO || modAddr==0) return;
-  modules_upsert(modAddr);
-  const uint8_t msgType = (f.data[0] & 0x0F);
-  if (msgType==0x03) { // ReadDataResp
-    const uint8_t cmd = f.data[1];
-    uint32_t val = (f.can_dlc>=8) ? ((uint32_t)f.data[4]<<24 | (uint32_t)f.data[5]<<16 | (uint32_t)f.data[6]<<8 | f.data[7]) : 0;
-    for (uint8_t i=0;i<g_module_count;i++) if (g_modules[i].addr==modAddr){
-      if (cmd==0x00) g_modules[i].last_v_mv = val;
-      else if (cmd==0x01) g_modules[i].last_i_ma = val;
-      else if (cmd==0x08) g_modules[i].last_status = val;
-    }
-    if (cmd==0x60) { g_hilo_cfg = (uint8_t)(val & 0xFF); }
-    if (cmd==0x65) { g_hilo_actual = (uint8_t)(val & 0xFF); }
-  }
-}
+// Async CAN parser not used with wrapper (reads are synchronous)
 
 /* ================== CAN bring-up helper ===================== */
-static bool can_setup_mcp2515() {
-  g_mcp2515.reset();
-#if MCP2515_CLK_MHZ == 8
-  if (g_mcp2515.setBitrate(CAN_125KBPS, MCP_8MHZ) != MCP2515::ERROR_OK) return false;
-#else
-  if (g_mcp2515.setBitrate(CAN_125KBPS, MCP_16MHZ) != MCP2515::ERROR_OK) return false;
-#endif
-  g_mcp2515.setFilterMask(MCP2515::MASK0, true, 0x00000000);
-  g_mcp2515.setFilterMask(MCP2515::MASK1, true, 0x00000000);
-  g_mcp2515.setNormalMode();
-  return true;
-}
+// CAN bring-up handled by Maxwell wrapper
 
 /* ================= Control Pilot (kept from your HAL) ======= */
 /* ... (identical thresholds / PWM / ADC code as before) ...   */
@@ -529,7 +474,7 @@ static void dc_ramp_tick() {
         (void)cmd_set_hilo(MODULE_ADDR, g_hilo_pending); delay(30);
         (void)cmd_onoff(MODULE_ADDR, true);
         // Verify 0x65
-        uint32_t t0=millis(); bool ok=false; while(millis()-t0<2000){ (void)cmd_read(MODULE_ADDR, 0x65); struct can_frame f; if(g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); if(g_hilo_actual==g_hilo_pending){ ok=true; break; } delay(100);} 
+        uint32_t t0=millis(); bool ok=false; while(millis()-t0<2000){ (void)cmd_read(MODULE_ADDR, 0x65); if(g_hilo_actual==g_hilo_pending){ ok=true; break; } delay(100);} 
         if(ok){ g_hilo_last_switch_ms = millis(); g_hilo_pending = 0; } else { Serial.println("[HILO] Switch verify failed"); g_hilo_pending = 0; }
       }
       g_dc_v_set_V = step_towards(g_dc_v_set_V, v_tgt, dv);
@@ -585,7 +530,7 @@ static void dc_ramp_tick() {
           delay(60);
           (void)cmd_set_hilo(MODULE_ADDR, g_hilo_pending); delay(30);
           (void)cmd_onoff(MODULE_ADDR, true);
-          uint32_t t1=millis(); bool ok=false; while(millis()-t1<2000){ (void)cmd_read(MODULE_ADDR, 0x65); struct can_frame f; if(g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); if(g_hilo_actual==g_hilo_pending){ ok=true; break; } delay(100);} 
+          uint32_t t1=millis(); bool ok=false; while(millis()-t1<2000){ (void)cmd_read(MODULE_ADDR, 0x65); if(g_hilo_actual==g_hilo_pending){ ok=true; break; } delay(100);} 
           if(ok){ g_hilo_last_switch_ms = millis(); g_hilo_pending = 0; } else { Serial.println("[HILO] Switch verify failed"); g_hilo_pending = 0; }
           g_dc_state = DCState::SOFTSTART_V;
         } else {
@@ -626,8 +571,7 @@ static void dc_poll_tick() {
       dc_apply_setpoints(false);
     }
   }
-  struct can_frame f;
-  while (g_mcp2515.readMessage(&f) == MCP2515::ERROR_OK) handle_can_frame(f);
+  // no async RX draining needed (reads are synchronous)
 }
 
 /* ================== Self-Test =============================== */
@@ -642,7 +586,7 @@ static bool run_selftest_blocking() {
   (void)cmd_onoff(MODULE_ADDR, false); delay(50);
   (void)cmd_set_hilo(MODULE_ADDR, 2); delay(30);
   (void)cmd_onoff(MODULE_ADDR, true);
-  uint32_t tmode=millis(); while(millis()-tmode<1000){ (void)cmd_read(MODULE_ADDR, 0x65); struct can_frame ff; if(g_mcp2515.readMessage(&ff)==MCP2515::ERROR_OK) handle_can_frame(ff); if (g_hilo_actual==2) break; delay(50);} 
+  uint32_t tmode=millis(); while(millis()-tmode<1000){ (void)cmd_read(MODULE_ADDR, 0x65); if (g_hilo_actual==2) break; delay(50);} 
   (void)cmd_set_vref_mv(MODULE_ADDR, (uint32_t)lroundf(SELFTEST_SET_V*1000.0f));
   uint32_t t0 = millis();
   bool pass = false;
@@ -688,29 +632,15 @@ static void send_meter_event(float v_V, float i_A, float p_kW, float e_kWh, uint
 static bool run_comm_check(uint32_t timeout_ms, bool &got_v, bool &got_i, bool &got_st, bool &got_hilo) {
   if (!g_can_ok) return false;
   got_v = got_i = got_st = got_hilo = false;
-  (void)cmd_read(MODULE_ADDR, 0x00);
-  (void)cmd_read(MODULE_ADDR, 0x01);
-  (void)cmd_read(MODULE_ADDR, 0x08);
-  (void)cmd_read(MODULE_ADDR, 0x65);
   uint32_t t0 = millis();
-  struct can_frame f;
   while (millis()-t0 < timeout_ms) {
-    if (g_mcp2515.readMessage(&f) == MCP2515::ERROR_OK) {
-      // Update cache
-      handle_can_frame(f);
-      // Identify response
-      const uint32_t id = f.can_id & CAN_ID_MASK_ALL;
-      const uint8_t  proto   = (id >> 25) & 0x0F;
-      const uint8_t  msgType = (f.data[0] & 0x0F);
-      if (proto == MAXWELL_PROTO && msgType == 0x03 && f.can_dlc>=2) {
-        uint8_t cmd = f.data[1];
-        if (cmd==0x00) got_v = true;
-        else if (cmd==0x01) got_i = true;
-        else if (cmd==0x08) got_st = true;
-        else if (cmd==0x65) got_hilo = true;
-      }
-      if (got_v && got_i && got_st && got_hilo) break;
-    }
+    uint32_t v=0,i=0; jp::MaxwellENR_MCP2515::HiLoMode m;
+    if (!got_v) got_v = g_maxwell.readVout_mV(v);
+    if (!got_i) got_i = g_maxwell.readIout_mA(i);
+    if (!got_st) got_st = g_maxwell.commProbe(200);
+    if (!got_hilo) got_hilo = g_maxwell.readHiLoModeActual(m);
+    if (got_v && got_i && got_st && got_hilo) break;
+    delay(20);
   }
   return (got_v && got_i && got_st);
 }
@@ -786,7 +716,13 @@ static void rpc_cfg(JsonObject p, StaticJsonDocument<512>& res){
   if (p.containsKey("ramp_v")) g_cfg_v_ramp = clampf(p["ramp_v"].as<float>(), 1.0f, 500.0f);
   if (p.containsKey("ramp_i")) g_cfg_i_ramp = clampf(p["ramp_i"].as<float>(), 1.0f, 500.0f);
   if (p.containsKey("ignore_cp")) g_dc_ignore_cp = p["ignore_cp"].as<bool>();
-  if (p.containsKey("module_addr")) MODULE_ADDR = (uint8_t) (p["module_addr"].as<int>() & 0x7F);
+  if (p.containsKey("module_addr")) {
+    MODULE_ADDR = (uint8_t) (p["module_addr"].as<int>() & 0x7F);
+    g_mxCfg.moduleAddr = MODULE_ADDR;
+    g_maxwell = jp::MaxwellENR_MCP2515(g_mxCfg);
+    bool began = g_maxwell.begin();
+    g_can_ok = began && g_maxwell.commProbe(400);
+  }
   res["ok"]=true; res["v_min"]=g_cfg_v_min; res["v_max"]=g_cfg_v_max; res["p_kw"]=g_cfg_p_max_w/1000.0f; res["i_max"]=g_cfg_i_hard_max; res["ramp_v"]=g_cfg_v_ramp; res["ramp_i"]=g_cfg_i_ramp; res["ignore_cp"]=g_dc_ignore_cp; res["module_addr"]=MODULE_ADDR;
 }
 
@@ -1025,74 +961,17 @@ void setup() {
   pinMode(EM_STOP_PIN, EM_STOP_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
 #endif
 
-  // Bring-up MCP2515 (auto-detect 8 MHz vs 16 MHz crystal) on FSPI pins
-  // Hardware reset pulse helps some MCP2515 clones
-  pinMode(PIN_RST, OUTPUT);
-  digitalWrite(PIN_RST, LOW);  delay(2);
-  digitalWrite(PIN_RST, HIGH); delay(10);
-  spiFSPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
-  pinMode(PIN_CS, OUTPUT); digitalWrite(PIN_CS, HIGH);
-  g_mcp2515.reset();
-  auto cfg_can = [&](CAN_SPEED spd, CAN_CLOCK clk, const char* tag){
-    if (g_mcp2515.setBitrate(spd, clk) != MCP2515::ERROR_OK) {
-      Serial.printf("[CAN] setBitrate failed (%s)\n", tag);
-      return false;
-    }
-    g_mcp2515.setFilterMask(MCP2515::MASK0, true, 0x00000000);
-    g_mcp2515.setFilterMask(MCP2515::MASK1, true, 0x00000000);
-    g_mcp2515.setNormalMode();
-    Serial.printf("[CAN] MCP2515 set @125kbps (%s)\n", tag);
-    return true;
-  };
-  bool ok8  = cfg_can(CAN_125KBPS, MCP_8MHZ,  "8MHz");
-  if (ok8) {
-    // Override CNF2/CNF3 to match working reference (SAM=1, PropSeg=2, PS1=7, PS2=6)
-    // Also force accept-all and enable RX interrupts.
-    g_mcp2515.setConfigMode();
-    mcp2515_write_reg_raw(0x29, 0xF1); // CNF2 (SAM=1)
-    mcp2515_write_reg_raw(0x28, 0x05); // CNF3
-    mcp2515_write_reg_raw(0x60, 0x64); // RXB0CTRL: BUKT=1, RXM=11 (accept all)
-    mcp2515_write_reg_raw(0x70, 0x60); // RXB1CTRL: RXM=11 (accept all)
-    mcp2515_write_reg_raw(REG_CANINTE, 0x03); // enable RX interrupts
-    mcp2515_write_reg_raw(REG_EFLG,    0x00); // clear error flags
-    g_mcp2515.setNormalMode();
+  // Bring-up via Maxwell wrapper
+  g_mxCfg.moduleAddr = MODULE_ADDR;
+  g_maxwell = jp::MaxwellENR_MCP2515(g_mxCfg);
+  bool began = g_maxwell.begin();
+  g_can_ok = began && g_maxwell.commProbe(400);
+  if (g_can_ok) {
+    Serial.println("[CAN] MCP2515 ready (Maxwell wrapper)");
+    g_module_count = 1; g_modules[0].addr = MODULE_ADDR; g_modules[0].last_seen_ms = millis();
+  } else {
+    Serial.println("[CAN] No reply; check wiring/bitrate/crystal");
   }
-  bool have_reply = false;
-  if (ok8) {
-    // Probe for a quick reply at 8 MHz
-    (void)cmd_read(MODULE_ADDR, 0x08);
-    uint32_t t0=millis(); struct can_frame f;
-    while (millis()-t0 < 200) { if (g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) { have_reply=true; break; } }
-  }
-  if (!have_reply) {
-    Serial.println("[CAN] No reply at 8MHz; trying 16MHz …");
-    g_mcp2515.reset();
-    bool ok16 = cfg_can(CAN_125KBPS, MCP_16MHZ, "16MHz");
-    if (ok16) {
-      // Ensure accept-all and RX interrupts in 16MHz fallback too
-      g_mcp2515.setConfigMode();
-      mcp2515_write_reg_raw(0x60, 0x64); // RXB0CTRL
-      mcp2515_write_reg_raw(0x70, 0x60); // RXB1CTRL
-      mcp2515_write_reg_raw(REG_CANINTE, 0x03);
-      mcp2515_write_reg_raw(REG_EFLG,    0x00);
-      g_mcp2515.setNormalMode();
-      (void)cmd_read(MODULE_ADDR, 0x08);
-      uint32_t t0=millis(); struct can_frame f;
-      while (millis()-t0 < 200) { if (g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) { have_reply=true; break; } }
-    }
-    if (!have_reply) {
-      Serial.println("[CAN] No reply at either 8MHz or 16MHz; check wiring/bitrate");
-    }
-  }
-  // Consider CAN operational only after an actual reply
-  g_can_ok = have_reply;
-  if (g_can_ok) Serial.println("[CAN] MCP2515 ready (extended)");
-
-  // Discover modules quickly (may still be zero until DC module powered)
-  g_module_count = 0;
-  (void)cmd_read(MODULE_ADDR, 0x08);
-  uint32_t t0=millis(); struct can_frame f;
-  while (millis()-t0 < 300) { if (g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); }
 
   // Load self-test persisted flag
   prefs.begin("hal", true);
@@ -1177,14 +1056,4 @@ void loop() {
 }
 
 // Minimal direct MCP2515 register write via FSPI (override CNF registers)
-static void mcp2515_write_reg_raw(uint8_t reg, uint8_t val) {
-  spiFSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-  CS_LOW();
-  spiFSPI.transfer(0x02); // INSTRUCTION_WRITE
-  spiFSPI.transfer(reg);
-  spiFSPI.transfer(val);
-  CS_HIGH();
-  spiFSPI.endTransaction();
-}
-// Minimal direct MCP2515 register write via FSPI (used to override CNF on 8 MHz)
-// helper declared later after FSPI defined
+// Raw MCP2515 register helper removed (wrapper manages CNF/RX configs)
