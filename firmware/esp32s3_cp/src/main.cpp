@@ -405,7 +405,7 @@ static inline char classify_state_from_mv(int mv){ if(mv>=g_t12) return 'A'; if(
 enum class DCState : uint8_t { IDLE=0, SOFTSTART_V, SOFTSTART_I, RUNNING, SOFTSTOP_I, SOFTSTOP_V, E_STOP, FAULT };
 static DCState g_dc_state = DCState::IDLE;
 static bool  g_dc_enabled = false;      // user intent
-static bool  g_dc_ignore_cp = false;    // bench override: ignore CP/AUX gating
+static bool  g_dc_ignore_cp = true;     // bench override: ignore CP/AUX gating
 static float g_dc_v_target_V = 0.0f;    // desired (user/API)
 static float g_dc_i_target_A = 0.0f;    // desired (user/API)
 static float g_dc_v_set_V    = 0.0f;    // ramped command
@@ -458,30 +458,21 @@ static inline uint8_t hilo_for_target(float v_tgt){
   return 0; // keep
 }
 
-/* Apply combined setpoints (broadcast AllSet) */
+/* Apply setpoints using discrete Maxwell commands (Ilim -> Vref -> Power) */
 static void dc_apply_setpoints(bool onoffOnly=false) {
+  if (!g_can_ok) return;
+
   float v_cmd = clampf(g_dc_v_set_V, g_cfg_v_min, g_cfg_v_max);
-  float v_for_power = v_cmd;
-  // Prefer measured module voltage if available
-  if (g_module_count>0 && g_modules[0].last_v_mv>0) v_for_power = g_modules[0].last_v_mv/1000.0f;
-
+  float v_for_power = (g_module_count>0 && g_modules[0].last_v_mv>0) ? (g_modules[0].last_v_mv/1000.0f) : v_cmd;
   float i_cmd = fminf(g_dc_i_set_A, current_allowed_for_power(v_for_power));
-  uint8_t onoff = (g_dc_state==DCState::IDLE || g_dc_state==DCState::SOFTSTOP_V || g_dc_state==DCState::E_STOP) ? 1 : 0; // 0=ON,1=OFF
 
-  if (onoffOnly) {
-    (void)cmd_onoff(MODULE_ADDR, onoff==0);
-  } else {
-    const uint16_t i_0p1A   = (uint16_t)lroundf(i_cmd * 10.0f);
-    const uint16_t vbat_0p1 = (uint16_t)lroundf(v_cmd * 10.0f);
-    const uint16_t vout_0p1 = (uint16_t)lroundf(v_cmd * 10.0f);
-    const bool turn_on = !(g_dc_state==DCState::IDLE || g_dc_state==DCState::SOFTSTOP_V || g_dc_state==DCState::E_STOP);
-    uint8_t hilo_sel = 0; // keep by default
-    if (g_hilo_pending) hilo_sel = g_hilo_pending; // provide hint if pending
-    // Pack on/off + hilo into Byte1
-    auto pack_onoff_hilo = [](bool on, uint8_t select){ uint8_t sel=0; if(select==1) sel=2; else if(select==2) sel=3; uint8_t onoff = on?2:3; return (uint8_t)((sel<<6)|(onoff&0x03)); };
-    uint8_t onoff_hilo = pack_onoff_hilo(turn_on, hilo_sel);
-    (void)cmd_allset(MODULE_ADDR, onoff_hilo, i_0p1A, vbat_0p1, vout_0p1);
-  }
+  const bool turn_on = !(g_dc_state==DCState::IDLE || g_dc_state==DCState::SOFTSTOP_V || g_dc_state==DCState::E_STOP);
+
+  if (onoffOnly) { (void)cmd_onoff(MODULE_ADDR, turn_on); return; }
+
+  (void)cmd_set_ilim_ma(MODULE_ADDR, (uint32_t)lroundf(i_cmd * 1000.0f));
+  (void)cmd_set_vref_mv(MODULE_ADDR, (uint32_t)lroundf(v_cmd * 1000.0f));
+  (void)cmd_onoff(MODULE_ADDR, turn_on);
 }
 
 /* Emergency stop */
@@ -1035,6 +1026,10 @@ void setup() {
 #endif
 
   // Bring-up MCP2515 (auto-detect 8 MHz vs 16 MHz crystal) on FSPI pins
+  // Hardware reset pulse helps some MCP2515 clones
+  pinMode(PIN_RST, OUTPUT);
+  digitalWrite(PIN_RST, LOW);  delay(2);
+  digitalWrite(PIN_RST, HIGH); delay(10);
   spiFSPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
   pinMode(PIN_CS, OUTPUT); digitalWrite(PIN_CS, HIGH);
   g_mcp2515.reset();
@@ -1052,10 +1047,14 @@ void setup() {
   bool ok8  = cfg_can(CAN_125KBPS, MCP_8MHZ,  "8MHz");
   if (ok8) {
     // Override CNF2/CNF3 to match working reference (SAM=1, PropSeg=2, PS1=7, PS2=6)
-    // CNF1 left as library sets (0x01). Use raw SPI writes to avoid private API.
+    // Also force accept-all and enable RX interrupts.
     g_mcp2515.setConfigMode();
-    mcp2515_write_reg_raw(0x29, 0xF1); // CNF2
+    mcp2515_write_reg_raw(0x29, 0xF1); // CNF2 (SAM=1)
     mcp2515_write_reg_raw(0x28, 0x05); // CNF3
+    mcp2515_write_reg_raw(0x60, 0x64); // RXB0CTRL: BUKT=1, RXM=11 (accept all)
+    mcp2515_write_reg_raw(0x70, 0x60); // RXB1CTRL: RXM=11 (accept all)
+    mcp2515_write_reg_raw(REG_CANINTE, 0x03); // enable RX interrupts
+    mcp2515_write_reg_raw(REG_EFLG,    0x00); // clear error flags
     g_mcp2515.setNormalMode();
   }
   bool have_reply = false;
@@ -1070,6 +1069,13 @@ void setup() {
     g_mcp2515.reset();
     bool ok16 = cfg_can(CAN_125KBPS, MCP_16MHZ, "16MHz");
     if (ok16) {
+      // Ensure accept-all and RX interrupts in 16MHz fallback too
+      g_mcp2515.setConfigMode();
+      mcp2515_write_reg_raw(0x60, 0x64); // RXB0CTRL
+      mcp2515_write_reg_raw(0x70, 0x60); // RXB1CTRL
+      mcp2515_write_reg_raw(REG_CANINTE, 0x03);
+      mcp2515_write_reg_raw(REG_EFLG,    0x00);
+      g_mcp2515.setNormalMode();
       (void)cmd_read(MODULE_ADDR, 0x08);
       uint32_t t0=millis(); struct can_frame f;
       while (millis()-t0 < 200) { if (g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) { have_reply=true; break; } }
@@ -1078,7 +1084,8 @@ void setup() {
       Serial.println("[CAN] No reply at either 8MHz or 16MHz; check wiring/bitrate");
     }
   }
-  g_can_ok = (ok8 || have_reply);
+  // Consider CAN operational only after an actual reply
+  g_can_ok = have_reply;
   if (g_can_ok) Serial.println("[CAN] MCP2515 ready (extended)");
 
   // Discover modules quickly (may still be zero until DC module powered)
