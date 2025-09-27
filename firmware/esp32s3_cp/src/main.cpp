@@ -1168,5 +1168,16 @@ void loop() {
   // Note: autowp MCP2515 lib has limited error introspection; a full
   // bus-off recovery would poll EFLG via SPI. Keeping it minimal.
 }
+
+// Minimal direct MCP2515 register write via FSPI (override CNF registers)
+static void mcp2515_write_reg_raw(uint8_t reg, uint8_t val) {
+  spiFSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+  CS_LOW();
+  spiFSPI.transfer(0x02); // INSTRUCTION_WRITE
+  spiFSPI.transfer(reg);
+  spiFSPI.transfer(val);
+  CS_HIGH();
+  spiFSPI.endTransaction();
+}
 // Minimal direct MCP2515 register write via FSPI (used to override CNF on 8 MHz)
 // helper declared later after FSPI defined
