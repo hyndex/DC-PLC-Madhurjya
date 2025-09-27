@@ -131,26 +131,6 @@ static jp::MaxwellENR_MCP2515::Config g_mxCfg; // defaults match our wiring
 static jp::MaxwellENR_MCP2515         g_maxwell(g_mxCfg);
 static bool    g_can_ok = false;
 
-/* --- Maxwell commands (unicast/broadcast) --- */
-// Bridge functions -> Maxwell wrapper
-static bool cmd_set_vref_mv(uint8_t /*moduleAddr*/, uint32_t mv) { return g_maxwell.setVref_mV(mv); }
-static bool cmd_set_ilim_ma(uint8_t /*moduleAddr*/, uint32_t ma) { return g_maxwell.setILimit_mA(ma); }
-static bool cmd_onoff(uint8_t /*moduleAddr*/, bool on)           { return g_maxwell.powerOn(on); }
-static bool cmd_allset(uint8_t, uint8_t, uint16_t, uint16_t, uint16_t) { return false; }
-static bool cmd_set_hilo(uint8_t /*moduleAddr*/, uint8_t mode /*1=HIGH,2=LOW,3=AUTO*/) { return g_maxwell.setHiLoMode((jp::MaxwellENR_MCP2515::HiLoMode)mode); }
-static bool cmd_read(uint8_t /*moduleAddr*/, uint8_t what) {
-  uint32_t val=0;
-  switch (what) {
-    case 0x00: if (g_maxwell.readVout_mV(val)) { if (g_module_count==0){ g_modules[0].addr=MODULE_ADDR; g_module_count=1; } g_modules[0].last_v_mv=val; return true; } break;
-    case 0x01: if (g_maxwell.readIout_mA(val)) { if (g_module_count==0){ g_modules[0].addr=MODULE_ADDR; g_module_count=1; } g_modules[0].last_i_ma=val; return true; } break;
-    case 0x60: { jp::MaxwellENR_MCP2515::HiLoMode m; if (g_maxwell.readHiLoModeCfg(m)) { g_hilo_cfg=(uint8_t)m; return true; } } break;
-    case 0x65: { jp::MaxwellENR_MCP2515::HiLoMode m; if (g_maxwell.readHiLoModeActual(m)) { g_hilo_actual=(uint8_t)m; return true; } } break;
-    case 0x08: { bool ok = g_maxwell.commProbe(); if (ok){ if (g_module_count==0){ g_modules[0].addr=MODULE_ADDR; g_module_count=1; } g_modules[0].last_status = 1; } return ok; }
-    default: break;
-  }
-  return false;
-}
-
 /* ================== Telemetry cache ========================= */
 #ifndef MAX_MODULES
 #define MAX_MODULES 8
@@ -170,6 +150,26 @@ static uint32_t g_hilo_last_switch_ms = 0;
 #ifndef HILO_COOLDOWN_MS
 #define HILO_COOLDOWN_MS 3000
 #endif
+
+/* --- Maxwell commands (unicast/broadcast) --- */
+// Bridge functions -> Maxwell wrapper
+static bool cmd_set_vref_mv(uint8_t /*moduleAddr*/, uint32_t mv) { return g_maxwell.setVref_mV(mv); }
+static bool cmd_set_ilim_ma(uint8_t /*moduleAddr*/, uint32_t ma) { return g_maxwell.setILimit_mA(ma); }
+static bool cmd_onoff(uint8_t /*moduleAddr*/, bool on)           { return g_maxwell.powerOn(on); }
+static bool cmd_allset(uint8_t, uint8_t, uint16_t, uint16_t, uint16_t) { return false; }
+static bool cmd_set_hilo(uint8_t /*moduleAddr*/, uint8_t mode /*1=HIGH,2=LOW,3=AUTO*/) { return g_maxwell.setHiLoMode((jp::MaxwellENR_MCP2515::HiLoMode)mode); }
+static bool cmd_read(uint8_t /*moduleAddr*/, uint8_t what) {
+  uint32_t val=0;
+  switch (what) {
+    case 0x00: if (g_maxwell.readVout_mV(val)) { if (g_module_count==0){ g_modules[0].addr=MODULE_ADDR; g_module_count=1; } g_modules[0].last_v_mv=val; return true; } break;
+    case 0x01: if (g_maxwell.readIout_mA(val)) { if (g_module_count==0){ g_modules[0].addr=MODULE_ADDR; g_module_count=1; } g_modules[0].last_i_ma=val; return true; } break;
+    case 0x60: { jp::MaxwellENR_MCP2515::HiLoMode m; if (g_maxwell.readHiLoModeCfg(m)) { g_hilo_cfg=(uint8_t)m; return true; } } break;
+    case 0x65: { jp::MaxwellENR_MCP2515::HiLoMode m; if (g_maxwell.readHiLoModeActual(m)) { g_hilo_actual=(uint8_t)m; return true; } } break;
+    case 0x08: { bool ok = g_maxwell.commProbe(); if (ok){ if (g_module_count==0){ g_modules[0].addr=MODULE_ADDR; g_module_count=1; } g_modules[0].last_status = 1; } return ok; }
+    default: break;
+  }
+  return false;
+}
 
 static void modules_upsert(uint8_t addr) {
   for (uint8_t i=0;i<g_module_count;i++) if (g_modules[i].addr==addr) { g_modules[i].last_seen_ms = millis(); return; }

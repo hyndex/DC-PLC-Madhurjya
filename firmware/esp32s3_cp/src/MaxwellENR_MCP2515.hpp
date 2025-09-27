@@ -1,4 +1,4 @@
-// MaxwellENR_MCP2515.hpp (header-only)
+// MaxwellENR_MCP2515.hpp (header-only, v3)
 #pragma once
 #include <Arduino.h>
 #include <SPI.h>
@@ -7,9 +7,11 @@ namespace jp {
 
 class MaxwellENR_MCP2515 {
 public:
-  enum class HiLoMode : uint8_t { HIGH = 1, LOW = 2, AUTO = 3 };
+  // Avoid Arduino macros: use High/Low/Auto (not HIGH/LOW)
+  enum class HiLoMode : uint8_t { High = 1, Low = 2, Auto = 3 };
 
   struct Config {
+    // Pins (ESP32-S3 FSPI)
     int pinSCK  = 7;
     int pinMOSI = 15;
     int pinMISO = 16;
@@ -17,22 +19,29 @@ public:
     int pinRST  = 14;
     int pinINT  = 42;   // optional
 
-    uint8_t  mcpOscMHz    = 8;         // 8 or 16
-    uint32_t canBitrate   = 125000;    // 125 kbps
+    // Bus / module
+    uint8_t  mcpOscMHz    = 8;        // 8 or 16
+    uint32_t canBitrate   = 125000;   // fixed profile
     uint8_t  monitorAddr  = 0x01;
     uint8_t  moduleAddr   = 0x01;
     uint8_t  groupNibble  = 0x01;
 
-    uint32_t pMaxW        = 30000;     // 30 kW power cap
-    uint32_t hvEnter_mV   = 500000;    // enter HIGH >= 500V
-    uint32_t hvExit_mV    = 400000;    // exit HIGH  <= 400V
-    uint32_t vMin_mV      = 200000;    // 200 V
-    uint32_t vMax_mV      = 1000000;   // 1000 V
+    // Policy
+    uint32_t pMaxW        = 30000;    // 30 kW
+    uint32_t hvEnter_mV   = 500000;   // >=500 V -> High
+    uint32_t hvExit_mV    = 400000;   // <=400 V -> Low
+    uint32_t vMin_mV      = 200000;   // 200 V
+    uint32_t vMax_mV      = 1000000;  // 1000 V
   };
 
-  explicit MaxwellENR_MCP2515(const Config& cfg = Config())
-  : _cfg(cfg), _spi(FSPI) {}
+  // NOTE: avoid default arg "= Config()" here (Arduino GCC is picky).
+  MaxwellENR_MCP2515() : _cfg(), _spi(FSPI) {}
+  explicit MaxwellENR_MCP2515(const Config& cfg) : _cfg(cfg), _spi(FSPI) {}
 
+  // Allow updating module address at runtime without reconstructing
+  void setModuleAddr(uint8_t addr) { _cfg.moduleAddr = addr; }
+
+  // ----- Bring-up -----
   bool begin() {
     pinMode(_cfg.pinCS, OUTPUT);   CS_HIGH();
     pinMode(_cfg.pinRST, OUTPUT);  digitalWrite(_cfg.pinRST, HIGH);
@@ -41,21 +50,23 @@ public:
     _spi.begin(_cfg.pinSCK, _cfg.pinMISO, _cfg.pinMOSI, _cfg.pinCS);
     _spi.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
 
+    // Hard reset pulse helps with MCP2515 clones
     digitalWrite(_cfg.pinRST, LOW);  delay(2);
     digitalWrite(_cfg.pinRST, HIGH); delay(10);
 
     mcp_reset();
     if (!mcp_setMode(MODE_CONFIG)) { Serial.println("[MCP] Cannot enter CONFIG"); return false; }
-    if (!mcp_setBitTiming_125k())   { Serial.println("[MCP] Bit timing set failed"); return false; }
+    if (!mcp_setBitTiming_125k())  { Serial.println("[MCP] Bit timing set failed"); return false; }
     mcp_acceptAll();
     mcp_bitmod(REG_EFLG, 0xFF, 0x00);
-    if (!mcp_setMode(MODE_NORMAL))  { Serial.println("[MCP] Cannot enter NORMAL"); return false; }
+    if (!mcp_setMode(MODE_NORMAL)) { Serial.println("[MCP] Cannot enter NORMAL"); return false; }
 
     Serial.printf("[MCP] Ready @125 kbps (OSC=%u MHz, SAM=1)\n", _cfg.mcpOscMHz);
     dumpCNF();
     return true;
   }
 
+  // Probe: send a read and wait for any reply
   bool commProbe(uint32_t timeoutMs=800) {
     sendRead(_cfg.moduleAddr, Cmd::ModuleStatus);
     uint32_t t0 = millis(); uint8_t len=0; uint32_t id=0; uint8_t d[8];
@@ -63,6 +74,7 @@ public:
     return false;
   }
 
+  // ----- Public Maxwell API (ack-verified) -----
   bool powerOn(bool on=true) {
     if (!sendSet(_cfg.moduleAddr, Cmd::PowerOnOff, on ? 0u : 1u)) return false;
     uint32_t dummy=0; return waitResp(_cfg.moduleAddr, MsgType::SetDataResp, Cmd::PowerOnOff, dummy, 1200);
@@ -84,8 +96,11 @@ public:
     return waitResp(_cfg.moduleAddr, MsgType::ReadDataResp, Cmd::Iout_mA, mA, 800);
   }
 
+  // ----- Hi/Lo control -----
   bool setHiLoMode(HiLoMode mode) {
-    uint8_t d[8] = { (uint8_t)((_cfg.groupNibble<<4)|MsgType::SetData), 0x5F, 0,0, 0,0,0,0 };
+    uint8_t d[8] = {
+      (uint8_t)((_cfg.groupNibble<<4) | (uint8_t)MsgType::SetData), 0x5F, 0,0, 0,0,0,0
+    };
     put_be32(&d[4], (uint32_t)mode);
     if (!mcp_send_ext(buildId(_cfg.monitorAddr, _cfg.moduleAddr), d, 8)) return false;
     uint32_t echo=0; return waitResp(_cfg.moduleAddr, MsgType::SetDataResp, (Cmd)0x5F, echo, 1200);
@@ -101,19 +116,20 @@ public:
     mode = (HiLoMode)(v & 0xFF); return true;
   }
 
+  // Ensure correct Hi/Lo for a target voltage (with hysteresis)
   bool ensureModeForTargetV(uint32_t target_mV, HiLoMode &actual_out) {
-    HiLoMode actual = HiLoMode::LOW;
+    HiLoMode actual = HiLoMode::Low;
     if (!readHiLoModeActual(actual)) {
-      if (!readHiLoModeCfg(actual)) actual = HiLoMode::LOW;
+      if (!readHiLoModeCfg(actual)) actual = HiLoMode::Low;   // <-- avoid LOW macro
     }
     HiLoMode want = actual;
-    if (actual == HiLoMode::LOW  && target_mV >= _cfg.hvEnter_mV) want = HiLoMode::HIGH;
-    if (actual == HiLoMode::HIGH && target_mV <= _cfg.hvExit_mV)  want = HiLoMode::LOW;
+    if (actual == HiLoMode::Low  && target_mV >= _cfg.hvEnter_mV) want = HiLoMode::High;
+    if (actual == HiLoMode::High && target_mV <= _cfg.hvExit_mV)  want = HiLoMode::Low;
 
     if (want == actual) { actual_out = actual; return true; }
 
     Serial.printf("[MODE] Switching %s -> %s\n",
-      actual==HiLoMode::HIGH?"HIGH":"LOW", want==HiLoMode::HIGH?"HIGH":"LOW");
+      actual==HiLoMode::High?"HIGH":"LOW", want==HiLoMode::High?"HIGH":"LOW");
 
     (void)powerOn(false); delay(200);
     if (!setHiLoMode(want)) { actual_out = actual; return false; }
@@ -127,6 +143,7 @@ public:
     actual_out = now; return (now == want);
   }
 
+  // Clamp + dynamic Ilim (Pcap/V) + Vref, with Hi/Lo ensured first
   bool setVoltageAuto(uint32_t target_V, uint32_t req_I_mA) {
     uint32_t target_mV = clampV_mV(target_V * 1000UL);
 
@@ -134,8 +151,8 @@ public:
     if (!ensureModeForTargetV(target_mV, active)) {
       Serial.println("[MODE] ensureModeForTargetV failed (continuing best-effort)");
     } else {
-      Serial.printf("[MODE] Active=%s\n", active==HiLoMode::HIGH?"HIGH":
-                                 active==HiLoMode::LOW ?"LOW":"AUTO");
+      Serial.printf("[MODE] Active=%s\n", active==HiLoMode::High?"HIGH":
+                                 active==HiLoMode::Low ?"LOW":"AUTO");
     }
 
     uint32_t ilim_mA = pLimitedI_mA(target_mV, req_I_mA);
@@ -145,6 +162,7 @@ public:
     return true;
   }
 
+  // Helpers
   inline uint32_t clampV_mV(uint32_t v_mV) const {
     if (v_mV < _cfg.vMin_mV) return _cfg.vMin_mV;
     if (v_mV > _cfg.vMax_mV) return _cfg.vMax_mV;
@@ -156,17 +174,19 @@ public:
     return (req_mA < ipow_mA) ? req_mA : ipow_mA;
   }
 
-  void dumpErrors(const char* tag) const {
+  // Diagnostics
+  void dumpErrors(const char* tag) {
     uint8_t eflg=mcp_read(REG_EFLG), tec=mcp_read(REG_TEC), rec=mcp_read(REG_REC), intf=mcp_read(REG_CANINTF);
     Serial.printf("[DIAG] %s EFLG=0x%02X TEC=%u REC=%u CANINTF=0x%02X\n", tag, eflg, tec, rec, intf);
   }
-  void dumpCNF() const {
+  void dumpCNF() {
     Serial.printf("[CNF] CNF1=0x%02X CNF2=0x%02X CNF3=0x%02X (OSC=%u MHz, %lu bps)\n",
                   mcp_read(REG_CNF1), mcp_read(REG_CNF2), mcp_read(REG_CNF3),
                   _cfg.mcpOscMHz, (unsigned long)_cfg.canBitrate);
   }
 
 private:
+  // Maxwell wire format
   enum class MsgType : uint8_t { SetData=0x0, SetDataResp=0x1, ReadData=0x2, ReadDataResp=0x3 };
   enum class Cmd     : uint8_t { Vout_mV=0, Iout_mA=1, VoutRef_mV=2, IoutLimit_mA=3, PowerOnOff=4, ModuleStatus=8 };
 
@@ -177,14 +197,16 @@ private:
   static inline void put_be32(uint8_t *p, uint32_t v) { p[0]=v>>24; p[1]=v>>16; p[2]=v>>8; p[3]=v; }
 
   bool sendSet(uint8_t module, Cmd cmd, uint32_t value) {
-    uint8_t d[8] = { (uint8_t)((_cfg.groupNibble<<4)|(uint8_t)MsgType::SetData),
-                     (uint8_t)cmd, 0, 0, 0,0,0,0 };
+    uint8_t d[8] = {
+      (uint8_t)((_cfg.groupNibble<<4) | (uint8_t)MsgType::SetData), (uint8_t)cmd, 0, 0, 0,0,0,0
+    };
     put_be32(&d[4], value);
     return mcp_send_ext(buildId(_cfg.monitorAddr, module), d, 8);
   }
   bool sendRead(uint8_t module, Cmd cmd) {
-    uint8_t d[8] = { (uint8_t)((_cfg.groupNibble<<4)|(uint8_t)MsgType::ReadData),
-                     (uint8_t)cmd, 0, 0, 0,0,0,0 };
+    uint8_t d[8] = {
+      (uint8_t)((_cfg.groupNibble<<4) | (uint8_t)MsgType::ReadData), (uint8_t)cmd, 0, 0, 0,0,0,0
+    };
     return mcp_send_ext(buildId(_cfg.monitorAddr, module), d, 8);
   }
   bool waitResp(uint8_t module, MsgType expectMsg, Cmd expectCmd, uint32_t &value, uint32_t timeoutMs) {
@@ -204,7 +226,7 @@ private:
     return false;
   }
 
-  // MCP2515 low-level
+  // MCP2515 low-level (non-const; SPI::transfer() is non-const)
   static constexpr uint8_t INSTR_RESET  = 0xC0;
   static constexpr uint8_t INSTR_READ   = 0x03;
   static constexpr uint8_t INSTR_WRITE  = 0x02;
@@ -233,22 +255,23 @@ private:
   static constexpr uint8_t MODE_NORMAL  = 0x00;
   static constexpr uint8_t MODE_CONFIG  = 0x80;
 
-  inline void CS_LOW()  const { digitalWrite(_cfg.pinCS, LOW); }
-  inline void CS_HIGH() const { digitalWrite(_cfg.pinCS, HIGH); }
+  inline void CS_LOW()  { digitalWrite(_cfg.pinCS, LOW); }
+  inline void CS_HIGH() { digitalWrite(_cfg.pinCS, HIGH); }
 
-  inline void mcp_reset() const { CS_LOW(); _spi.transfer(INSTR_RESET); CS_HIGH(); delay(5); }
-  inline uint8_t mcp_read(uint8_t a) const { CS_LOW(); _spi.transfer(INSTR_READ); _spi.transfer(a); uint8_t v=_spi.transfer(0); CS_HIGH(); return v; }
-  inline void mcp_write(uint8_t a, uint8_t v) const { CS_LOW(); _spi.transfer(INSTR_WRITE); _spi.transfer(a); _spi.transfer(v); CS_HIGH(); }
-  inline void mcp_writes(uint8_t a, const uint8_t* d, size_t n) const { CS_LOW(); _spi.transfer(INSTR_WRITE); _spi.transfer(a); while(n--) _spi.transfer(*d++); CS_HIGH(); }
-  inline void mcp_bitmod(uint8_t a, uint8_t m, uint8_t d) const { CS_LOW(); _spi.transfer(INSTR_BITMOD); _spi.transfer(a); _spi.transfer(m); _spi.transfer(d); CS_HIGH(); }
+  inline void mcp_reset() { CS_LOW(); _spi.transfer(INSTR_RESET); CS_HIGH(); delay(5); }
+  inline uint8_t mcp_read(uint8_t a) { CS_LOW(); _spi.transfer(INSTR_READ); _spi.transfer(a); uint8_t v=_spi.transfer(0); CS_HIGH(); return v; }
+  inline void mcp_write(uint8_t a, uint8_t v) { CS_LOW(); _spi.transfer(INSTR_WRITE); _spi.transfer(a); _spi.transfer(v); CS_HIGH(); }
+  inline void mcp_writes(uint8_t a, const uint8_t* d, size_t n) { CS_LOW(); _spi.transfer(INSTR_WRITE); _spi.transfer(a); while(n--) _spi.transfer(*d++); CS_HIGH(); }
+  inline void mcp_bitmod(uint8_t a, uint8_t m, uint8_t d) { CS_LOW(); _spi.transfer(INSTR_BITMOD); _spi.transfer(a); _spi.transfer(m); _spi.transfer(d); CS_HIGH(); }
 
-  bool mcp_setMode(uint8_t mode) const {
+  bool mcp_setMode(uint8_t mode) {
     mcp_bitmod(REG_CANCTRL, REQOP_MASK, mode);
     for (uint32_t t=millis(); millis()-t<50; ) if ((mcp_read(REG_CANSTAT)&REQOP_MASK)==mode) return true;
     return false;
   }
 
-  bool mcp_setBitTiming_125k() const {
+  // 125 kbps profiles @ 8 or 16 MHz, 16 TQ, PropSeg=2, PS1=7, PS2=6, SJW=1, SAM=1
+  bool mcp_setBitTiming_125k() {
     uint8_t cnf1 = (_cfg.mcpOscMHz==16) ? 0x03 : 0x01; // BRP=(4 or 2)-1, SJW=1
     mcp_write(REG_CNF1, cnf1);
     mcp_write(REG_CNF2, 0xF1);
@@ -256,7 +279,7 @@ private:
     return true;
   }
 
-  void mcp_acceptAll() const {
+  void mcp_acceptAll() {
     mcp_write(0x60, 0x64); // RXB0: any + BUKT
     mcp_write(0x70, 0x60); // RXB1: any
     mcp_write(REG_CANINTE, 0x03);
@@ -276,7 +299,7 @@ private:
     return ((uint32_t)sid<<18) | eid;
   }
 
-  bool mcp_send_ext(uint32_t id, const uint8_t* data, uint8_t len) const {
+  bool mcp_send_ext(uint32_t id, const uint8_t* data, uint8_t len) {
     if (len > 8) len = 8;
     for (uint32_t t=millis(); millis()-t<50; ) if ((mcp_read(REG_TXB0CTRL)&0x08)==0) break;
     if (mcp_read(REG_TXB0CTRL)&0x08) return false;
@@ -287,7 +310,7 @@ private:
     CS_LOW(); _spi.transfer(INSTR_RTS | 0x01); CS_HIGH();
     return true;
   }
-  bool mcp_receive_ext(uint32_t& id, uint8_t* data, uint8_t& len) const {
+  bool mcp_receive_ext(uint32_t& id, uint8_t* data, uint8_t& len) {
     uint8_t intf = mcp_read(REG_CANINTF);
     if (intf & 0x01) { // RXB0
       uint8_t b[13]; CS_LOW(); _spi.transfer(INSTR_READ); _spi.transfer(0x61);
@@ -310,4 +333,3 @@ private:
 };
 
 } // namespace jp
-
