@@ -44,6 +44,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--cycles", type=int, default=1, help="Number of up/down cycles")
     ap.add_argument("--tol-v", type=float, default=10.0, help="Voltage tolerance for warning (V)")
     ap.add_argument("--force-dc", action="store_true", help="Force CP to DC mode via ESP")
+    ap.add_argument("--periph-mode", choices=["hw","sim"], default="sim", help="Set ESP peripheral mode (sim bypasses AUX)")
+    ap.add_argument("--cfg-v-min", type=float, default=200.0, help="Periph config: min voltage (V)")
+    ap.add_argument("--cfg-v-max", type=float, default=1000.0, help="Periph config: max voltage (V)")
+    ap.add_argument("--cfg-p-kw", type=float, default=30.0, help="Periph config: power cap (kW)")
+    ap.add_argument("--cfg-i-max", type=float, default=120.0, help="Periph config: hard current limit (A)")
     return ap.parse_args()
 
 
@@ -80,12 +85,26 @@ def main() -> int:
     except Exception as e:
         print("[ramp] sys.info failed:", e)
 
+    # Set peripheral mode (sim bypasses AUX gating on contactor)
+    try:
+        mode_res = c.send_req("sys.set_mode", {"mode": args.periph_mode})
+        print("[ramp] sys.set_mode:", mode_res)
+    except Exception as e:
+        print("[ramp] sys.set_mode failed:", e)
+
     if args.force_dc:
         try:
             c.cp_set_mode("dc")
             print("[ramp] Forced CP mode to 'dc'")
         except Exception as e:
             print("[ramp] cp_set_mode(dc) failed:", e)
+
+    # Configure periph limits (optional but recommended)
+    try:
+        cfg = c.send_req("dc.cfg", {"v_min": args.cfg_v_min, "v_max": args.cfg_v_max, "p_kw": args.cfg_p_kw, "i_max": args.cfg_i_max})
+        print("[ramp] dc.cfg:", cfg)
+    except Exception as e:
+        print("[ramp] dc.cfg failed:", e)
 
     # Arm before enabling DC (firmware policy may require this)
     try:
@@ -101,9 +120,27 @@ def main() -> int:
         except Exception:
             return 0.0, 0.0, 0.0, 0.0
 
-    # Enable DC
+    # Quick comm check
+    try:
+        res = c.send_req("dc.comm.check", {"timeout_ms": 1200})
+        print("[ramp] dc.comm.check:", res)
+    except Exception as e:
+        print("[ramp] dc.comm.check failed:", e)
+    # CAN stats for diagnostics
+    try:
+        stats = c.send_req("can.stats", {})
+        print("[ramp] can.stats:", stats)
+    except Exception as e:
+        print("[ramp] can.stats failed:", e)
+
+    # Enable DC (ignore CP gating to allow bench energize)
     print("[ramp] Enabling DC output ...")
     try:
+        # Make sure ignore_cp=true
+        try:
+            c.send_req("dc.cfg", {"ignore_cp": True})
+        except Exception:
+            pass
         c.dc_enable(True)
     except Exception as e:
         print("[ramp] dc_enable(True) failed:", e)

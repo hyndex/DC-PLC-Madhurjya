@@ -95,6 +95,17 @@ static const uint8_t MODE_CONFIG    = 0x80;
 static inline void CS_LOW()  { digitalWrite(PIN_CS, LOW); }
 static inline void CS_HIGH() { digitalWrite(PIN_CS, HIGH); }
 
+// Minimal direct MCP2515 register write via FSPI (override CNF registers)
+static void mcp2515_write_reg_raw(uint8_t reg, uint8_t val) {
+  spiFSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+  CS_LOW();
+  spiFSPI.transfer(0x02); // INSTRUCTION_WRITE
+  spiFSPI.transfer(reg);
+  spiFSPI.transfer(val);
+  CS_HIGH();
+  spiFSPI.endTransaction();
+}
+
 /* ================= MCP2515 Low-level ======================== */
 // Deprecated low-level helpers removed; using MCP2515 library-only path
 static void mcp_reset() {}
@@ -126,7 +137,9 @@ static inline uint8_t b0_group_type(uint8_t group, uint8_t msgType) { return (ui
 static inline void be_put_u32(uint8_t* p, uint32_t v) { p[0]=(uint8_t)(v>>24); p[1]=(uint8_t)(v>>16); p[2]=(uint8_t)(v>>8); p[3]=(uint8_t)v; }
 static inline void be_put_u16(uint8_t* p, uint16_t v) { p[0]=(uint8_t)(v>>8);  p[1]=(uint8_t)v; }
 
-static MCP2515 g_mcp2515(PIN_CS);
+// Use FSPI explicitly (align with working reference)
+static SPIClass spiFSPI(FSPI);
+static MCP2515 g_mcp2515(PIN_CS, 1000000, &spiFSPI);
 static bool    g_can_ok = false;
 
 /* --- Maxwell commands (unicast/broadcast) --- */
@@ -398,6 +411,7 @@ static inline char classify_state_from_mv(int mv){ if(mv>=g_t12) return 'A'; if(
 enum class DCState : uint8_t { IDLE=0, SOFTSTART_V, SOFTSTART_I, RUNNING, SOFTSTOP_I, SOFTSTOP_V, E_STOP, FAULT };
 static DCState g_dc_state = DCState::IDLE;
 static bool  g_dc_enabled = false;      // user intent
+static bool  g_dc_ignore_cp = false;    // bench override: ignore CP/AUX gating
 static float g_dc_v_target_V = 0.0f;    // desired (user/API)
 static float g_dc_i_target_A = 0.0f;    // desired (user/API)
 static float g_dc_v_set_V    = 0.0f;    // ramped command
@@ -493,7 +507,7 @@ static void dc_ramp_tick() {
   if ((int32_t)(millis()-g_last_dc_ramp_ms) < (int32_t)DC_RAMP_TICK_MS) return;
   g_last_dc_ramp_ms = millis();
 
-  const bool system_ready = ((g_last_cp_state=='C') || (g_last_cp_state=='D')) && g_contactor_aux && !g_estop_latched;
+  const bool system_ready = ((((g_last_cp_state=='C') || (g_last_cp_state=='D')) && g_contactor_aux && !g_estop_latched)) || g_dc_ignore_cp;
 
   // Intent-to-state transitions
   if (!system_ready) {
@@ -786,7 +800,9 @@ static void rpc_cfg(JsonObject p, StaticJsonDocument<512>& res){
   if (p.containsKey("i_max")) g_cfg_i_hard_max = clampf(p["i_max"].as<float>(), 5.0f, 500.0f);
   if (p.containsKey("ramp_v")) g_cfg_v_ramp = clampf(p["ramp_v"].as<float>(), 1.0f, 500.0f);
   if (p.containsKey("ramp_i")) g_cfg_i_ramp = clampf(p["ramp_i"].as<float>(), 1.0f, 500.0f);
-  res["ok"]=true; res["v_min"]=g_cfg_v_min; res["v_max"]=g_cfg_v_max; res["p_kw"]=g_cfg_p_max_w/1000.0f; res["i_max"]=g_cfg_i_hard_max; res["ramp_v"]=g_cfg_v_ramp; res["ramp_i"]=g_cfg_i_ramp;
+  if (p.containsKey("ignore_cp")) g_dc_ignore_cp = p["ignore_cp"].as<bool>();
+  if (p.containsKey("module_addr")) MODULE_ADDR = (uint8_t) (p["module_addr"].as<int>() & 0x7F);
+  res["ok"]=true; res["v_min"]=g_cfg_v_min; res["v_max"]=g_cfg_v_max; res["p_kw"]=g_cfg_p_max_w/1000.0f; res["i_max"]=g_cfg_i_hard_max; res["ramp_v"]=g_cfg_v_ramp; res["ramp_i"]=g_cfg_i_ramp; res["ignore_cp"]=g_dc_ignore_cp; res["module_addr"]=MODULE_ADDR;
 }
 
 /* Old API glue + new endpoints (shortened for brevity) */
@@ -856,6 +872,8 @@ static void process_line(String &line) {
       for (uint8_t i=0;i<g_module_count;i++){ JsonObject m=arr.createNestedObject(); m["addr"]=g_modules[i].addr; m["v_mv"]=g_modules[i].last_v_mv; m["i_ma"]=g_modules[i].last_i_ma; m["st"]=g_modules[i].last_status; }
       send_res(res.as<JsonVariant>()); return;
     }
+
+    // (can.stats removed: library's register read is private; rely on dc.comm.check instead)
 
     // --- System API ---
     if (!strcmp(method, "sys.ping")) {
@@ -1022,24 +1040,58 @@ void setup() {
   pinMode(EM_STOP_PIN, EM_STOP_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
 #endif
 
-  // Bring-up MCP2515
-  // Single SPI instance via MCP2515 library
-  SPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
+  // Bring-up MCP2515 (auto-detect 8 MHz vs 16 MHz crystal) on FSPI pins
+  spiFSPI.begin(PIN_SCK, PIN_MISO, PIN_MOSI, PIN_CS);
+  pinMode(PIN_CS, OUTPUT); digitalWrite(PIN_CS, HIGH);
   g_mcp2515.reset();
-  if (g_mcp2515.setBitrate(CAN_125KBPS, MCP_8MHZ) != MCP2515::ERROR_OK) {
-    Serial.println("[CAN] setBitrate failed (8MHz)");
+  auto cfg_can = [&](CAN_SPEED spd, CAN_CLOCK clk, const char* tag){
+    if (g_mcp2515.setBitrate(spd, clk) != MCP2515::ERROR_OK) {
+      Serial.printf("[CAN] setBitrate failed (%s)\n", tag);
+      return false;
+    }
+    g_mcp2515.setFilterMask(MCP2515::MASK0, true, 0x00000000);
+    g_mcp2515.setFilterMask(MCP2515::MASK1, true, 0x00000000);
+    g_mcp2515.setNormalMode();
+    Serial.printf("[CAN] MCP2515 set @125kbps (%s)\n", tag);
+    return true;
+  };
+  bool ok8  = cfg_can(CAN_125KBPS, MCP_8MHZ,  "8MHz");
+  if (ok8) {
+    // Override CNF2/CNF3 to match working reference (SAM=1, PropSeg=2, PS1=7, PS2=6)
+    // CNF1 left as library sets (0x01). Use raw SPI writes to avoid private API.
+    g_mcp2515.setConfigMode();
+    mcp2515_write_reg_raw(0x29, 0xF1); // CNF2
+    mcp2515_write_reg_raw(0x28, 0x05); // CNF3
+    g_mcp2515.setNormalMode();
   }
-  g_mcp2515.setFilterMask(MCP2515::MASK0, true, 0x00000000);
-  g_mcp2515.setFilterMask(MCP2515::MASK1, true, 0x00000000);
-  g_mcp2515.setNormalMode();
-  g_can_ok = true;
-  Serial.println("[CAN] MCP2515 ready @125kbps (extended, 8MHz)");
+  bool have_reply = false;
+  if (ok8) {
+    // Probe for a quick reply at 8 MHz
+    (void)cmd_read(MODULE_ADDR, 0x08);
+    uint32_t t0=millis(); struct can_frame f;
+    while (millis()-t0 < 200) { if (g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) { have_reply=true; break; } }
+  }
+  if (!have_reply) {
+    Serial.println("[CAN] No reply at 8MHz; trying 16MHz …");
+    g_mcp2515.reset();
+    bool ok16 = cfg_can(CAN_125KBPS, MCP_16MHZ, "16MHz");
+    if (ok16) {
+      (void)cmd_read(MODULE_ADDR, 0x08);
+      uint32_t t0=millis(); struct can_frame f;
+      while (millis()-t0 < 200) { if (g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) { have_reply=true; break; } }
+    }
+    if (!have_reply) {
+      Serial.println("[CAN] No reply at either 8MHz or 16MHz; check wiring/bitrate");
+    }
+  }
+  g_can_ok = (ok8 || have_reply);
+  if (g_can_ok) Serial.println("[CAN] MCP2515 ready (extended)");
 
-  // Discover modules quickly
+  // Discover modules quickly (may still be zero until DC module powered)
   g_module_count = 0;
   (void)cmd_read(MODULE_ADDR, 0x08);
   uint32_t t0=millis(); struct can_frame f;
-  while (millis()-t0 < 200) { if (g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); }
+  while (millis()-t0 < 300) { if (g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); }
 
   // Load self-test persisted flag
   prefs.begin("hal", true);
@@ -1121,4 +1173,14 @@ void loop() {
   // CAN watchdog (bus-off recovery) - optional, simplified check
   // Note: autowp MCP2515 lib has limited error introspection; a full
   // bus-off recovery would poll EFLG via SPI. Keeping it minimal.
+}
+// Minimal direct MCP2515 register write via FSPI (used to override CNF on 8 MHz)
+static void mcp2515_write_reg_raw(uint8_t reg, uint8_t val) {
+  spiFSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+  CS_LOW();
+  spiFSPI.transfer(0x02); // INSTRUCTION_WRITE
+  spiFSPI.transfer(reg);
+  spiFSPI.transfer(val);
+  CS_HIGH();
+  spiFSPI.endTransaction();
 }
