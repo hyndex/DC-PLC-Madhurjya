@@ -146,6 +146,8 @@ CHILD_ENV=(
   "EVSE_LOG_LEVEL=${EVSE_LOG_LEVEL}"
   "EVSE_LOG_FORMAT=${EVSE_LOG_FORMAT}"
   "EVSE_CP_HOST_HINTS=${EVSE_CP_HOST_HINTS}"
+  # Let Python entrypoint auto-takeover the lock by terminating a prior holder
+  "EVSE_LOCK_STEAL=1"
 )
 # If no DIN-specific ID provided, default DIN source to the same EVSE_ID for consistency
 [[ -z "${EVSE_ID_DIN:-}" && -n "${EVSE_ID}" ]] && CHILD_ENV+=("EVSE_ID_DIN=${EVSE_ID}")
@@ -178,8 +180,20 @@ echo "[start-evse-hal] Cleaning up previous runs (if any) ..."
   allpids="${pids} ${pids_alt} ${pids_secc}"
   if [[ -n "${allpids// }" ]]; then
     sudo -n kill -TERM ${allpids} 2>/dev/null || true
-    sleep 0.2
+    # Wait briefly for clean shutdown
+    for _ in 1 2 3 4 5; do
+      sleep 0.2
+      still=$(pgrep -f "python .* -m src.evse_main" || true)
+      still_alt=$(pgrep -f "python .*/src/evse_main.py" || true)
+      still_secc=$(pgrep -f "python .*/scripts/start_secc_only.py" || true)
+      if [[ -z "${still}${still_alt}${still_secc}" ]]; then break; fi
+    done
+    # Force kill any stragglers
     sudo -n kill -KILL ${allpids} 2>/dev/null || true
+  fi
+  # Remove stale lock file if no EVSE Python process remains
+  if [[ -z "$(pgrep -f 'python .* -m src.evse_main' || true)$(pgrep -f 'python .*/src/evse_main.py' || true)" ]]; then
+    sudo -n rm -f /tmp/evse_main.lock 2>/dev/null || true
   fi
   # Free UDP 15118 listener
   if sudo -n ss -ulpn 2>/dev/null | grep -q "*:15118"; then

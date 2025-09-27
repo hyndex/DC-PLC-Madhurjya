@@ -19,6 +19,8 @@ import logging
 import os
 import sys
 from pathlib import Path
+import signal
+import time
 from typing import Optional
 
 # Ensure local 'src' (this directory) is importable so subpackages like
@@ -139,23 +141,93 @@ logger = logging.getLogger("evse.main")
 
 
 def _acquire_process_lock(lock_path: Optional[str] = None):
-    """Ensure a single EVSE process instance holds the lock."""
+    """Ensure a single EVSE process instance holds the lock.
+
+    If a prior instance is detected and EVSE_LOCK_STEAL is enabled (default 1),
+    attempt a graceful takeover by signaling the previous process and retrying
+    the lock for a short window.
+    """
     target = Path(lock_path or os.environ.get("EVSE_LOCK_PATH", "/tmp/evse_main.lock"))
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
-    fp = open(target, "w")
-    try:
-        fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError as exc:
-        fp.close()
-        raise RuntimeError(
-            f"Another EVSE instance appears to be running (lock file: {target})."
-        ) from exc
-    fp.write(f"{os.getpid()}\n")
-    fp.flush()
-    return fp
+
+    def _try_lock(fp) -> bool:
+        try:
+            fcntl.flock(fp.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+
+    # Open existing or create new
+    fp = open(target, "a+")
+    if _try_lock(fp):
+        fp.seek(0)
+        fp.truncate(0)
+        fp.write(f"{os.getpid()}\n")
+        fp.flush()
+        return fp
+
+    # Locked by another process – optionally try to steal
+    steal_env = os.environ.get("EVSE_LOCK_STEAL", "1").strip().lower()
+    allow_steal = steal_env not in ("0", "false", "no", "off", "")
+    if allow_steal:
+        # Read candidate PID
+        pid = None
+        try:
+            fp.seek(0)
+            content = fp.read().strip()
+            if content:
+                pid = int(content.splitlines()[0].strip())
+        except Exception:
+            pid = None
+        # Validate PID and attempt graceful shutdown
+        def _pid_alive(p: int) -> bool:
+            return p > 0 and os.path.exists(f"/proc/{p}")
+
+        if pid and _pid_alive(pid):
+            # Try TERM then KILL with backoff
+            for sig, dwell in ((signal.SIGTERM, 1.0), (signal.SIGKILL, 0.5)):
+                try:
+                    os.kill(pid, sig)
+                except Exception:
+                    pass
+                # retry lock during dwell
+                deadline = time.time() + dwell
+                while time.time() < deadline:
+                    time.sleep(0.05)
+                    if _try_lock(fp):
+                        fp.seek(0)
+                        fp.truncate(0)
+                        fp.write(f"{os.getpid()}\n")
+                        fp.flush()
+                        return fp
+                # if process already died, try once more immediately
+                if not _pid_alive(pid):
+                    if _try_lock(fp):
+                        fp.seek(0)
+                        fp.truncate(0)
+                        fp.write(f"{os.getpid()}\n")
+                        fp.flush()
+                        return fp
+
+        # If PID is missing (stale lock), retry acquiring a few times
+        if not pid or not _pid_alive(pid):
+            for _ in range(10):
+                time.sleep(0.05)
+                if _try_lock(fp):
+                    fp.seek(0)
+                    fp.truncate(0)
+                    fp.write(f"{os.getpid()}\n")
+                    fp.flush()
+                    return fp
+
+    # Could not acquire
+    fp.close()
+    raise RuntimeError(
+        f"Another EVSE instance appears to be running (lock file: {target})."
+    )
 
 
 def _release_process_lock(fp) -> None:
