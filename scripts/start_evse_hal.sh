@@ -338,9 +338,15 @@ ensure_lladdr "${IFACE}"
 
 # Prefer line-buffered stdio to avoid I/O stalls when logs are piped
 if command -v stdbuf >/dev/null 2>&1; then
-  run_cmd=( env PYTHONPATH="${PYTHONPATH_LOCAL}" "${CHILD_ENV[@]}" stdbuf -oL -eL "${PY_BIN}" "${ARGS[@]}" )
+  run_cmd=( env PYTHONPATH="${PYTHONPATH_LOCAL}" \
+    "${CHILD_ENV[@]}" \
+    LOG_LEVEL="${EVSE_LOG_LEVEL}" \
+    stdbuf -oL -eL "${PY_BIN}" "${ARGS[@]}" )
 else
-  run_cmd=( env PYTHONPATH="${PYTHONPATH_LOCAL}" "${CHILD_ENV[@]}" "${PY_BIN}" "${ARGS[@]}" )
+  run_cmd=( env PYTHONPATH="${PYTHONPATH_LOCAL}" \
+    "${CHILD_ENV[@]}" \
+    LOG_LEVEL="${EVSE_LOG_LEVEL}" \
+    "${PY_BIN}" "${ARGS[@]}" )
 fi
 
 if [[ "${EUID}" -ne 0 ]]; then

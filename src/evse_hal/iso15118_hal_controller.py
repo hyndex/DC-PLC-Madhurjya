@@ -112,6 +112,7 @@ class HalEVSEController(SimEVSEController):
         self._hal = hal
         self._last_set_v: float = 0.0
         self._last_set_i: float = 0.0
+        self._last_allowed_i: float = 0.0
         self._last_set_ts: float = time.time()
         # Last known diagnostic snapshots to avoid confusing placeholder values
         self._last_bms_snapshot = None
@@ -125,6 +126,22 @@ class HalEVSEController(SimEVSEController):
         self._cc_close_ts: float = 0.0
         # Precharge acceleration guard (avoid repeating dc.cfg spam)
         self._precharge_accel_done: bool = False
+        # Mode management (Low: 200–500 V, High: 400–1000 V) with hysteresis
+        # EVSE_MODE: auto|low|high; when auto, pick on first reliable hint and freeze at PD(Start)
+        try:
+            self._mode_pref = os.environ.get("EVSE_MODE", "auto").strip().lower()
+        except Exception:
+            self._mode_pref = "auto"
+        self._mode_locked: bool = False
+        self._mode: str = "low"  # low|high
+        # Hysteresis thresholds
+        def _envf(key: str, default: float) -> float:
+            try:
+                return float(os.environ.get(key, default))
+            except Exception:
+                return float(default)
+        self._hi_enter_v: float = _envf("EVSE_MODE_HI_ENTER_V", 460.0)
+        self._hi_exit_v: float = _envf("EVSE_MODE_HI_EXIT_V", 440.0)
 
     async def set_status(self, status: ServiceStatus) -> None:
         # Could map to LEDs or system state in real hardware
@@ -269,6 +286,9 @@ class HalEVSEController(SimEVSEController):
                         self._hal.supply().set_current_limit(min(5.0, float(self._rated_dc_max_current_a)))
                     except Exception:
                         pass
+                # Freeze mode selection at Start
+                if is_ongoing:
+                    self._mode_locked = True
                 return
         except Exception:
             pass
@@ -339,8 +359,25 @@ class HalEVSEController(SimEVSEController):
 
         # Defaults are conservative but realistic for many DC chargers.
         max_v = env_float("EVSE_DC_MAX_VOLTAGE_V", 920.0)  # V
-        max_a = env_float("EVSE_DC_MAX_CURRENT_A", 300.0)  # A
-        max_w = env_float("EVSE_DC_MAX_POWER_W", max_v * max_a)  # W
+        # Prefer explicit DC current rating; fall back to periph cfg (I_MAX)
+        try:
+            if "EVSE_DC_MAX_CURRENT_A" in os.environ:
+                max_a = float(os.environ.get("EVSE_DC_MAX_CURRENT_A", "300.0"))
+            elif "EVSE_PERIPH_CFG_I_MAX" in os.environ:
+                max_a = float(os.environ.get("EVSE_PERIPH_CFG_I_MAX", "300.0"))
+            else:
+                max_a = env_float("EVSE_DC_MAX_CURRENT_A", 300.0)
+        except Exception:
+            max_a = env_float("EVSE_DC_MAX_CURRENT_A", 300.0)
+        # Prefer explicit DC power cap; else periph cfg P_KW; else V*A
+        try:
+            if "EVSE_DC_MAX_POWER_W" in os.environ:
+                max_w = float(os.environ.get("EVSE_DC_MAX_POWER_W", str(max_v * max_a)))
+            else:
+                p_kw = os.environ.get("EVSE_PERIPH_CFG_P_KW")
+                max_w = float(p_kw) * 1000.0 if p_kw else (max_v * max_a)
+        except Exception:
+            max_w = max_v * max_a
         min_v = env_float("EVSE_DC_MIN_VOLTAGE_V", 150.0)  # V
         min_a = env_float("EVSE_DC_MIN_CURRENT_A", 0.0)    # A
         ripple_a = env_float("EVSE_DC_PEAK_RIPPLE_A", 5.0) # A
@@ -409,7 +446,12 @@ class HalEVSEController(SimEVSEController):
 
     async def get_evse_max_current_limit(self):  # type: ignore[override]
         try:
-            max_a = float(os.environ.get("EVSE_DC_MAX_CURRENT_A", str(self._rated_dc_max_current_a)))
+            if "EVSE_DC_MAX_CURRENT_A" in os.environ:
+                max_a = float(os.environ.get("EVSE_DC_MAX_CURRENT_A", str(self._rated_dc_max_current_a)))
+            elif "EVSE_PERIPH_CFG_I_MAX" in os.environ:
+                max_a = float(os.environ.get("EVSE_PERIPH_CFG_I_MAX", str(self._rated_dc_max_current_a)))
+            else:
+                max_a = float(getattr(self, "_rated_dc_max_current_a", 300.0))
         except Exception:
             max_a = float(getattr(self, "_rated_dc_max_current_a", 300.0))
         from iso15118.shared.messages.datatypes import PVEVSEMaxCurrentLimit
@@ -421,7 +463,12 @@ class HalEVSEController(SimEVSEController):
         except Exception:
             max_v = float(getattr(self, "_rated_dc_max_voltage_v", 920.0))
         try:
-            max_a = float(os.environ.get("EVSE_DC_MAX_CURRENT_A", str(self._rated_dc_max_current_a)))
+            if "EVSE_DC_MAX_CURRENT_A" in os.environ:
+                max_a = float(os.environ.get("EVSE_DC_MAX_CURRENT_A", str(self._rated_dc_max_current_a)))
+            elif "EVSE_PERIPH_CFG_I_MAX" in os.environ:
+                max_a = float(os.environ.get("EVSE_PERIPH_CFG_I_MAX", str(self._rated_dc_max_current_a)))
+            else:
+                max_a = float(getattr(self, "_rated_dc_max_current_a", 300.0))
         except Exception:
             max_a = float(getattr(self, "_rated_dc_max_current_a", 300.0))
         # Prefer explicit power cap; fall back to periph config (P_KW) if present; else V*A
@@ -491,6 +538,31 @@ class HalEVSEController(SimEVSEController):
         self.evse_data_context.present_current = float(a)
         return await super().get_evse_present_current(protocol)
 
+    async def is_evse_power_limit_achieved(self) -> bool:  # type: ignore[override]
+        """Signal when EV request exceeds instantaneous power cap.
+
+        Uses configured power cap (EVSE_DC_MAX_POWER_W or EVSE_PERIPH_CFG_P_KW) and
+        current set voltage to estimate current cap by power and compares against the
+        EV's requested current for this tick.
+        """
+        try:
+            ctx = self.get_ev_data_context()  # type: ignore[attr-defined]
+            req_i = float(getattr(ctx, "target_current", 0.0) or 0.0)
+            v_set = float(getattr(ctx, "target_voltage", 0.0) or self._last_set_v or 0.0)
+            # Determine power cap W
+            if "EVSE_DC_MAX_POWER_W" in os.environ:
+                p_cap_w = float(os.environ.get("EVSE_DC_MAX_POWER_W", "0") or 0.0)
+            else:
+                p_kw = os.environ.get("EVSE_PERIPH_CFG_P_KW")
+                p_cap_w = float(p_kw) * 1000.0 if p_kw else (self._rated_dc_max_voltage_v * self._rated_dc_max_current_a)
+            # Convert to current cap by power; respect rated current
+            i_cap_power = float(p_cap_w) / max(1.0, v_set if v_set > 0 else (self._last_set_v or 1.0))
+            i_cap = min(float(self._rated_dc_max_current_a), i_cap_power)
+            # Consider achieved when requested current exceeds cap by >0.5 A
+            return bool(req_i > (i_cap + 0.5))
+        except Exception:
+            return False
+
     async def send_charging_command(
         self,
         ev_target_voltage: Optional[float],
@@ -553,6 +625,23 @@ class HalEVSEController(SimEVSEController):
         except Exception:
             v_meas, i_meas = 0.0, 0.0
 
+        # Auto mode selection: decide once based on target voltage hint (prefer CD > PC)
+        try:
+            v_hint = float(ev_target_voltage or 0.0)
+            if self._mode_pref == "low":
+                self._mode = "low"
+            elif self._mode_pref == "high":
+                self._mode = "high"
+            else:
+                # auto: use hysteresis until locked
+                if not self._mode_locked and v_hint > 0.0:
+                    if self._mode == "low" and v_hint >= self._hi_enter_v:
+                        self._mode = "high"
+                    elif self._mode == "high" and v_hint <= self._hi_exit_v:
+                        self._mode = "low"
+        except Exception:
+            pass
+
         # PreCharge runtime acceleration: if measured voltage is still far from target,
         # push aggressive ramps on the periph (one-shot) and ensure ignore_cp when benching.
         try:
@@ -566,6 +655,13 @@ class HalEVSEController(SimEVSEController):
                     # In bench mode allow periph to ignore CP gating
                     if os.environ.get("EVSE_SIM_CONTACTOR", "0").strip().lower() not in ("0", "false", "no", ""):
                         cfg["ignore_cp"] = True
+                    # Apply per-mode v bounds via Hi/Lo thresholds to avoid overshoot
+                    if self._mode == "high":
+                        cfg.update({"hilo_enter_v": max(430.0, min(self._hi_enter_v, 480.0)),
+                                    "hilo_exit_v":  max(400.0, min(self._hi_exit_v,  460.0))})
+                    else:
+                        # Keep thresholds far so we stay in LOW
+                        cfg.update({"hilo_enter_v": 800.0, "hilo_exit_v": 700.0})
                     getattr(self._hal, "periph_cfg", lambda **_: None)(**cfg)
                     self._precharge_accel_done = True
         except Exception:
@@ -604,14 +700,14 @@ class HalEVSEController(SimEVSEController):
         except Exception:
             pass
 
-        # For sub-HV targets in CurrentDemand, lower Hi/Lo enter/exit thresholds so
-        # the periph can switch bands quickly if needed (e.g., targets ~340–400 V).
+        # Apply per-mode thresholds during CurrentDemand (only if not locked into a specific setting already)
         try:
-            if not is_precharge and 320.0 <= float(ev_target_voltage or 0.0) < 500.0:
-                vtar = float(ev_target_voltage or 0.0)
-                enter_v = max(320.0, min(vtar - 5.0, 380.0))
-                exit_v  = max(250.0, min(enter_v - 20.0, 360.0))
-                getattr(self._hal, "periph_cfg", lambda **_: None)(hilo_enter_v=enter_v, hilo_exit_v=exit_v)
+            if not is_precharge:
+                if self._mode == "high":
+                    getattr(self._hal, "periph_cfg", lambda **_: None)(hilo_enter_v=max(430.0, min(self._hi_enter_v, 480.0)),
+                                                                         hilo_exit_v=max(400.0, min(self._hi_exit_v, 460.0)))
+                else:
+                    getattr(self._hal, "periph_cfg", lambda **_: None)(hilo_enter_v=800.0, hilo_exit_v=700.0)
         except Exception:
             pass
 
@@ -648,6 +744,7 @@ class HalEVSEController(SimEVSEController):
 
         # Persist the commanded values (post-margin, post-derate) for observability
         self._last_set_v, self._last_set_i, self._last_set_ts = cmd_v, allowed_i, now
+        self._last_allowed_i = allowed_i
         # Update context for reporting
         try:
             self.evse_data_context.present_voltage = float(v_meas)
