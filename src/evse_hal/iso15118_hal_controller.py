@@ -483,6 +483,16 @@ class HalEVSEController(SimEVSEController):
         is_precharge: bool = False,
         is_session_bpt: bool = False,
     ):
+        # Ensure DC path is enabled early enough, especially during PreCharge.
+        # Many EVs expect EVSEPresentVoltage to ramp toward EVTargetVoltage before
+        # the first PowerDelivery(Start). With contactor bypass (bench), we gate
+        # energizing on dc_enable rather than physical AUX.
+        try:
+            if is_precharge:
+                # If an adapter exposes dc_enable, turn on the DC stage.
+                getattr(self._hal, "dc_enable", lambda _on: None)(True)
+        except Exception:
+            pass
         # Enforce simple slew limits to avoid abrupt steps
         max_dv_per_s = float(os.environ.get("EVSE_DC_MAX_DV_PER_S", "50.0"))
         max_di_per_s = float(os.environ.get("EVSE_DC_MAX_DI_PER_S", "100.0"))

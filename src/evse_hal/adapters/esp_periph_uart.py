@@ -338,6 +338,46 @@ class ESPPeriphHardware(EVSEHardware):
             self._periph.sys_set_mode(periph_mode)
         except Exception:
             pass
+        # Configure DC periph limits and ramp (faster precharge)
+        try:
+            def _envf(name: str, default: float) -> float:
+                try:
+                    return float(os.environ.get(name, default))
+                except Exception:
+                    return float(default)
+            def _envi(name: str, default: int) -> int:
+                try:
+                    return int(os.environ.get(name, default))
+                except Exception:
+                    return int(default)
+            cfg = {
+                "v_min": _envf("EVSE_PERIPH_CFG_V_MIN", 150.0),
+                "v_max": _envf("EVSE_PERIPH_CFG_V_MAX", 1000.0),
+                "i_max": _envf("EVSE_PERIPH_CFG_I_MAX", 120.0),
+                "p_kw":  _envf("EVSE_PERIPH_CFG_P_KW", 30.0),
+                "ramp_v": _envf("EVSE_PERIPH_CFG_RAMP_V", 150.0),   # V/s (faster precharge)
+                "ramp_i": _envf("EVSE_PERIPH_CFG_RAMP_I", 100.0),   # A/s
+            }
+            # Ignore CP gating when sim contactor is active
+            try:
+                if os.environ.get("EVSE_SIM_CONTACTOR", "0").strip().lower() not in ("0", "false", "no", ""):
+                    cfg["ignore_cp"] = True
+            except Exception:
+                pass
+            # Optional module address override
+            try:
+                mod = _envi("EVSE_PERIPH_MODULE_ADDR", 1)
+                if mod is not None:
+                    cfg["module_addr"] = int(mod)
+            except Exception:
+                pass
+            try:
+                res = self._periph.send_req("dc.cfg", cfg, timeout=1.0)
+                logger.info("ESP periph dc.cfg", extra={"cfg": res})
+            except Exception as e:
+                logger.warning("ESP periph dc.cfg failed", extra={"error": str(e)})
+        except Exception:
+            pass
         # Wire interfaces
         # Configure CP to dc mode; ignore failures
         try:
