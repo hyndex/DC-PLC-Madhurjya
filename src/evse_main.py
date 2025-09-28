@@ -360,6 +360,11 @@ class EVSECommunicationController(SlacSessionController):
         last_slac_cp_forwarded: Optional[str] = None
         # CM_SET_KEY failure counter for proactive PLC soft reset
         cm_set_key_fail_count: int = 0
+        # Optionally soft-reset PLC after every N failures (default 1)
+        try:
+            plc_soft_reset_every_n = int(os.environ.get("EVSE_PLC_SOFT_RESET_EVERY_N", "1"))
+        except Exception:
+            plc_soft_reset_every_n = 1
         # SLAC init retry control per plug-in
         # Allow more retries by default for field robustness
         try:
@@ -714,8 +719,11 @@ class EVSECommunicationController(SlacSessionController):
                                     continue
                             if not setkey_ok:
                                 cm_set_key_fail_count += 1
-                                if cm_set_key_fail_count == 1:
-                                    await _plc_soft_reset_proactive()
+                                try:
+                                    if plc_soft_reset_every_n > 0 and (cm_set_key_fail_count % plc_soft_reset_every_n) == 0:
+                                        await _plc_soft_reset_proactive()
+                                except Exception:
+                                    pass
                                 # Defer retry to next loop iteration
                                 logger.warning(
                                     "CM_SET_KEY failed; will retry",

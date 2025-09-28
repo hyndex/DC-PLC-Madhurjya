@@ -119,9 +119,12 @@ class _MeterPeriph(Meter):
                     pass
 
         self._c.on_event(_evt)
-        # Best-effort: start meter stream if supported
+        # Best-effort: start meter stream if supported (faster period for PreCharge observability)
         try:
-            self._c.send_req("meter.stream_start", {"period_ms": 1000}, timeout=0.5)
+            period = int(float(os.environ.get("ESP_METER_STREAM_MS", "200")))
+            if period < 50:
+                period = 50
+            self._c.send_req("meter.stream_start", {"period_ms": period}, timeout=0.5)
         except Exception:
             pass
 
@@ -216,14 +219,16 @@ class _SupplyPeriph(DCPowerSupply):
         self._push()
 
     def get_status(self) -> Tuple[float, float]:
+        # Prefer instantaneous reading for time-sensitive phases (PreCharge/CurrentDemand)
         try:
-            v = float(self._meter.get_avg_voltage())
-            i = float(self._meter.get_avg_current())
-            return v, i
+            m = self._c.meter_read()
+            return float(m.voltage_v), float(m.current_a)
         except Exception:
+            # Fall back to EMA averages if direct read fails
             try:
-                m = self._c.meter_read()
-                return float(m.voltage_v), float(m.current_a)
+                v = float(self._meter.get_avg_voltage())
+                i = float(self._meter.get_avg_current())
+                return v, i
             except Exception:
                 return 0.0, 0.0
 
@@ -358,6 +363,16 @@ class ESPPeriphHardware(EVSEHardware):
                 "ramp_v": _envf("EVSE_PERIPH_CFG_RAMP_V", 150.0),   # V/s (faster precharge)
                 "ramp_i": _envf("EVSE_PERIPH_CFG_RAMP_I", 100.0),   # A/s
             }
+            # Optional Hi/Lo thresholds (V)
+            try:
+                he = os.environ.get("EVSE_HILO_ENTER_V")
+                hx = os.environ.get("EVSE_HILO_EXIT_V")
+                if he:
+                    cfg["hilo_enter_v"] = float(he)
+                if hx:
+                    cfg["hilo_exit_v"] = float(hx)
+            except Exception:
+                pass
             # Ignore CP gating when sim contactor is active
             try:
                 if os.environ.get("EVSE_SIM_CONTACTOR", "0").strip().lower() not in ("0", "false", "no", ""):
@@ -464,5 +479,12 @@ class ESPPeriphHardware(EVSEHardware):
     def close(self) -> None:
         try:
             self._periph.close()
+        except Exception:
+            pass
+
+    # Optional: expose periph dc.cfg for runtime tuning from higher layers
+    def periph_cfg(self, **params) -> None:
+        try:
+            self._periph.send_req("dc.cfg", params, timeout=1.0)
         except Exception:
             pass

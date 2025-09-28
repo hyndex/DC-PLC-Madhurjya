@@ -428,6 +428,9 @@ static float g_cfg_v_ramp = DC_V_RAMP_V_PER_S, g_cfg_i_ramp = DC_I_RAMP_A_PER_S;
 #ifndef HILO_HV_EXIT_V
 #define HILO_HV_EXIT_V  400.0f
 #endif
+// Runtime-configurable hi/lo thresholds (defaults above); can be overridden via dc.cfg
+static float g_hilo_enter_v = HILO_HV_ENTER_V;
+static float g_hilo_exit_v  = HILO_HV_EXIT_V;
 static uint8_t g_hilo_pending = 0; // 0=none, 1=HIGH, 2=LOW
 
 // self-test
@@ -457,8 +460,8 @@ static float current_allowed_for_power(float volts) {
 }
 
 static inline uint8_t hilo_for_target(float v_tgt){
-  if (v_tgt >= HILO_HV_ENTER_V) return 1; // HIGH
-  if (v_tgt <= HILO_HV_EXIT_V)  return 2; // LOW
+  if (v_tgt >= g_hilo_enter_v) return 1; // HIGH
+  if (v_tgt <= g_hilo_exit_v)  return 2; // LOW
   return 0; // keep
 }
 
@@ -518,12 +521,21 @@ static void dc_ramp_tick() {
     }
   }
 
-  const float dv = g_cfg_v_ramp * (DC_RAMP_TICK_MS/1000.0f);
-  const float di = g_cfg_i_ramp * (DC_RAMP_TICK_MS/1000.0f);
+  // Base ramp steps (V/s and A/s -> per tick)
+  float dv = g_cfg_v_ramp * (DC_RAMP_TICK_MS/1000.0f);
+  float di = g_cfg_i_ramp * (DC_RAMP_TICK_MS/1000.0f);
+  // If the EV is requesting a low precharge current (<=5A) and target voltage is
+  // in the typical precharge region (<500V), accelerate the ramp to satisfy the
+  // vehicle's precharge timing without compromising current limit.
+  if (g_dc_i_target_A <= 5.0f && g_dc_v_target_V < 500.0f) {
+    dv = fmaxf(dv, 150.0f * (DC_RAMP_TICK_MS/1000.0f));
+    di = fmaxf(di,  50.0f * (DC_RAMP_TICK_MS/1000.0f));
+  }
 
   switch (g_dc_state) {
     case DCState::SOFTSTART_V: {
-      // Bring voltage to target (>= min), current held low
+      // Bring voltage to target (>= min) and allow current to ramp toward the
+      // requested limit concurrently. This avoids excessively slow precharge.
       float v_tgt = clampf(g_dc_v_target_V, g_cfg_v_min, g_cfg_v_max);
       // If a Hi/Lo change is pending, perform it (module requires shutdown)
       if (g_hilo_pending) {
@@ -535,14 +547,35 @@ static void dc_ramp_tick() {
         uint32_t t0=millis(); bool ok=false; while(millis()-t0<2000){ (void)cmd_read(MODULE_ADDR, 0x65); struct can_frame f; if(g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); if(g_hilo_actual==g_hilo_pending){ ok=true; break; } delay(100);} 
         if(ok){ g_hilo_last_switch_ms = millis(); g_hilo_pending = 0; } else { Serial.println("[HILO] Switch verify failed"); g_hilo_pending = 0; }
       }
+      // Compute an allowed current target respecting power cap
+      float v_for_power = (g_module_count>0 && g_modules[0].last_v_mv>0)
+                            ? (g_modules[0].last_v_mv/1000.0f)
+                            : fmaxf(g_dc_v_set_V, g_cfg_v_min);
+      float i_tgt = clampf(g_dc_i_target_A, 0.0f, g_cfg_i_hard_max);
+      float i_lim = current_allowed_for_power(v_for_power);
+      i_tgt = fminf(i_tgt, i_lim);
+
+      // Hard-start fast path for typical PreCharge requests: set Ilimit first,
+      // then jump Vref to target and enter RUNNING. This respects EV's low
+      // current request and our power cap, and dramatically shortens time
+      // to reach the EV's acceptance window.
+      if (g_dc_i_target_A <= 5.0f && v_tgt < 500.0f) {
+        g_dc_i_set_A = i_tgt;         // apply current cap first
+        g_dc_v_set_V = v_tgt;         // then command target voltage
+        dc_apply_setpoints(false);
+        g_dc_state = DCState::RUNNING;
+        break;
+      }
+
       g_dc_v_set_V = step_towards(g_dc_v_set_V, v_tgt, dv);
-      g_dc_i_set_A = step_towards(g_dc_i_set_A, 0.0f, di); // keep low initially
+      g_dc_i_set_A = step_towards(g_dc_i_set_A, i_tgt, di);
       dc_apply_setpoints(false);
-      if (fabsf(g_dc_v_set_V - v_tgt) < 1.0f) g_dc_state = DCState::SOFTSTART_I;
+      // Proceed as soon as we're essentially at voltage target
+      if (fabsf(g_dc_v_set_V - v_tgt) < 1.0f) g_dc_state = DCState::RUNNING;
     } break;
 
     case DCState::SOFTSTART_I: {
-      // Now raise current to target (respecting power limit)
+      // Legacy path retained; quickly converge then enter RUNNING
       float i_tgt = clampf(g_dc_i_target_A, 0.0f, g_cfg_i_hard_max);
       float i_lim = current_allowed_for_power( (g_module_count>0 && g_modules[0].last_v_mv>0) ? g_modules[0].last_v_mv/1000.0f : g_dc_v_set_V );
       i_tgt = fminf(i_tgt, i_lim);
@@ -557,10 +590,21 @@ static void dc_ramp_tick() {
       // Check if we need a Hi/Lo change (with hysteresis)
       uint8_t want = hilo_for_target(v_tgt);
       if (want && want != g_hilo_actual && !g_hilo_pending && (millis()-g_hilo_last_switch_ms > HILO_COOLDOWN_MS)) {
-        // Start graceful stop to switch
-        g_hilo_pending = want;
-        g_dc_state = DCState::SOFTSTOP_I;
-        break;
+        // If measured current is near zero, perform a quick Hi/Lo switch inline
+        uint32_t i_ma = (g_module_count>0) ? g_modules[0].last_i_ma : 0;
+        if (i_ma <= 300) { // ~0.3 A threshold
+          (void)cmd_onoff(MODULE_ADDR, false); delay(80);
+          (void)cmd_set_hilo(MODULE_ADDR, want); delay(30);
+          (void)cmd_onoff(MODULE_ADDR, true);
+          uint32_t tver=millis(); bool ok=false; while(millis()-tver<1500){ (void)cmd_read(MODULE_ADDR, 0x65); struct can_frame f; if(g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); if(g_hilo_actual==want){ ok=true; break; } delay(80);} 
+          if (ok) { g_hilo_last_switch_ms = millis(); }
+          // continue RUNNING regardless; avoid full soft-stop
+        } else {
+          // Fall back to graceful stop when current is significant
+          g_hilo_pending = want;
+          g_dc_state = DCState::SOFTSTOP_I;
+          break;
+        }
       }
       float i_tgt = clampf(g_dc_i_target_A, 0.0f, g_cfg_i_hard_max);
       float i_lim = current_allowed_for_power( (g_module_count>0 && g_modules[0].last_v_mv>0) ? g_modules[0].last_v_mv/1000.0f : g_dc_v_set_V );
@@ -631,6 +675,34 @@ static void dc_poll_tick() {
   }
   struct can_frame f;
   while (g_mcp2515.readMessage(&f) == MCP2515::ERROR_OK) handle_can_frame(f);
+
+  // PreCharge dv/dt watchdog: when EV requests small current and sub-HV target,
+  // warn if voltage rise is unrealistically slow (often indicates Ilim/Pmax clamp).
+  static uint32_t pre_last_ms = 0;
+  static uint32_t pre_last_mv = 0;
+  static bool pre_warned = false;
+  const bool pre_like = (g_dc_enabled && (g_dc_i_target_A <= 5.0f) && (g_dc_v_target_V < 500.0f));
+  if (pre_like) {
+    uint32_t mv = (g_module_count>0) ? g_modules[0].last_v_mv : 0;
+    if (pre_last_ms > 0) {
+      float dt_s = (now - pre_last_ms) / 1000.0f;
+      if (dt_s >= 0.5f) {
+        float dv_v = ((int32_t)mv - (int32_t)pre_last_mv) / 1000.0f;
+        float slope = dv_v / dt_s; // V/s
+        if (slope < 100.0f && !pre_warned) {
+          Serial.printf("[PRECHG] Slow dv/dt %.1f V/s (V=%.1f, Itgt=%.1f A). Check Ilim/Pmax/ramp.\n",
+                        slope, mv/1000.0f, g_dc_i_target_A);
+          pre_warned = true;
+        }
+      }
+    }
+    pre_last_ms = now;
+    pre_last_mv = mv;
+  } else {
+    pre_last_ms = 0;
+    pre_last_mv = 0;
+    pre_warned = false;
+  }
 }
 
 /* ================== Self-Test =============================== */
@@ -789,7 +861,9 @@ static void rpc_cfg(JsonObject p, StaticJsonDocument<512>& res){
   if (p.containsKey("ramp_i")) g_cfg_i_ramp = clampf(p["ramp_i"].as<float>(), 1.0f, 500.0f);
   if (p.containsKey("ignore_cp")) g_dc_ignore_cp = p["ignore_cp"].as<bool>();
   if (p.containsKey("module_addr")) MODULE_ADDR = (uint8_t) (p["module_addr"].as<int>() & 0x7F);
-  res["ok"]=true; res["v_min"]=g_cfg_v_min; res["v_max"]=g_cfg_v_max; res["p_kw"]=g_cfg_p_max_w/1000.0f; res["i_max"]=g_cfg_i_hard_max; res["ramp_v"]=g_cfg_v_ramp; res["ramp_i"]=g_cfg_i_ramp; res["ignore_cp"]=g_dc_ignore_cp; res["module_addr"]=MODULE_ADDR;
+  if (p.containsKey("hilo_enter_v")) g_hilo_enter_v = clampf(p["hilo_enter_v"].as<float>(), 250.0f, 800.0f);
+  if (p.containsKey("hilo_exit_v"))  g_hilo_exit_v  = clampf(p["hilo_exit_v"].as<float>(), 200.0f, g_hilo_enter_v);
+  res["ok"]=true; res["v_min"]=g_cfg_v_min; res["v_max"]=g_cfg_v_max; res["p_kw"]=g_cfg_p_max_w/1000.0f; res["i_max"]=g_cfg_i_hard_max; res["ramp_v"]=g_cfg_v_ramp; res["ramp_i"]=g_cfg_i_ramp; res["ignore_cp"]=g_dc_ignore_cp; res["module_addr"]=MODULE_ADDR; res["hilo_enter_v"]=g_hilo_enter_v; res["hilo_exit_v"]=g_hilo_exit_v;
 }
 
 /* Old API glue + new endpoints (shortened for brevity) */

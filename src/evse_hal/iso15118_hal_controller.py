@@ -123,6 +123,8 @@ class HalEVSEController(SimEVSEController):
         # Internal helper for CableCheck contactor raise-and-wait
         self._cc_close_issued: bool = False
         self._cc_close_ts: float = 0.0
+        # Precharge acceleration guard (avoid repeating dc.cfg spam)
+        self._precharge_accel_done: bool = False
 
     async def set_status(self, status: ServiceStatus) -> None:
         # Could map to LEDs or system state in real hardware
@@ -256,9 +258,17 @@ class HalEVSEController(SimEVSEController):
         try:
             if os.environ.get("EVSE_SIM_CONTACTOR", "0").strip().lower() not in ("0", "false", "no", ""):
                 try:
+                    # In bench/sim, tie HLC charging to DC output enable
                     getattr(self._hal, "dc_enable", lambda _on: None)(bool(is_ongoing))
                 except Exception:
                     pass
+                # Pre-arm minimal setpoints on Start to avoid 0A in first CD loop
+                if is_ongoing:
+                    try:
+                        self._hal.supply().set_voltage(max(0.0, float(self._last_set_v)))
+                        self._hal.supply().set_current_limit(min(5.0, float(self._rated_dc_max_current_a)))
+                    except Exception:
+                        pass
                 return
         except Exception:
             pass
@@ -414,8 +424,13 @@ class HalEVSEController(SimEVSEController):
             max_a = float(os.environ.get("EVSE_DC_MAX_CURRENT_A", str(self._rated_dc_max_current_a)))
         except Exception:
             max_a = float(getattr(self, "_rated_dc_max_current_a", 300.0))
+        # Prefer explicit power cap; fall back to periph config (P_KW) if present; else V*A
         try:
-            max_w = float(os.environ.get("EVSE_DC_MAX_POWER_W", max_v * max_a))
+            if "EVSE_DC_MAX_POWER_W" in os.environ:
+                max_w = float(os.environ.get("EVSE_DC_MAX_POWER_W", max_v * max_a))
+            else:
+                p_kw_env = os.environ.get("EVSE_PERIPH_CFG_P_KW")
+                max_w = float(p_kw_env) * 1000.0 if p_kw_env else (max_v * max_a)
         except Exception:
             max_w = max_v * max_a
         # Choose multiplier/value such that 1 <= value < 1000
@@ -538,6 +553,24 @@ class HalEVSEController(SimEVSEController):
         except Exception:
             v_meas, i_meas = 0.0, 0.0
 
+        # PreCharge runtime acceleration: if measured voltage is still far from target,
+        # push aggressive ramps on the periph (one-shot) and ensure ignore_cp when benching.
+        try:
+            if is_precharge and not self._precharge_accel_done:
+                tgt_v_chk = float(ev_target_voltage or 0.0)
+                # Consider acceleration if we're >30V below target and target is sub-HV
+                if tgt_v_chk > 0.0 and tgt_v_chk < 600.0 and (tgt_v_chk - float(v_meas)) > 30.0:
+                    ramp_v = float(os.environ.get("EVSE_PERIPH_CFG_RAMP_V", "300"))
+                    ramp_i = float(os.environ.get("EVSE_PERIPH_CFG_RAMP_I", "80"))
+                    cfg = {"ramp_v": ramp_v, "ramp_i": ramp_i}
+                    # In bench mode allow periph to ignore CP gating
+                    if os.environ.get("EVSE_SIM_CONTACTOR", "0").strip().lower() not in ("0", "false", "no", ""):
+                        cfg["ignore_cp"] = True
+                    getattr(self._hal, "periph_cfg", lambda **_: None)(**cfg)
+                    self._precharge_accel_done = True
+        except Exception:
+            pass
+
         # Overshoot guard: if measured voltage already exceeds EV target by more than
         # EVSE_DC_V_OVERSHOOT_GUARD_V, bias the commanded voltage slightly below the
         # target to help the rectifier settle without ringing.
@@ -568,6 +601,17 @@ class HalEVSEController(SimEVSEController):
             dc_limits = self.evse_data_context.session_limits.dc_limits
             # Ensure non-negative and don't exceed rated
             dc_limits.max_charge_current = max(0.0, min(self._rated_dc_max_current_a, allowed_i))
+        except Exception:
+            pass
+
+        # For sub-HV targets in CurrentDemand, lower Hi/Lo enter/exit thresholds so
+        # the periph can switch bands quickly if needed (e.g., targets ~340–400 V).
+        try:
+            if not is_precharge and 320.0 <= float(ev_target_voltage or 0.0) < 500.0:
+                vtar = float(ev_target_voltage or 0.0)
+                enter_v = max(320.0, min(vtar - 5.0, 380.0))
+                exit_v  = max(250.0, min(enter_v - 20.0, 360.0))
+                getattr(self._hal, "periph_cfg", lambda **_: None)(hilo_enter_v=enter_v, hilo_exit_v=exit_v)
         except Exception:
             pass
 
@@ -608,6 +652,15 @@ class HalEVSEController(SimEVSEController):
         try:
             self.evse_data_context.present_voltage = float(v_meas)
             self.evse_data_context.present_current = float(i_meas)
+        except Exception:
+            pass
+        # Optional tiny settle to allow first CurrentDemand read to reflect movement.
+        # Keep within the 250 ms loop budget; default 50 ms.
+        try:
+            import asyncio as _asyncio
+            settle = float(os.environ.get("EVSE_CD_SETTLE_MS", "0.05"))
+            if settle > 0:
+                await _asyncio.sleep(min(0.1, max(0.0, settle)))
         except Exception:
             pass
         # Log thermal decisions on notable events
