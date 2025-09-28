@@ -248,8 +248,8 @@ fi
 # Heuristic pre-run PLC soft reset if stats look unhealthy
 maybe_auto_plc_reset "${IFACE}"
 
-# Optional PLC soft reset (driver rebinding) for QCA7000/qcaspi before SLAC (explicit)
-if [[ "${EVSE_PLC_SOFT_RESET:-0}" != "0" ]]; then
+# Optional PLC soft reset (driver rebinding) for QCA7000/qcaspi before SLAC (default: enabled)
+if [[ "${EVSE_PLC_SOFT_RESET:-1}" != "0" ]]; then
   if [[ -x "scripts/plc_soft_reset.sh" ]]; then
     echo "[start-evse-hal] Performing PLC soft reset (qcaspi) ..."
     sudo -n bash scripts/plc_soft_reset.sh || true
