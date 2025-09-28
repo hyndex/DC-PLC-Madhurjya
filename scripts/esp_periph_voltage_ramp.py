@@ -49,6 +49,8 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument("--cfg-v-max", type=float, default=1000.0, help="Periph config: max voltage (V)")
     ap.add_argument("--cfg-p-kw", type=float, default=30.0, help="Periph config: power cap (kW)")
     ap.add_argument("--cfg-i-max", type=float, default=120.0, help="Periph config: hard current limit (A)")
+    ap.add_argument("--module-addr", type=int, default=None, help="DC module address (0-127), forwarded via dc.cfg")
+    ap.add_argument("--ignore-cp", action="store_true", help="Ignore CP/AUX gating (bench mode), forwarded via dc.cfg")
     return ap.parse_args()
 
 
@@ -101,7 +103,17 @@ def main() -> int:
 
     # Configure periph limits (optional but recommended)
     try:
-        cfg = c.send_req("dc.cfg", {"v_min": args.cfg_v_min, "v_max": args.cfg_v_max, "p_kw": args.cfg_p_kw, "i_max": args.cfg_i_max})
+        cfg_params = {
+            "v_min": args.cfg_v_min,
+            "v_max": args.cfg_v_max,
+            "p_kw": args.cfg_p_kw,
+            "i_max": args.cfg_i_max,
+        }
+        if args.module_addr is not None:
+            cfg_params["module_addr"] = int(args.module_addr)
+        if args.ignore_cp:
+            cfg_params["ignore_cp"] = True
+        cfg = c.send_req("dc.cfg", cfg_params)
         print("[ramp] dc.cfg:", cfg)
     except Exception as e:
         print("[ramp] dc.cfg failed:", e)
@@ -133,14 +145,15 @@ def main() -> int:
     except Exception as e:
         print("[ramp] can.stats failed:", e)
 
-    # Enable DC (ignore CP gating to allow bench energize)
+    # Enable DC (optionally ignore CP gating for bench energize)
     print("[ramp] Enabling DC output ...")
     try:
-        # Make sure ignore_cp=true
-        try:
-            c.send_req("dc.cfg", {"ignore_cp": True})
-        except Exception:
-            pass
+        # Optionally ensure ignore_cp=true here as well
+        if args.ignore_cp:
+            try:
+                c.send_req("dc.cfg", {"ignore_cp": True})
+            except Exception:
+                pass
         c.dc_enable(True)
     except Exception as e:
         print("[ramp] dc_enable(True) failed:", e)

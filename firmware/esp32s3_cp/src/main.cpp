@@ -96,6 +96,8 @@ static inline void CS_LOW()  { digitalWrite(PIN_CS, LOW); }
 static inline void CS_HIGH() { digitalWrite(PIN_CS, HIGH); }
 // Forward declaration (definition near end of file)
 static void mcp2515_write_reg_raw(uint8_t reg, uint8_t val);
+static uint8_t mcp2515_read_reg_raw(uint8_t reg);
+static void dump_mcp_cnf_eflg();
 
 // Minimal direct MCP2515 register write via FSPI (override CNF registers)
 // helper declared later after FSPI defined
@@ -138,7 +140,6 @@ static bool    g_can_ok = false;
 
 /* --- Maxwell commands (unicast/broadcast) --- */
 static bool maxwell_send(uint32_t id, const uint8_t* data, uint8_t len) {
-  if (!g_can_ok) return false;
   struct can_frame f;
   f.can_id  = (id & CAN_ID_MASK_ALL) | CAN_EFF_FLAG;
   f.can_dlc = (len > 8) ? 8 : len;
@@ -463,8 +464,7 @@ static inline uint8_t hilo_for_target(float v_tgt){
 
 /* Apply setpoints using discrete Maxwell commands (Ilim -> Vref -> Power) */
 static void dc_apply_setpoints(bool onoffOnly=false) {
-  if (!g_can_ok) return;
-
+  
   float v_cmd = clampf(g_dc_v_set_V, g_cfg_v_min, g_cfg_v_max);
   float v_for_power = (g_module_count>0 && g_modules[0].last_v_mv>0) ? (g_modules[0].last_v_mv/1000.0f) : v_cmd;
   float i_cmd = fminf(g_dc_i_set_A, current_allowed_for_power(v_for_power));
@@ -689,7 +689,6 @@ static void send_meter_event(float v_V, float i_A, float p_kW, float e_kWh, uint
 
 /* ----- Diagnostics helpers ----- */
 static bool run_comm_check(uint32_t timeout_ms, bool &got_v, bool &got_i, bool &got_st, bool &got_hilo) {
-  if (!g_can_ok) return false;
   got_v = got_i = got_st = got_hilo = false;
   (void)cmd_read(MODULE_ADDR, 0x00);
   (void)cmd_read(MODULE_ADDR, 0x01);
@@ -1048,10 +1047,12 @@ void setup() {
     return true;
   };
   bool ok8  = cfg_can(CAN_125KBPS, MCP_8MHZ,  "8MHz");
+  bool ok16 = false;
   if (ok8) {
     // Override CNF2/CNF3 to match working reference (SAM=1, PropSeg=2, PS1=7, PS2=6)
     // Also force accept-all and enable RX interrupts.
     g_mcp2515.setConfigMode();
+    mcp2515_write_reg_raw(REG_CNF1, 0x01); // CNF1 (SJW=1, BRP=1) -> 125 kbps @ 8 MHz
     mcp2515_write_reg_raw(0x29, 0xF1); // CNF2 (SAM=1)
     mcp2515_write_reg_raw(0x28, 0x05); // CNF3
     mcp2515_write_reg_raw(0x60, 0x64); // RXB0CTRL: BUKT=1, RXM=11 (accept all)
@@ -1070,10 +1071,13 @@ void setup() {
   if (!have_reply) {
     Serial.println("[CAN] No reply at 8MHz; trying 16MHz …");
     g_mcp2515.reset();
-    bool ok16 = cfg_can(CAN_125KBPS, MCP_16MHZ, "16MHz");
+    ok16 = cfg_can(CAN_125KBPS, MCP_16MHZ, "16MHz");
     if (ok16) {
       // Ensure accept-all and RX interrupts in 16MHz fallback too
       g_mcp2515.setConfigMode();
+      mcp2515_write_reg_raw(REG_CNF1, 0x03); // CNF1 (SJW=1, BRP=3) -> 125 kbps @ 16 MHz
+      mcp2515_write_reg_raw(0x29, 0xF1);     // CNF2 (same segmentation)
+      mcp2515_write_reg_raw(0x28, 0x05);     // CNF3
       mcp2515_write_reg_raw(0x60, 0x64); // RXB0CTRL
       mcp2515_write_reg_raw(0x70, 0x60); // RXB1CTRL
       mcp2515_write_reg_raw(REG_CANINTE, 0x03);
@@ -1087,9 +1091,11 @@ void setup() {
       Serial.println("[CAN] No reply at either 8MHz or 16MHz; check wiring/bitrate");
     }
   }
-  // Consider CAN operational only after an actual reply
-  g_can_ok = have_reply;
+  // Consider CAN operational once MCP2515 is configured (even before first reply)
+  g_can_ok = (ok8 || ok16);
   if (g_can_ok) Serial.println("[CAN] MCP2515 ready (extended)");
+  // One-time dump to confirm timing and error state
+  dump_mcp_cnf_eflg();
 
   // Discover modules quickly (may still be zero until DC module powered)
   g_module_count = 0;
@@ -1188,6 +1194,28 @@ static void mcp2515_write_reg_raw(uint8_t reg, uint8_t val) {
   spiFSPI.transfer(val);
   CS_HIGH();
   spiFSPI.endTransaction();
+}
+// Minimal direct MCP2515 register read via FSPI
+static uint8_t mcp2515_read_reg_raw(uint8_t reg) {
+  spiFSPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+  CS_LOW();
+  spiFSPI.transfer(0x03); // INSTRUCTION_READ
+  spiFSPI.transfer(reg);
+  uint8_t v = spiFSPI.transfer(0x00);
+  CS_HIGH();
+  spiFSPI.endTransaction();
+  return v;
+}
+
+// Dump a few key registers (CNF1/2/3, EFLG, TEC/REC) once during setup
+static void dump_mcp_cnf_eflg() {
+  uint8_t cnf1 = mcp2515_read_reg_raw(REG_CNF1);
+  uint8_t cnf2 = mcp2515_read_reg_raw(REG_CNF2);
+  uint8_t cnf3 = mcp2515_read_reg_raw(REG_CNF3);
+  uint8_t eflg = mcp2515_read_reg_raw(REG_EFLG);
+  uint8_t tec  = mcp2515_read_reg_raw(0x1C);
+  uint8_t rec  = mcp2515_read_reg_raw(0x1D);
+  Serial.printf("[MCP] CNF1=0x%02X CNF2=0x%02X CNF3=0x%02X  EFLG=0x%02X TEC=%u REC=%u\n", cnf1, cnf2, cnf3, eflg, tec, rec);
 }
 // Minimal direct MCP2515 register write via FSPI (used to override CNF on 8 MHz)
 // helper declared later after FSPI defined
