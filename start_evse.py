@@ -49,6 +49,19 @@ async def main() -> None:
 
 def run() -> None:
     try:
+        # Prefer uvloop when available (opt‑in via USE_UVLOOP, default on)
+        try:
+            from src.util.uvloop_compat import maybe_install_uvloop  # type: ignore
+        except Exception:
+            try:
+                from util.uvloop_compat import maybe_install_uvloop  # type: ignore
+            except Exception:
+                maybe_install_uvloop = None  # type: ignore
+        try:
+            if callable(maybe_install_uvloop):
+                maybe_install_uvloop()
+        except Exception:
+            pass
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.debug("SECC program terminated manually")

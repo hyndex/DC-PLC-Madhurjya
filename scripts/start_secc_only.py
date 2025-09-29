@@ -62,8 +62,20 @@ async def _main() -> int:
 
 if __name__ == "__main__":
     try:
+        # Try uvloop for lower latency on Unix
+        try:
+            from src.util.uvloop_compat import maybe_install_uvloop  # type: ignore
+        except Exception:
+            try:
+                from util.uvloop_compat import maybe_install_uvloop  # type: ignore
+            except Exception:
+                maybe_install_uvloop = None  # type: ignore
+        try:
+            if callable(maybe_install_uvloop):
+                maybe_install_uvloop()
+        except Exception:
+            pass
         rc = asyncio.run(_main())
     except KeyboardInterrupt:
         rc = 130
     raise SystemExit(rc)
-

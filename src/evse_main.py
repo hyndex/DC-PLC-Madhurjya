@@ -1140,6 +1140,26 @@ async def start_secc(
     except Exception:
         pass
 
+    # Optional: enable async HAL path for CurrentDemand via a monkey-patch to quirks
+    try:
+        fast_async = os.environ.get("EVSE_FAST_ASYNC_HAL", "0").strip().lower() not in ("0", "false", "no", "")
+        if fast_async:
+            # Import at runtime to avoid static analysis path issues when submodule isn't on sys.path yet
+            import importlib
+            _q = importlib.import_module("iso15118.secc.quirks")  # type: ignore[import]
+            _orig_ident = getattr(_q, "identify_ev_quirks", None)
+            def _patched_ident(evcc_id):  # type: ignore
+                prof = _orig_ident(evcc_id) if callable(_orig_ident) else _q.QuirkProfile()
+                try:
+                    prof.current_demand_async_hal = True
+                except Exception:
+                    return _q.QuirkProfile(current_demand_async_hal=True)
+                return prof
+            _q.identify_ev_quirks = _patched_ident  # type: ignore
+            logger.info("Enabled async HAL path via quirks")
+    except Exception:
+        pass
+
     handler = SECCHandler(
         exi_codec=exi_codec,
         evse_controller=evse_controller,
@@ -1227,6 +1247,25 @@ async def launch_secc_background(
     except Exception:
         pass
 
+    # Optional: enable async HAL path for CurrentDemand via a monkey-patch to quirks
+    try:
+        fast_async = os.environ.get("EVSE_FAST_ASYNC_HAL", "0").strip().lower() not in ("0", "false", "no", "")
+        if fast_async:
+            import importlib
+            _q = importlib.import_module("iso15118.secc.quirks")  # type: ignore[import]
+            _orig_ident = getattr(_q, "identify_ev_quirks", None)
+            def _patched_ident(evcc_id):  # type: ignore
+                prof = _orig_ident(evcc_id) if callable(_orig_ident) else _q.QuirkProfile()
+                try:
+                    prof.current_demand_async_hal = True
+                except Exception:
+                    return _q.QuirkProfile(current_demand_async_hal=True)
+                return prof
+            _q.identify_ev_quirks = _patched_ident  # type: ignore
+            logger.info("Enabled async HAL path via quirks (bg)")
+    except Exception:
+        pass
+
     handler = SECCHandler(
         exi_codec=exi_codec,
         evse_controller=evse_controller,
@@ -1244,6 +1283,19 @@ def main() -> None:
     except Exception:
         from util.logging import setup_logging  # fallback
     setup_logging()
+    # Prefer uvloop policy (Unix) if available and enabled via USE_UVLOOP
+    try:
+        from src.util.uvloop_compat import maybe_install_uvloop  # type: ignore
+    except Exception:
+        try:
+            from util.uvloop_compat import maybe_install_uvloop  # type: ignore
+        except Exception:
+            maybe_install_uvloop = None  # type: ignore
+    try:
+        if callable(maybe_install_uvloop):
+            maybe_install_uvloop()
+    except Exception:
+        pass
     args = parse_args()
     # Mirror CLI controller choice to environment for downstream components
     # Only override if explicitly provided on the CLI.

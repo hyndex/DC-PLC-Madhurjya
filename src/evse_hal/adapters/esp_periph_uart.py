@@ -203,6 +203,10 @@ class _SupplyPeriph(DCPowerSupply):
         self._meter = meter
         self._last_set_v = 0.0
         self._last_set_i = 0.0
+        try:
+            self._combine = str(os.environ.get("EVSE_SUPPLY_COMBINE_SET", "1")).strip().lower() not in ("0","false","no","")
+        except Exception:
+            self._combine = True
 
     def _push(self) -> None:
         try:
@@ -212,10 +216,12 @@ class _SupplyPeriph(DCPowerSupply):
 
     def set_voltage(self, volts: float) -> None:
         self._last_set_v = float(max(0.0, volts))
-        self._push()
+        if not self._combine:
+            self._push()
 
     def set_current_limit(self, amps: float) -> None:
         self._last_set_i = float(max(0.0, amps))
+        # Always push on current-limit update so paired V/I lands in one frame
         self._push()
 
     def get_status(self) -> Tuple[float, float]:

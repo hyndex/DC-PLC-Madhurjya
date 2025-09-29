@@ -6,3 +6,4 @@ fastapi
 uvicorn
 # Optional (Raspberry Pi + MCP3008 ADC): spidev
 pyserial
+uvloop>=0.17.0; platform_system != 'Windows' and platform_python_implementation == 'CPython'

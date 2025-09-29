@@ -114,6 +114,10 @@ class HalEVSEController(SimEVSEController):
         self._last_set_i: float = 0.0
         self._last_allowed_i: float = 0.0
         self._last_set_ts: float = time.time()
+        # Last EV-requested setpoints (for echoing in CurrentDemand responses)
+        self._last_ev_req_v: float = 0.0
+        self._last_ev_req_i: float = 0.0
+        self._last_ev_req_ts: float = 0.0
         # Last known diagnostic snapshots to avoid confusing placeholder values
         self._last_bms_snapshot = None
         self._last_evse_snapshot = None
@@ -142,6 +146,14 @@ class HalEVSEController(SimEVSEController):
                 return float(default)
         self._hi_enter_v: float = _envf("EVSE_MODE_HI_ENTER_V", 460.0)
         self._hi_exit_v: float = _envf("EVSE_MODE_HI_EXIT_V", 440.0)
+        # CP sticky protection during CurrentDemand
+        try:
+            self._cp_sticky_ms: int = int(float(os.environ.get("EVSE_CP_STICKY_MS", "0")))
+        except Exception:
+            self._cp_sticky_ms = 0
+        self._cp_lock_active: bool = False
+        self._cp_lock_until: float = 0.0
+        self._cp_last_cd: str = "C"  # last known charging state
 
     async def set_status(self, status: ServiceStatus) -> None:
         # Could map to LEDs or system state in real hardware
@@ -498,7 +510,19 @@ class HalEVSEController(SimEVSEController):
         return PVEVSEMaxPowerLimit(multiplier=mul, value=val, unit=UnitSymbol.WATT)
 
     async def get_evse_present_voltage(self, protocol):  # type: ignore[override]
-        # Allow supply simulation for bench bring-up without power electronics
+        # When echo mode is enabled, shape the reported voltage from last EV targets
+        echo = str(os.environ.get("EVSE_ECHO_CURRENTDEMAND", "0")).strip().lower() not in ("0", "false", "no", "")
+        if echo and (time.time() - self._last_ev_req_ts) < 5.0:
+            try:
+                v_min = float(os.environ.get("EVSE_PERIPH_CFG_V_MIN", "150.0"))
+                v_max = float(os.environ.get("EVSE_PERIPH_CFG_V_MAX", str(self._rated_dc_max_voltage_v)))
+            except Exception:
+                v_min, v_max = 150.0, float(getattr(self, "_rated_dc_max_voltage_v", 920.0))
+            v = max(v_min, min(v_max, float(self._last_ev_req_v)))
+            # Keep context consistent
+            self.evse_data_context.present_voltage = float(v)
+            return await super().get_evse_present_voltage(protocol)
+        # Fallback to measured values (or last set) when echo disabled
         try:
             if os.environ.get("EVSE_SIM_SUPPLY", "0").strip().lower() not in ("0", "false", "no", ""):
                 v = float(self._last_set_v)
@@ -507,19 +531,60 @@ class HalEVSEController(SimEVSEController):
                 v, a = self._hal.supply().get_status()
         except Exception:
             v, a = float(self._last_set_v), float(self._last_set_i)
-        # Optional fault injection: scale measurements to simulate mismatch
         try:
             sv = float(os.environ.get("EVSE_FAULT_SCALE_V", "1.0"))
             si = float(os.environ.get("EVSE_FAULT_SCALE_I", "1.0"))
             v, a = v * sv, a * si
         except Exception:
             pass
-        # Update EVSE data context for downstream getters
         self.evse_data_context.present_voltage = float(v)
         self.evse_data_context.present_current = float(a)
         return await super().get_evse_present_voltage(protocol)
 
     async def get_evse_present_current(self, protocol):  # type: ignore[override]
+        echo = str(os.environ.get("EVSE_ECHO_CURRENTDEMAND", "0")).strip().lower() not in ("0", "false", "no", "")
+        if echo and (time.time() - self._last_ev_req_ts) < 5.0:
+            # Build echoed current from the last EV target, subject to floor and caps
+            try:
+                i_hw_max = float(
+                    os.environ.get("EVSE_ECHO_I_MAX_A")
+                    or os.environ.get("EVSE_DC_MAX_CURRENT_A")
+                    or os.environ.get("EVSE_PERIPH_CFG_I_MAX")
+                    or self._rated_dc_max_current_a
+                )
+            except Exception:
+                i_hw_max = float(getattr(self, "_rated_dc_max_current_a", 300.0))
+            try:
+                p_max_w = float(
+                    os.environ.get("EVSE_ECHO_P_MAX_W")
+                    or os.environ.get("EVSE_DC_MAX_POWER_W")
+                    or (float(os.environ.get("EVSE_PERIPH_CFG_P_KW", "0")) * 1000.0)
+                    or 0.0
+                )
+            except Exception:
+                p_max_w = 0.0
+            try:
+                i_floor_a = float(os.environ.get("EVSE_ECHO_I_FLOOR_A", "0.0"))
+            except Exception:
+                i_floor_a = 0.0
+            try:
+                i_floor_frac = float(os.environ.get("EVSE_ECHO_I_FLOOR_FRAC", "0.0"))
+            except Exception:
+                i_floor_frac = 0.0
+            v_used = max(1.0, float(self._last_ev_req_v or self._last_set_v or 0.0))
+            ilim_power = (p_max_w / v_used) if p_max_w > 0 else i_hw_max
+            i_cap = max(0.0, min(float(i_hw_max), float(ilim_power)))
+            # Floor: absolute or fraction of requested
+            i_req = float(self._last_ev_req_i)
+            i_floor = max(0.0, max(i_floor_a, i_floor_frac * max(0.0, i_req)))
+            i_echo = max(i_floor, min(i_req, i_cap))
+            # Keep context consistent
+            try:
+                self.evse_data_context.present_current = float(i_echo)
+            except Exception:
+                pass
+            return await super().get_evse_present_current(protocol)
+        # Fallback to measured values
         try:
             if os.environ.get("EVSE_SIM_SUPPLY", "0").strip().lower() not in ("0", "false", "no", ""):
                 v = float(self._last_set_v)
@@ -536,6 +601,48 @@ class HalEVSEController(SimEVSEController):
             pass
         self.evse_data_context.present_voltage = float(v)
         self.evse_data_context.present_current = float(a)
+        # Optional per-cycle CurrentDemand tick logging for verification
+        try:
+            if str(os.environ.get("EVSE_CD_LOG", "0")).strip().lower() not in ("0", "false", "no", ""):
+                v_meas = float(self.evse_data_context.present_voltage or 0.0)
+                i_meas = float(self.evse_data_context.present_current or 0.0)
+                v_req = float(self._last_ev_req_v or 0.0)
+                i_req = float(self._last_ev_req_i or 0.0)
+                # Compute simple clamps used recently
+                try:
+                    p_cap_w = 0.0
+                    if "EVSE_DC_MAX_POWER_W" in os.environ:
+                        p_cap_w = float(os.environ.get("EVSE_DC_MAX_POWER_W", "0") or 0.0)
+                    elif "EVSE_PERIPH_CFG_P_KW" in os.environ:
+                        p_cap_w = float(os.environ.get("EVSE_PERIPH_CFG_P_KW", "0") or 0.0) * 1000.0
+                except Exception:
+                    p_cap_w = 0.0
+                i_cap_power = (p_cap_w / max(1.0, v_req)) if (p_cap_w and v_req > 0.0) else 1e9
+                i_req_clamped = float(min(max(0.0, i_req), float(self._rated_dc_max_current_a), i_cap_power))
+                # Error metrics
+                dv = v_meas - (v_req if v_req > 0 else v_meas)
+                di = i_meas - i_req_clamped
+                p_req = (v_req * i_req_clamped) if (v_req > 0 and i_req_clamped > 0) else 0.0
+                p_meas = v_meas * i_meas
+                p_err_frac = (abs(p_meas - p_req) / max(p_req, 1.0)) if p_req > 0 else 0.0
+                logger.info(
+                    "cd_tick",
+                    extra={
+                        "ts": time.time(),
+                        "ev_req_v": round(v_req, 2),
+                        "ev_req_i": round(i_req, 2),
+                        "meas_v": round(v_meas, 2),
+                        "meas_i": round(i_meas, 2),
+                        "cmd_v": round(float(self._last_set_v), 2),
+                        "cmd_i": round(float(self._last_set_i), 2),
+                        "i_req_clamped": round(i_req_clamped, 2),
+                        "p_req_w": round(p_req, 1),
+                        "p_meas_w": round(p_meas, 1),
+                        "p_err_frac": round(p_err_frac, 3),
+                    },
+                )
+        except Exception:
+            pass
         return await super().get_evse_present_current(protocol)
 
     async def is_evse_power_limit_achieved(self) -> bool:  # type: ignore[override]
@@ -580,7 +687,8 @@ class HalEVSEController(SimEVSEController):
                 getattr(self._hal, "dc_enable", lambda _on: None)(True)
         except Exception:
             pass
-        # Enforce simple slew limits to avoid abrupt steps
+        # Enforce simple slew limits to avoid abrupt steps, unless fast/hard apply is enabled
+        fast_apply = str(os.environ.get("EVSE_FAST_HARD_APPLY", "0")).strip().lower() not in ("0", "false", "no", "")
         max_dv_per_s = float(os.environ.get("EVSE_DC_MAX_DV_PER_S", "50.0"))
         max_di_per_s = float(os.environ.get("EVSE_DC_MAX_DI_PER_S", "100.0"))
         now = time.time()
@@ -588,14 +696,19 @@ class HalEVSEController(SimEVSEController):
         cur_v, cur_i = self._last_set_v, self._last_set_i
         tgt_v = float(ev_target_voltage or cur_v)
         tgt_i = float(ev_target_current or cur_i)
-        dv = tgt_v - cur_v
-        di = tgt_i - cur_i
-        max_dv = max_dv_per_s * dt
-        max_di = max_di_per_s * dt
-        if abs(dv) > max_dv:
-            tgt_v = cur_v + max_dv * (1 if dv > 0 else -1)
-        if abs(di) > max_di:
-            tgt_i = cur_i + max_di * (1 if di > 0 else -1)
+        # Cache last EV request for echo reporting
+        self._last_ev_req_v = float(ev_target_voltage or tgt_v)
+        self._last_ev_req_i = float(ev_target_current or tgt_i)
+        self._last_ev_req_ts = now
+        if not fast_apply:
+            dv = tgt_v - cur_v
+            di = tgt_i - cur_i
+            max_dv = max_dv_per_s * dt
+            max_di = max_di_per_s * dt
+            if abs(dv) > max_dv:
+                tgt_v = cur_v + max_dv * (1 if dv > 0 else -1)
+            if abs(di) > max_di:
+                tgt_i = cur_i + max_di * (1 if di > 0 else -1)
 
         # Optional voltage margining
         # - During PreCharge: default no margin; can subtract a small margin via
@@ -621,7 +734,11 @@ class HalEVSEController(SimEVSEController):
 
         # Query present measurements for thermal and context updates
         try:
-            v_meas, i_meas = self._hal.supply().get_status()
+            if fast_apply:
+                # Avoid CAN/UART contention on the fast path; use last known
+                v_meas, i_meas = float(self._last_set_v), float(self._last_set_i)
+            else:
+                v_meas, i_meas = self._hal.supply().get_status()
         except Exception:
             v_meas, i_meas = 0.0, 0.0
 
@@ -689,8 +806,20 @@ class HalEVSEController(SimEVSEController):
             measured_current_a=float(i_meas),
         )
 
-        # Adjust the current limit applied to hardware
-        allowed_i = float(min(tgt_i, dec.allowed_current_a))
+        # Adjust the current limit applied to hardware; enforce power cap if provided
+        try:
+            p_cap_w = 0.0
+            if "EVSE_DC_MAX_POWER_W" in os.environ:
+                p_cap_w = float(os.environ.get("EVSE_DC_MAX_POWER_W", "0") or 0.0)
+            elif "EVSE_PERIPH_CFG_P_KW" in os.environ:
+                p_cap_w = float(os.environ.get("EVSE_PERIPH_CFG_P_KW", "0") or 0.0) * 1000.0
+        except Exception:
+            p_cap_w = 0.0
+        if p_cap_w > 0.0:
+            i_cap_power = float(p_cap_w) / max(1.0, float(cmd_v) if cmd_v > 0 else float(self._last_set_v or 1.0))
+            allowed_i = float(min(tgt_i, dec.allowed_current_a, i_cap_power))
+        else:
+            allowed_i = float(min(tgt_i, dec.allowed_current_a))
 
         # Update the ISO15118 session limits so EV sees our dynamic capability
         try:
@@ -745,19 +874,35 @@ class HalEVSEController(SimEVSEController):
         # Persist the commanded values (post-margin, post-derate) for observability
         self._last_set_v, self._last_set_i, self._last_set_ts = cmd_v, allowed_i, now
         self._last_allowed_i = allowed_i
+        try:
+            logger.debug(
+                "cd_set",
+                extra={
+                    "ev_req_v": round(float(self._last_ev_req_v), 2),
+                    "ev_req_i": round(float(self._last_ev_req_i), 2),
+                    "cmd_v": round(float(cmd_v), 2),
+                    "cmd_i": round(float(allowed_i), 2),
+                },
+            )
+        except Exception:
+            pass
         # Update context for reporting
         try:
             self.evse_data_context.present_voltage = float(v_meas)
             self.evse_data_context.present_current = float(i_meas)
         except Exception:
             pass
-        # Optional tiny settle to allow first CurrentDemand read to reflect movement.
-        # Keep within the 250 ms loop budget; default 50 ms.
+        # Optional tiny precommit wait to let ESP latch setpoints before we respond
+        # Keep within the 250 ms loop budget.
         try:
             import asyncio as _asyncio
-            settle = float(os.environ.get("EVSE_CD_SETTLE_MS", "0.05"))
-            if settle > 0:
-                await _asyncio.sleep(min(0.1, max(0.0, settle)))
+            wait_ms = os.environ.get("EVSE_CD_PRECOMMIT_WAIT_MS")
+            if wait_ms is None:
+                # Backward-compat alias
+                wait_ms = os.environ.get("EVSE_CD_SETTLE_MS")
+            settle = float(wait_ms or 0.0) / 1000.0 if wait_ms else 0.0
+            if not is_precharge and settle > 0:
+                await _asyncio.sleep(min(0.02, max(0.0, settle)))
         except Exception:
             pass
         # Log thermal decisions on notable events
@@ -836,19 +981,33 @@ class HalEVSEController(SimEVSEController):
 
     async def get_cp_state(self) -> CpState:
         # Map HAL CP letter state to ISO 15118 CpState with emergency awareness
-        st = (self._hal.cp().get_state() or "B").upper()
-        if st == "A":
-            return CpState.A1
-        if st == "B":
-            return CpState.B1
-        if st == "C":
-            return CpState.C2
-        if st == "D":
-            return CpState.D2
-        if st == "E":
-            return CpState.E
-        if st == "F":
+        raw = (self._hal.cp().get_state() or "").upper()[:1] or "B"
+        now = time.time()
+        # Emergency always wins; release sticky immediately
+        if raw in ("E", "F"):
+            self._cp_lock_active = False
+            if raw == "E":
+                return CpState.E
             return CpState.F
+        # Sticky lock during CurrentDemand: hold at last C/D unless sustained A/B beyond sticky_ms
+        if self._cp_lock_active and now < self._cp_lock_until:
+            if raw in ("C", "D"):
+                self._cp_last_cd = raw
+            # Force to last known charging state for lock duration
+            raw_eff = self._cp_last_cd
+        else:
+            raw_eff = raw
+            # Expire lock window
+            if self._cp_lock_active and now >= self._cp_lock_until:
+                self._cp_lock_active = False
+        if raw_eff == "A":
+            return CpState.A1
+        if raw_eff == "B":
+            return CpState.B1
+        if raw_eff == "C":
+            return CpState.C2
+        if raw_eff == "D":
+            return CpState.D2
         return CpState.UNKNOWN
 
     async def stop_charger(self) -> None:
@@ -901,6 +1060,39 @@ class HalEVSEController(SimEVSEController):
         # Call parent for logging
         try:
             await super().set_present_protocol_state(state)  # type: ignore
+        except Exception:
+            pass
+        # Sticky CP management and log suppression for tight loops
+        try:
+            state_name = getattr(state, "__class__", type(state)).__name__
+        except Exception:
+            state_name = str(state)
+        # Manage CP sticky window when entering/exiting CurrentDemand
+        try:
+            if state_name == "CurrentDemand" and self._cp_sticky_ms > 0:
+                self._cp_lock_active = True
+                self._cp_lock_until = time.time() + (float(self._cp_sticky_ms) / 1000.0)
+            elif state_name not in ("CurrentDemand", "DCChargeLoop"):
+                # Release on leaving charge loop
+                self._cp_lock_active = False
+        except Exception:
+            pass
+        # Optionally reduce log verbosity during PreCharge/CurrentDemand
+        try:
+            if os.environ.get("LOG_LEVEL") and str(os.environ.get("LOG_LEVEL")).strip().upper() in ("WARN", "WARNING"):
+                if state_name in ("PreCharge", "CurrentDemand"):
+                    for ln in (
+                        "iso15118",
+                        "iso15118.shared",
+                        "iso15118.secc",
+                        "iso15118.shared.comm_session",
+                        "iso15118.secc.states",
+                        "iso15118.secc.comm_session_handler",
+                    ):
+                        try:
+                            logging.getLogger(ln).setLevel(logging.WARNING)
+                        except Exception:
+                            pass
         except Exception:
             pass
         # Attempt to emit BMS demand snapshot on each protocol state transition

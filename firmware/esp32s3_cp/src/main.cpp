@@ -59,6 +59,16 @@ static uint8_t        MODULE_ADDR         = 0x01;     // default unicast module 
 #ifndef DC_RAMP_TICK_MS
 #define DC_RAMP_TICK_MS   100
 #endif
+// Telemetry poll cadence and channel selection
+#ifndef DC_POLL_PERIOD_MS
+#define DC_POLL_PERIOD_MS 100   // V/I every 100 ms
+#endif
+#ifndef DC_STATUS_POLL_MS
+#define DC_STATUS_POLL_MS 1000  // Module status at 1 s cadence
+#endif
+#ifndef DC_USE_FAST_CHANNELS
+#define DC_USE_FAST_CHANNELS 1  // Use Vout_fast (0x62) and Iout_fast (0x30)
+#endif
 
 /* ================= Self-Test (production) =================== */
 static const float  SELFTEST_SET_V = 200.0f;   // V
@@ -216,9 +226,10 @@ static void handle_can_frame(const struct can_frame& f) {
     const uint8_t cmd = f.data[1];
     uint32_t val = (f.can_dlc>=8) ? ((uint32_t)f.data[4]<<24 | (uint32_t)f.data[5]<<16 | (uint32_t)f.data[6]<<8 | f.data[7]) : 0;
     for (uint8_t i=0;i<g_module_count;i++) if (g_modules[i].addr==modAddr){
-      if (cmd==0x00) g_modules[i].last_v_mv = val;
-      else if (cmd==0x01) g_modules[i].last_i_ma = val;
-      else if (cmd==0x08) g_modules[i].last_status = val;
+      // Accept slow and fast/fastest channels for V/I
+      if (cmd==0x00 || cmd==0x62) g_modules[i].last_v_mv = val;                 // Vout or Vout_fast
+      else if (cmd==0x01 || cmd==0x30 || cmd==0x2F) g_modules[i].last_i_ma = val; // Iout slow/fast/fastest
+      else if (cmd==0x08) g_modules[i].last_status = val;                       // Module status
     }
     if (cmd==0x60) { g_hilo_cfg = (uint8_t)(val & 0xFF); }
     if (cmd==0x65) { g_hilo_actual = (uint8_t)(val & 0xFF); }
@@ -651,19 +662,30 @@ static void dc_ramp_tick() {
 
 /* Polling (read V/I/Status) */
 static uint32_t g_last_dc_poll_ms = 0;
+static uint32_t g_last_dc_status_ms = 0;
 static void dc_poll_tick() {
   const uint32_t now = millis();
-  if ((int32_t)(now - g_last_dc_poll_ms) > 300) {
+  // Fast V/I telemetry
+  if ((int32_t)(now - g_last_dc_poll_ms) > (int32_t)DC_POLL_PERIOD_MS) {
     g_last_dc_poll_ms = now;
-    (void)cmd_read(MODULE_ADDR, 0x00); // Vout mV
-    (void)cmd_read(MODULE_ADDR, 0x01); // Iout mA
+#if DC_USE_FAST_CHANNELS
+    (void)cmd_read(MODULE_ADDR, 0x62); // Vout_fast (98 dec)
+    (void)cmd_read(MODULE_ADDR, 0x30); // Iout_fast (48 dec)
+#else
+    (void)cmd_read(MODULE_ADDR, 0x00); // Vout mV (slow)
+    (void)cmd_read(MODULE_ADDR, 0x01); // Iout mA (slow)
+#endif
+  }
+  // Slower status/housekeeping
+  if ((int32_t)(now - g_last_dc_status_ms) > (int32_t)DC_STATUS_POLL_MS) {
+    g_last_dc_status_ms = now;
     (void)cmd_read(MODULE_ADDR, 0x08); // Status
-    static uint32_t last_hilo_read_ms = 0;
-    if ((int32_t)(now - last_hilo_read_ms) > 1000) {
-      last_hilo_read_ms = now;
-      (void)cmd_read(MODULE_ADDR, 0x65); // Actual Hi/Lo mode
-      //(void)cmd_read(MODULE_ADDR, 0x60); // Configured mode (optional)
-    }
+  }
+  static uint32_t last_hilo_read_ms = 0;
+  if ((int32_t)(now - last_hilo_read_ms) > 1000) {
+    last_hilo_read_ms = now;
+    (void)cmd_read(MODULE_ADDR, 0x65); // Actual Hi/Lo mode
+    //(void)cmd_read(MODULE_ADDR, 0x60); // Configured mode (optional)
   }
   // Periodic setpoint keepalive (~1s)
   static uint32_t g_last_keepalive_ms = 0;

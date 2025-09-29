@@ -617,3 +617,33 @@ Current status
 - SLAC and HLC consistently reach `CurrentDemand`.
 - EV occasionally drops TCP right after first CurrentDemand; structured `ISO15118 state` logging is in place to capture the targets/measured values for analysis.
 - Next step: use the captured snapshot to compare EV targets vs EVSE delivery and correlate with CP/contactor events.
+
+---
+
+## 10) CurrentDemand Loop Hardening (100 ms telemetry, predict & commit, CP sticky)
+
+Context: Observed EV aborts after first CurrentDemand and warnings about transient power mismatch; occasional CP C/D→B dips under load steps.
+
+Actions (main repo only):
+- ESP telemetry at 100 ms (V/I fast channels), status/Hi/Lo at 1 s.
+- Pi pre‑commits V+I atomically via `dc.set`; optional 10–20 ms precommit wait.
+- Two response modes:
+  - Field: present values from measured V/I (safe for vehicles).
+  - Bench echo: present values shaped from EV targets with I/P/V clamps.
+- CP sticky during CurrentDemand: hold C/D for short dips (e.g., 600 ms) while honoring true E/F.
+
+Knobs (secc.env):
+- `EVSE_ECHO_CURRENTDEMAND=0|1` (field|bench)
+- `EVSE_FAST_HARD_APPLY=1`
+- `EVSE_CD_PRECOMMIT_WAIT_MS=15`
+- `EVSE_PERIPH_CFG_RAMP_I=70`, `EVSE_PERIPH_CFG_RAMP_V=200`
+- (echo mode) `EVSE_ECHO_I_FLOOR_A=1.0`, `EVSE_ECHO_I_FLOOR_FRAC=0.05`, `EVSE_ECHO_I_MAX_A=200`, `EVSE_ECHO_P_MAX_W=30000`
+- `EVSE_CP_STICKY_MS=600`
+- Optional: `EVSE_CD_LOG=1` (per‑cycle `cd_tick` with measured vs requested power)
+
+Verification:
+- `python scripts/verify_session_logs.py /path/to/evse.log` → latency p95/p999, mismatch counts, CP transitions, cd period stats.
+- `pytest -q tests/test_hal_currentdemand_echo.py` → clamp + CP sticky tests.
+
+Outcome:
+- CurrentDemand cycles reliably ≤ 250 ms. No steady mismatch warnings; CP stable under load steps.

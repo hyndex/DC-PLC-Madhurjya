@@ -149,6 +149,52 @@ What you’ll see:
   - `iso_state` (e.g., CableCheck, PreCharge, CurrentDemand)
   - `bms`: `present_soc`, `target_voltage`, `target_current`, session limits
 
+### Fast Loop + Verification (CurrentDemand, 250 ms budget)
+
+This repo includes a fast, robust CurrentDemand loop with two modes and tools to prove timing/coherency:
+
+- Firmware telemetry at 100 ms
+  - The ESP32‑S3 peripheral polls V/I every 100 ms using the module’s fast channels. Status/Hi/Lo at 1 s.
+  - Build: `python3 -m platformio run -d firmware/esp32s3_cp`
+
+- Field vs bench reply shaping
+  - Field (recommended for vehicles): `EVSE_ECHO_CURRENTDEMAND=0`
+    - CurrentDemand “present” values come from measured V/I (safe for EV sanity checks).
+  - Bench echo (rigs that follow your reply): `EVSE_ECHO_CURRENTDEMAND=1`
+    - Present values shaped from EV targets, clamped by I/P/V limits (keeps SECC mismatch quiet during bring‑up).
+
+- Pre‑commit setpoints
+  - Pi sends V+I atomically via `dc.set` (coalesced). Optional tiny latch wait, `EVSE_CD_PRECOMMIT_WAIT_MS=15` (0–20 ms).
+
+- CP stability
+  - Hold C/D for short dips during CurrentDemand: `EVSE_CP_STICKY_MS=600`. Emergency E/F always triggers shutdown.
+
+- Optional uvloop (Unix)
+  - Faster asyncio loop for SECC/SLAC. Installed automatically when `uvloop` is present (pip) and `USE_UVLOOP` not `0`.
+
+- Log verification
+  - `python scripts/verify_session_logs.py /path/to/evse.log`
+    - Reports CurrentDemand latency p95/p999 (if markers present), CP transitions, mismatch counts, and EV inter‑request period stats.
+
+Environment knobs (put in `secc.env` or export before run):
+- CurrentDemand shaping and speed
+  - `EVSE_ECHO_CURRENTDEMAND=0|1` (field|bench)
+  - `EVSE_FAST_HARD_APPLY=1` (pre‑commit fast)
+  - `EVSE_CD_PRECOMMIT_WAIT_MS=15` (set 0 if close to 250 ms budget)
+  - `EVSE_PERIPH_CFG_RAMP_I=70`, `EVSE_PERIPH_CFG_RAMP_V=200` (ESP slew)
+  - (bench echo only) `EVSE_ECHO_I_FLOOR_A=1.0`, `EVSE_ECHO_I_FLOOR_FRAC=0.05`, `EVSE_ECHO_I_MAX_A=200`, `EVSE_ECHO_P_MAX_W=30000`
+- CP robustness
+  - `EVSE_CP_STICKY_MS=600` (hold C/D for short dips)
+- Optional per‑cycle metrics
+  - `EVSE_CD_LOG=1` (emit `cd_tick` lines with measured vs requested power)
+- Optional uvloop (Unix)
+  - `pip install uvloop` and keep `USE_UVLOOP` unset or `1` (default). Set `USE_UVLOOP=0` to disable.
+
+Testing the loop:
+- Unit tests: `pytest -q tests/test_hal_currentdemand_echo.py`
+  - Verifies 30 kW clamp (~100 A @ 300 V) and CP sticky behavior.
+- Log verification: `python scripts/verify_session_logs.py /path/to/evse.log`
+
 ### Field Bring‑Up Summary (DC CCS2)
 
 With a real vehicle connected and a QCA7000 (qcaspi) PLC on the Pi:
@@ -487,6 +533,21 @@ The `scripts/` folder contains helper tools for bring‑up, health checks, ESP c
 - `rpi0_*`: Build/test/run helpers for Raspberry Pi Zero environments.
 
 Tip: Most scripts print their assumptions and are idempotent where possible. Prefer running with `bash -x` during bring‑up to trace steps.
+
+### IDE Tips (import resolution)
+
+If your IDE reports missing imports for `iso15118.*` modules, add the following to your workspace settings so static analysis can find the submodule path:
+
+- For VS Code (`.vscode/settings.json`):
+  ```json
+  {
+    "python.analysis.extraPaths": [
+      "src",            
+      "src/iso15118"    
+    ]
+  }
+  ```
+The runtime already adjusts `sys.path` to include `src/iso15118`, but static analyzers need the hint.
 
 [`scripts/generate_certs.sh`](scripts/generate_certs.sh) and stored under
 `pki/` by default.
