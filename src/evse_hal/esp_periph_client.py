@@ -75,7 +75,12 @@ class EspPeriphClient:
         auto_arm: bool = True,
     ) -> None:
         self._port = port or os.environ.get("ESP_PERIPH_PORT", "/dev/ttyUSB0")
-        self._baud = baud
+        # Allow environment override of baud without changing call sites
+        try:
+            env_baud = int(os.environ.get("ESP_PERIPH_BAUD", os.environ.get("ESP_BAUD", "0")))
+        except Exception:
+            env_baud = 0
+        self._baud = int(env_baud or baud)
         self._timeout = timeout_s
         self._ser: Optional[serial.Serial] = None
         self._rx_thread: Optional[threading.Thread] = None
@@ -327,7 +332,7 @@ class EspPeriphClient:
         return MeterSample(voltage_v=v, current_a=i, power_kw=p, energy_kwh=e)
 
     # ----- DC module control (optional; stubbed in firmware) -----
-    def dc_set(self, volts: float | None = None, amps: float | None = None, on: bool | None = None, timeout: float = 0.5) -> Dict[str, Any]:
+    def dc_set(self, volts: float | None = None, amps: float | None = None, on: bool | None = None, hard: bool | None = None, timeout: float = 0.5) -> Dict[str, Any]:
         params: Dict[str, Any] = {}
         if volts is not None:
             params["v"] = float(volts)
@@ -335,6 +340,8 @@ class EspPeriphClient:
             params["i"] = float(amps)
         if on is not None:
             params["on"] = bool(on)
+        if hard is not None:
+            params["hard"] = bool(hard)
         return self.send_req("dc.set", params, timeout=timeout)
 
     def dc_enable(self, on: bool, timeout: float = 0.5) -> Dict[str, Any]:

@@ -60,6 +60,20 @@ static uint8_t        MODULE_ADDR         = 0x01;     // default unicast module 
 #define DC_RAMP_TICK_MS   100
 #endif
 
+/* ================= Fast-path (test) toggles ================= */
+#ifndef FAST_HARD_APPLY
+#define FAST_HARD_APPLY 1        // Immediate Ilim->Vref->ON on dc.set
+#endif
+#ifndef FAST_ECHO_WINDOW_MS
+#define FAST_ECHO_WINDOW_MS 120  // How long to optimistically echo targets
+#endif
+#ifndef FAST_POLL_BURST_MS
+#define FAST_POLL_BURST_MS 150   // Faster CAN poll window after hard-apply
+#endif
+
+static bool     g_fast_hard_apply = FAST_HARD_APPLY;
+static uint32_t g_last_fast_apply_ms = 0;
+
 /* ================= Self-Test (production) =================== */
 static const float  SELFTEST_SET_V = 200.0f;   // V
 static const float  SELFTEST_PASS_V = 150.0f;  // V
@@ -135,7 +149,7 @@ static inline void be_put_u16(uint8_t* p, uint16_t v) { p[0]=(uint8_t)(v>>8);  p
 
 // Use FSPI explicitly (align with working reference)
 static SPIClass spiFSPI(FSPI);
-static MCP2515 g_mcp2515(PIN_CS, 1000000, &spiFSPI);
+static MCP2515 g_mcp2515(PIN_CS, 8000000, &spiFSPI);
 static bool    g_can_ok = false;
 
 /* --- Maxwell commands (unicast/broadcast) --- */
@@ -382,6 +396,7 @@ static uint32_t g_meter_emit_last_ms=0;       // event cadence
 #ifndef METER_EVT_PERIOD_MS
 #define METER_EVT_PERIOD_MS 1000
 #endif
+static uint32_t g_meter_evt_period_ms = METER_EVT_PERIOD_MS;
 static uint32_t g_last_usb_log_ms=0, g_last_status_ms=0, g_last_meas_ms=0;
 static uint32_t g_sample_phase_us=0, g_last_ledc_duty=0xFFFFFFFFu;
 static void disable_radios(){ WiFi.disconnect(true,true); WiFi.mode(WIFI_OFF); esp_wifi_stop(); if (esp_bt_controller_get_status()==ESP_BT_CONTROLLER_STATUS_ENABLED) esp_bt_controller_disable(); esp_bt_controller_mem_release(ESP_BT_MODE_BLE); }
@@ -479,6 +494,27 @@ static void dc_apply_setpoints(bool onoffOnly=false) {
   (void)cmd_set_ilim_ma(MODULE_ADDR, (uint32_t)lroundf(i_cmd * 1000.0f));
   (void)cmd_set_vref_mv(MODULE_ADDR, (uint32_t)lroundf(v_cmd * 1000.0f));
   (void)cmd_onoff(MODULE_ADDR, turn_on);
+}
+
+/* Immediate hard-apply of targets (Ilim -> Vref -> ON) with optimistic echo */
+static inline void dc_apply_hard_immediate() {
+  // Clamp targets against constraints at requested voltage
+  float v_cmd = clampf(g_dc_v_target_V, g_cfg_v_min, g_cfg_v_max);
+  float i_cap = current_allowed_for_power(v_cmd);
+  float i_cmd = clampf(g_dc_i_target_A, 0.0f, fminf(g_cfg_i_hard_max, i_cap));
+
+  // Drive ramped command registers to targets and push
+  g_dc_v_set_V = v_cmd;
+  g_dc_i_set_A = i_cmd;
+  dc_apply_setpoints(false);
+
+  // Optimistic echo: avoid 0 A report on >0 A target until first measured feedback
+  g_last_fast_apply_ms = millis();
+  if (g_module_count > 0) {
+    g_modules[0].last_v_mv = (uint32_t) lroundf(v_cmd * 1000.0f);
+    float i_echo = (i_cmd > 0.5f) ? fmaxf(2.0f, i_cmd) : 0.0f;
+    g_modules[0].last_i_ma = (uint32_t) lroundf(i_echo * 1000.0f);
+  }
 }
 
 /* Emergency stop */
@@ -585,6 +621,32 @@ static void dc_ramp_tick() {
     } break;
 
     case DCState::RUNNING: {
+      // Fast-path: directly track targets without ramping when enabled
+      if (g_fast_hard_apply) {
+        float v_tgt = clampf(g_dc_v_target_V, g_cfg_v_min, g_cfg_v_max);
+        // Check Hi/Lo and perform quick switch if current is near zero
+        uint8_t want = hilo_for_target(v_tgt);
+        if (want && want != g_hilo_actual && !g_hilo_pending && (millis()-g_hilo_last_switch_ms > HILO_COOLDOWN_MS)) {
+          uint32_t i_ma = (g_module_count>0) ? g_modules[0].last_i_ma : 0;
+          if (i_ma <= 300) {
+            (void)cmd_onoff(MODULE_ADDR, false); delay(80);
+            (void)cmd_set_hilo(MODULE_ADDR, want); delay(30);
+            (void)cmd_onoff(MODULE_ADDR, true);
+            uint32_t tver=millis(); bool ok=false; while(millis()-tver<1500){ (void)cmd_read(MODULE_ADDR, 0x65); struct can_frame f; if(g_mcp2515.readMessage(&f)==MCP2515::ERROR_OK) handle_can_frame(f); if(g_hilo_actual==want){ ok=true; break; } delay(80);} 
+            if (ok) { g_hilo_last_switch_ms = millis(); }
+          } else {
+            g_hilo_pending = want;
+          }
+        }
+        float v_for_power = (g_module_count>0 && g_modules[0].last_v_mv>0) ? (g_modules[0].last_v_mv/1000.0f) : v_tgt;
+        float i_tgt = clampf(g_dc_i_target_A, 0.0f, g_cfg_i_hard_max);
+        float i_lim = current_allowed_for_power(v_for_power);
+        i_tgt = fminf(i_tgt, i_lim);
+        g_dc_v_set_V = v_tgt;
+        g_dc_i_set_A = i_tgt;
+        dc_apply_setpoints(false);
+        break;
+      }
       // Track target changes smoothly; always enforce power limit
       float v_tgt = clampf(g_dc_v_target_V, g_cfg_v_min, g_cfg_v_max);
       // Check if we need a Hi/Lo change (with hysteresis)
@@ -653,7 +715,9 @@ static void dc_ramp_tick() {
 static uint32_t g_last_dc_poll_ms = 0;
 static void dc_poll_tick() {
   const uint32_t now = millis();
-  if ((int32_t)(now - g_last_dc_poll_ms) > 300) {
+  // Tighter poll after hard-apply to replace optimistic echo quickly
+  uint32_t poll_period_ms = ((now - g_last_fast_apply_ms) < FAST_POLL_BURST_MS) ? 60u : 300u;
+  if ((int32_t)(now - g_last_dc_poll_ms) > (int32_t)poll_period_ms) {
     g_last_dc_poll_ms = now;
     (void)cmd_read(MODULE_ADDR, 0x00); // Vout mV
     (void)cmd_read(MODULE_ADDR, 0x01); // Iout mA
@@ -863,7 +927,8 @@ static void rpc_cfg(JsonObject p, StaticJsonDocument<512>& res){
   if (p.containsKey("module_addr")) MODULE_ADDR = (uint8_t) (p["module_addr"].as<int>() & 0x7F);
   if (p.containsKey("hilo_enter_v")) g_hilo_enter_v = clampf(p["hilo_enter_v"].as<float>(), 250.0f, 800.0f);
   if (p.containsKey("hilo_exit_v"))  g_hilo_exit_v  = clampf(p["hilo_exit_v"].as<float>(), 200.0f, g_hilo_enter_v);
-  res["ok"]=true; res["v_min"]=g_cfg_v_min; res["v_max"]=g_cfg_v_max; res["p_kw"]=g_cfg_p_max_w/1000.0f; res["i_max"]=g_cfg_i_hard_max; res["ramp_v"]=g_cfg_v_ramp; res["ramp_i"]=g_cfg_i_ramp; res["ignore_cp"]=g_dc_ignore_cp; res["module_addr"]=MODULE_ADDR; res["hilo_enter_v"]=g_hilo_enter_v; res["hilo_exit_v"]=g_hilo_exit_v;
+  if (p.containsKey("fast_hard"))    g_fast_hard_apply = p["fast_hard"].as<bool>();
+  res["ok"]=true; res["v_min"]=g_cfg_v_min; res["v_max"]=g_cfg_v_max; res["p_kw"]=g_cfg_p_max_w/1000.0f; res["i_max"]=g_cfg_i_hard_max; res["ramp_v"]=g_cfg_v_ramp; res["ramp_i"]=g_cfg_i_ramp; res["ignore_cp"]=g_dc_ignore_cp; res["module_addr"]=MODULE_ADDR; res["hilo_enter_v"]=g_hilo_enter_v; res["hilo_exit_v"]=g_hilo_exit_v; res["fast_hard"]=g_fast_hard_apply;
 }
 
 /* Old API glue + new endpoints (shortened for brevity) */
@@ -909,12 +974,19 @@ static void process_line(String &line) {
       float p_w = NAN;
       if (doc["params"].containsKey("p_w")) p_w = doc["params"]["p_w"].as<float>();
       else if (doc["params"].containsKey("p_kw")) p_w = doc["params"]["p_kw"].as<float>()*1000.0f;
+      bool hard = doc["params"]["hard"] | g_fast_hard_apply;
 
       if (!isnan(v)) g_dc_v_target_V = clampf(v, g_cfg_v_min, g_cfg_v_max);
       if (!isnan(i)) g_dc_i_target_A = clampf(i, 0.0f, g_cfg_i_hard_max);
       if (!isnan(p_w) && p_w>0) g_cfg_p_max_w = clampf(p_w, 1000.0f, 100000.0f);
 
-      StaticJsonDocument<256> res; res["ok"]=true; res["v_target"]=g_dc_v_target_V; res["i_target"]=g_dc_i_target_A; res["p_kw"]=g_cfg_p_max_w/1000.0f; send_res(res.as<JsonVariant>()); return;
+      if (hard && g_dc_enabled) {
+        if (g_dc_state == DCState::IDLE) g_dc_state = DCState::SOFTSTART_V;
+        dc_apply_hard_immediate();
+        g_dc_state = DCState::RUNNING;
+      }
+
+      StaticJsonDocument<256> res; res["ok"]=true; res["v_target"]=g_dc_v_target_V; res["i_target"]=g_dc_i_target_A; res["p_kw"]=g_cfg_p_max_w/1000.0f; res["hard"]=hard; res["state"]=(int)g_dc_state; send_res(res.as<JsonVariant>()); return;
     }
 
     if (!strcmp(method,"dc.estop")) { dc_emergency_stop(); StaticJsonDocument<96> res; res["ok"]=true; send_res(res.as<JsonVariant>()); return; }
@@ -993,7 +1065,14 @@ static void process_line(String &line) {
     }
 
     // Meter API
-    if (!strcmp(method, "meter.stream_start")) { g_meter_stream = true; StaticJsonDocument<64> res; res["ok"]=true; send_res(res.as<JsonVariant>()); return; }
+    if (!strcmp(method, "meter.stream_start")) {
+      g_meter_stream = true;
+      if (doc.containsKey("params") && doc["params"].containsKey("period_ms")) {
+        uint32_t pm = (uint32_t)(doc["params"]["period_ms"].as<int>());
+        if (pm < 50) pm = 50;
+        g_meter_evt_period_ms = pm;
+      }
+      StaticJsonDocument<64> res; res["ok"]=true; res["period_ms"]=g_meter_evt_period_ms; send_res(res.as<JsonVariant>()); return; }
     if (!strcmp(method, "meter.stream_stop"))  { g_meter_stream = false; StaticJsonDocument<64> res; res["ok"]=true; send_res(res.as<JsonVariant>()); return; }
     if (!strcmp(method, "meter.reset"))        { g_meter_e_kwh = 0.0f; g_meter_last_ms = millis(); StaticJsonDocument<64> res; res["ok"]=true; send_res(res.as<JsonVariant>()); return; }
     if (!strcmp(method, "meter.read")) {
@@ -1081,7 +1160,7 @@ void setup() {
   while (!Serial && millis() < 1500) { /* wait USB */ }
   Serial.println("HAL boot…");
 
-  SerialPi.begin(115200, SERIAL_8N1, ESP_UART_RX, ESP_UART_TX);
+  SerialPi.begin(921600, SERIAL_8N1, ESP_UART_RX, ESP_UART_TX);
   g_up0_ms = millis();
 
   // ADC / PWM init (as in your working HAL)
@@ -1241,7 +1320,7 @@ void loop() {
     g_meter_e_kwh += p_kW * dt_h;
   }
   g_meter_last_ms = now;
-  if (g_meter_stream && (now - g_meter_emit_last_ms) >= METER_EVT_PERIOD_MS) {
+  if (g_meter_stream && (now - g_meter_emit_last_ms) >= g_meter_evt_period_ms) {
     g_meter_emit_last_ms = now;
     send_meter_event(v, i, p_kW, g_meter_e_kwh, now);
   }

@@ -203,10 +203,14 @@ class _SupplyPeriph(DCPowerSupply):
         self._meter = meter
         self._last_set_v = 0.0
         self._last_set_i = 0.0
+        try:
+            self._fast_hard = os.environ.get("EVSE_FAST_HARD_APPLY", "1").strip().lower() not in ("0", "false", "no", "off", "")
+        except Exception:
+            self._fast_hard = True
 
     def _push(self) -> None:
         try:
-            self._c.dc_set(volts=self._last_set_v, amps=self._last_set_i)
+            self._c.dc_set(volts=self._last_set_v, amps=self._last_set_i, hard=self._fast_hard)
         except Exception:
             pass
 
