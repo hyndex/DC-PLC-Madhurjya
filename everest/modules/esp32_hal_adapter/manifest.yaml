@@ -1,0 +1,16 @@
+name: esp32_hal_adapter
+version: 0.1.0
+language: python
+provides:
+  evse_board_support:
+    interface: evse_board_support
+  power_supply_DC:
+    interface: power_supply_DC
+requires: {}
+config:
+  tty:
+    type: string
+    default: /dev/ttyUSB0
+  baud:
+    type: integer
+    default: 115200

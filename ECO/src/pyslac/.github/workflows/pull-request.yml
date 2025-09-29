@@ -1,0 +1,34 @@
+name: PR Python 🐍 to Switch Repo
+
+on:
+  pull_request:
+    branches:
+      - master
+
+env:
+  PYTHON_VERSION: 3.10.5
+
+jobs:
+  code-quality-check:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Setup the Python Environment by installing Poetry
+      uses: ./.github/actions/setup-python-build-env
+
+    - name: Create env file
+      run: |
+        cp .env.dev.local .env
+
+    - name: Code Quality Check
+      shell: bash
+      run: |
+        poetry update
+        poetry install
+        poetry run pytest tests
+        poetry run black --check --diff pyslac tests

@@ -1,0 +1,11 @@
+version: '3.8'
+services:
+  everest:
+    build: .
+    network_mode: host
+    privileged: true
+    env_file:
+      - ../.env
+    volumes:
+      - ../:/opt/everest
+    command: ["/bin/bash", "-lc", "echo 'TODO: run everest with plc_only.yaml'"]

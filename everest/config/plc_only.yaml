@@ -1,0 +1,56 @@
+# EVerest configuration (skeleton) for DC-only PLC stack
+# This is a starting point; module names and connectors must align with everest-core.
+
+modules:
+  # PLC / SLAC data link
+  slac:
+    module: EvseSlac
+    config:
+      device: ${PLC_IFACE}
+      # For QCA7005, these defaults usually work; can be tuned as needed
+      set_key_timeout_ms: 1000
+
+  # ISO 15118 charger (DC only); provides ISO15118_charger
+  evse_v2g:
+    module: EvseV2G
+    config:
+      supported_DIN70121: false
+      supported_ISO15118_2: true
+      tls_security: prohibit  # EIM; set to allow/force for PnC
+      device: ${PLC_IFACE}
+
+  # EVSE orchestrator (DC)
+  evse_manager:
+    module: EvseManager
+    config:
+      connector_id: 1
+      connector_type: "Unknown"
+      charge_mode: DC
+      disable_authentication: true
+      ac_hlc_enabled: false
+      payment_enable_eim: true
+      payment_enable_contract: false
+
+  # HAL bridge to ESP32-S3 (board + DC power supply)
+  esp32_hal_adapter:
+    module: esp32_hal_adapter
+    config:
+      tty: ${ESP32_TTY}
+      baud: ${ESP32_BAUD}
+
+connections:
+  # SLAC -> EvseManager
+  - from: slac:main
+    to: evse_manager:slac
+
+  # ISO15118 charger -> EvseManager HLC
+  - from: evse_v2g:charger
+    to: evse_manager:hlc
+
+  # Board support from HAL -> EvseManager BSP
+  - from: esp32_hal_adapter:evse_board_support
+    to: evse_manager:bsp
+
+  # DC power supply control from HAL -> EvseManager
+  - from: esp32_hal_adapter:power_supply_DC
+    to: evse_manager:powersupply_DC

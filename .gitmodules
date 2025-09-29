@@ -4,3 +4,6 @@
 [submodule "src/pyslac"]
 	path = src/pyslac
 	url = https://github.com/hyndex/pyslac.git
+[submodule "everest/everest-core"]
+	path = everest/everest-core
+	url = https://github.com/EVerest/everest-core

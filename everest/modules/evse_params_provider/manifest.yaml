@@ -1,0 +1,25 @@
+name: evse_params_provider
+version: 0.1.0
+language: python
+provides: {}
+requires:
+  dc_external_derate:
+    interface: dc_external_derate
+    min_connections: 0
+    max_connections: 1
+config:
+  max_current_a:
+    type: number
+    default: 200
+  max_voltage_v:
+    type: number
+    default: 920
+  precharge_delta_v:
+    type: number
+    default: 20
+  precharge_timeout_s:
+    type: number
+    default: 10
+  contactor_close_timeout_s:
+    type: number
+    default: 2
