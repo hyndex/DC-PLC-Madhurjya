@@ -1,11 +1,11 @@
-description: HAL adapter bridging EVerest to ESP32-S3 peripheral over UART JSON-RPC
+description: C++ HAL adapter bridging EVerest to ESP32-S3 UART (fallback with minimal logic)
+name: ESP32HalAdapterCpp
+version: 0.0.1
 provides:
   evse_board_support:
     interface: evse_board_support
-    description: EVSE board support (CP/contactors) bridged to ESP32-S3
   power_supply_DC:
     interface: power_supply_DC
-    description: DC power supply control bridged to ESP32-S3
 requires: {}
 config:
   tty:
@@ -20,3 +20,4 @@ metadata:
   license: https://opensource.org/licenses/Apache-2.0
   authors:
     - Joulepoint
+

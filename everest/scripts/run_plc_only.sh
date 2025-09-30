@@ -14,14 +14,15 @@ if [[ -f "${ENV_FILE}" ]]; then
 fi
 
 echo "[everest] Starting PLC-only stack with config: ${CONFIG}" >&2
-echo "[everest] Note: ensure everest-core is built and 'everestd' is available in PATH." >&2
+echo "[everest] Using 'manager' runtime from everest-core." >&2
 
-# If everestd is installed, run it; otherwise, log instruction
-if command -v everestd >/dev/null 2>&1; then
-  exec everestd -c "${CONFIG}"
+MANAGER_BIN="${MANAGER_BIN:-/opt/everest/everest-core/build/dist/bin/manager}"
+if command -v manager >/dev/null 2>&1; then
+  exec manager --config "${CONFIG}"
+elif [[ -x "${MANAGER_BIN}" ]]; then
+  exec "${MANAGER_BIN}" --config "${CONFIG}"
 else
-  echo "everestd not found. Build everest-core and install the runtime." >&2
-  echo "Hint: in everest-core: cmake -B build -S . && cmake --build build && sudo cmake --install build" >&2
+  echo "manager binary not found. Build everest-core and install the runtime." >&2
+  echo "Hint: cmake -B everest/everest-core/build -S everest/everest-core && cmake --build everest/everest-core/build && sudo cmake --install everest/everest-core/build" >&2
   exit 127
 fi
-

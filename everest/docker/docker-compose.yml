@@ -2,10 +2,41 @@ version: '3.8'
 services:
   everest:
     build: .
-    network_mode: host
+    privileged: true
+    env_file:
+      - ../.env
+    environment:
+      - EVEREST_CONFIG=${EVEREST_CONFIG:-/opt/everest/config/plc_only_sim.yaml}
+    volumes:
+      - ../config:/opt/everest/config
+      - ../certs:/opt/everest/certs
+      - ../modules/esp32_hal_adapter:/opt/everest/everest-core/build/dist/libexec/everest/modules/esp32_hal_adapter
+      - ../modules/evse_params_provider:/opt/everest/everest-core/build/dist/libexec/everest/modules/evse_params_provider
+    command: ["/bin/bash", "-lc", "/opt/everest/everest-core/build/dist/bin/manager --prefix /usr/local --config ${EVEREST_CONFIG:-/opt/everest/config/plc_only_sim.yaml}"]
+
+  everest-hw:
+    build: .
+    profiles: ["hw"]
+    privileged: true
+    network_mode: host   # Linux only; required for PLC iface access (qca0)
+    env_file:
+      - ../.env
+    environment:
+      - EVEREST_CONFIG=/opt/everest/config/plc_only.yaml
+    volumes:
+      - ../config:/opt/everest/config
+      - ../certs:/opt/everest/certs
+      - ../modules/esp32_hal_adapter:/opt/everest/everest-core/build/dist/libexec/everest/modules/esp32_hal_adapter
+      - ../modules/evse_params_provider:/opt/everest/everest-core/build/dist/libexec/everest/modules/evse_params_provider
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"   # adjust for your ESP32-S3 serial device
+    command: ["/bin/bash", "-lc", "/opt/everest/everest-core/build/dist/bin/manager --prefix /usr/local --config ${EVEREST_CONFIG}"]
+  qca_watchdog:
+    build: .
     privileged: true
     env_file:
       - ../.env
     volumes:
-      - ../:/opt/everest
-    command: ["/bin/bash", "-lc", "echo 'TODO: run everest with plc_only.yaml'"]
+      - ../scripts:/opt/everest/scripts
+    working_dir: /opt/everest/scripts
+    command: ["/bin/bash", "-lc", "./qca_watchdog.sh"]
