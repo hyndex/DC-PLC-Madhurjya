@@ -25,7 +25,7 @@ step_pkgs() {
   log "Installing system dependencies"
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    git rsync curl ca-certificates pkg-config \
+    git rsync curl ca-certificates pkg-config ethtool \
     build-essential cmake \
     python3 python3-pip python3-venv python3-serial \
     libssl-dev libboost-all-dev libsqlite3-dev \
@@ -36,9 +36,15 @@ step_pkgs() {
 step_build_everest_core() {
   log "Building everest-core (manager)"
   cd "${ROOT}/everest-core"
+  # Ensure submodules are present (idempotent)
+  git submodule update --init --recursive || true
   cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
   cmake --build build -j$(nproc)
   cmake --install build
+  # Sanity: ensure manager is discoverable
+  if ! command -v manager >/dev/null 2>&1 && [[ ! -x "/usr/local/bin/manager" ]]; then
+    err "manager binary not found after install; check build logs"
+  fi
 }
 
 step_install_modules() {
@@ -47,6 +53,11 @@ step_install_modules() {
              "${PREFIX}/libexec/everest/modules/evse_params_provider"
   rsync -a "${ROOT}/modules/esp32_hal_adapter/" "${PREFIX}/libexec/everest/modules/esp32_hal_adapter/"
   rsync -a "${ROOT}/modules/evse_params_provider/" "${PREFIX}/libexec/everest/modules/evse_params_provider/"
+  # Helper scripts used by watchdog/health checks
+  install -d "${PREFIX}/libexec/everest/scripts"
+  install -m 0755 "${ROOT}/scripts/qca_watchdog.sh" "${PREFIX}/libexec/everest/scripts/qca_watchdog.sh"
+  install -m 0755 "${ROOT}/scripts/qca_health.sh" "${PREFIX}/libexec/everest/scripts/qca_health.sh"
+  install -m 0755 "${ROOT}/scripts/plc_soft_reset.sh" "${PREFIX}/libexec/everest/scripts/plc_soft_reset.sh"
 }
 
 step_install_configs() {
@@ -111,4 +122,3 @@ main() {
 }
 
 main "$@"
-
