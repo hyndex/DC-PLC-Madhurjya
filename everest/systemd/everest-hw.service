@@ -1,0 +1,16 @@
+[Unit]
+Description=EVerest Hardware PLC-only
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/everest/ev.env
+ExecStart=/usr/local/bin/manager --config /etc/everest/plc_only.yaml
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
+

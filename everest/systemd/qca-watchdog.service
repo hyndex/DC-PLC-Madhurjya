@@ -1,0 +1,14 @@
+[Unit]
+Description=QCA7005 PLC Watchdog (soft reset on degraded health)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/everest/ev.env
+ExecStart=/usr/local/libexec/everest/scripts/qca_watchdog.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

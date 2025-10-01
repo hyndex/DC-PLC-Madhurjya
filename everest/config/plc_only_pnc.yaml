@@ -7,17 +7,19 @@ active_modules:
         set_key_timeout_ms: 1000
         link_status_detection: true
         publish_mac_on_match_cnf: true
+
   evse_v2g:
     module: EvseV2G
     config_module:
       supported_DIN70121: false
       supported_ISO15118_2: true
-      tls_security: prohibit
+      tls_security: force
       device: ${PLC_IFACE}
     connections:
       security:
         - module_id: evse_security
           implementation_id: main
+
   evse_manager:
     module: EvseManager
     config_module:
@@ -27,7 +29,7 @@ active_modules:
       disable_authentication: true
       ac_hlc_enabled: false
       payment_enable_eim: true
-      payment_enable_contract: false
+      payment_enable_contract: true
     connections:
       slac:
         - module_id: slac
@@ -41,15 +43,18 @@ active_modules:
       powersupply_DC:
         - module_id: esp32_hal_adapter
           implementation_id: power_supply_DC
+
   esp32_hal_adapter:
     module: esp32_hal_adapter
     config_module:
       tty: ${ESP32_TTY}
       baud: 115200
+
   evse_security:
     module: EvseSecurity
     config_module:
       v2g_ca_bundle: ca/v2g/V2G_ROOT_CA.pem
+
   evse_params_provider:
     module: evse_params_provider
     config_module:
@@ -58,10 +63,6 @@ active_modules:
       precharge_delta_v: 20
       precharge_timeout_s: 10
       contactor_close_timeout_s: 2
-    connections:
-      dc_external_derate:
-        - module_id: evse_manager
-          implementation_id: dc_external_derate
     connections:
       dc_external_derate:
         - module_id: evse_manager

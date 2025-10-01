@@ -1,0 +1,43 @@
+active_modules:
+  slac:
+    module: SlacSimulator
+  evse_v2g:
+    module: EvseV2G
+    config_module:
+      device: auto
+      supported_DIN70121: false
+      supported_ISO15118_2: true
+      tls_security: prohibit
+    connections:
+      security:
+        - module_id: evse_security
+          implementation_id: main
+  evse_manager:
+    module: EvseManager
+    config_module:
+      connector_id: 1
+      charge_mode: DC
+      disable_authentication: true
+      payment_enable_eim: true
+      payment_enable_contract: false
+    connections:
+      slac:
+        - module_id: slac
+          implementation_id: evse
+      hlc:
+        - module_id: evse_v2g
+          implementation_id: charger
+      bsp:
+        - module_id: yeti_driver
+          implementation_id: board_support
+      powersupply_DC:
+        - module_id: powersupply_dc
+          implementation_id: main
+  powersupply_dc:
+    module: DCSupplySimulator
+  yeti_driver:
+    module: YetiSimulator
+    config_module:
+      connector_id: 1
+  evse_security:
+    module: EvseSecurity
