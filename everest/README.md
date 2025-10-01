@@ -9,18 +9,27 @@ This project runs SLAC + ISO 15118-2 DC using EVerest with a HAL adapter to our 
 Use this guide to install and run natively on a Raspberry Pi (no Docker). It is end-to-end and includes edge cases and validation steps.
 
 ## What You Need
-- Raspberry Pi 4/5, 64‑bit Raspberry Pi OS (Bookworm recommended)
+- Raspberry Pi 4/5 with 64‑bit Raspberry Pi OS (Bookworm) or Ubuntu 22.04/24.04 (x86_64/arm64)
 - Root access (`sudo`)
-- QCA7005 PLC connected via SPI, with `qca7000/qcaspi` kernel driver available
-- ESP32‑S3 peripheral connected as `/dev/ttyACM0` or `/dev/ttyUSB0`
+- Hardware mode: QCA7005 PLC via SPI (`qca7000/qcaspi`) and ESP32‑S3 on `/dev/ttyACM0` or `/dev/ttyUSB0`
+- For Ubuntu without hardware, you can still build and run `manager --check` or use Docker for simulation
 
 ## Quick Start (Automated)
-- Run the automated setup as root:
+- Ubuntu 22.04/24.04:
+  - `sudo bash everest/scripts/setup_native_ubuntu.sh`
+  - Optional: start service `sudo systemctl start everest-hw`; logs `sudo journalctl -u everest-hw -e -f`
+- Raspberry Pi (Bookworm):
   - `sudo bash everest/scripts/setup_native_pi.sh`
-- Start the service:
-  - `sudo systemctl start everest-hw`
-- Check logs:
-  - `sudo journalctl -u everest-hw -e -f`
+  - Start service: `sudo systemctl start everest-hw`
+  - Logs: `sudo journalctl -u everest-hw -e -f`
+
+### Prebuild and Ship (No compile on the target)
+- Create a dist tarball on a machine of the same architecture:
+  - `bash everest/scripts/make_dist.sh` (outputs path, e.g., `/tmp/everest-dist-ARCH-*.tar.gz`)
+- Install that dist on the target:
+  - Ubuntu: `sudo USE_DIST=/path/to/everest-dist-ARCH.tar.gz bash everest/scripts/setup_native_ubuntu.sh`
+  - Pi: `sudo USE_DIST=/path/to/everest-dist-arm64.tar.gz bash everest/scripts/setup_native_pi.sh`
+  - You can also pass an https URL in `USE_DIST`.
 
 This installs dependencies, builds and installs `manager`, installs our modules/configs into system paths, and enables a systemd unit. It also stages demo PnC certificates if available from the everest-core install.
 
@@ -43,13 +52,14 @@ Notes:
 - If the overlay is missing, install Raspberry Pi firmware packages or update your OS.
 - If the interface name isn’t `qca0`, use the actual name in your env/config.
 
-### 2) Build and Install EVerest Core
-- The automated script runs these steps, but manually:
+### 2) Build and Install EVerest Core (Ubuntu + Pi)
+- Automated scripts pass minimal flags to reduce build time on Pi/low‑power machines.
+- Manual steps if preferred:
   - Ensure submodules: `git submodule update --init --recursive`
   - Install build tools: `sudo apt-get update && sudo apt-get install -y cmake build-essential libssl-dev libboost-all-dev libpcap-dev libevent-dev libcap-dev libsqlite3-dev python3 python3-pip python3-venv ethtool`
-  - Build/install manager:
+  - Build/install manager with minimal flags:
     - `cd everest/everest-core`
-    - `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release`
+    - `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_RUN_CLANG_TIDY=OFF -DEVEREST_ENABLE_RUN_SCRIPT_GENERATION=OFF -DISO15118_2_GENERATE_AND_INSTALL_CERTIFICATES=OFF`
     - `cmake --build build -j$(nproc)`
     - `sudo cmake --install build`
 - Verify:
@@ -108,6 +118,10 @@ Notes:
   - Demo certs auto‑staged when available; otherwise place under `/etc/everest/certs/` and configure `EvseSecurity`
 
 ## Troubleshooting and Edge Cases
+- Faster builds on Pi
+  - Use minimal flags (already in our scripts). You can further lower parallel jobs via `JOBS=2 CMAKE_OPTS="..."` env.
+  - Avoid building on Pi by installing a prebuilt `dist` from another arm64 machine: `sudo USE_DIST=/path/to/everest-dist-arm64.tar.gz bash everest/scripts/setup_native_pi.sh` (also accepts an https:// URL).
+  - If you must build everything on Pi, increase swap (see below) and use fewer jobs, e.g., `JOBS=2`.
 - Manager not found after build
   - Re‑run install and check logs: `cmake --install build`
   - Ensure `/usr/local/bin` is in `PATH`
@@ -125,6 +139,7 @@ Notes:
   - Must be exactly 32 hex chars; remove separators
 - Build runs out of RAM on Pi
   - Increase swap: `sudo dphys-swapfile swapoff; sudo sed -i 's/^CONF_SWAPSIZE=.*/CONF_SWAPSIZE=2048/' /etc/dphys-swapfile; sudo dphys-swapfile setup; sudo dphys-swapfile swapon`
+  - Reduce jobs: `JOBS=2 sudo bash everest/scripts/setup_native_pi.sh`
 - ISO 15118 errors or bind failures
   - Ensure PLC iface has IPv6 LL and is up
   - Check that UDP 15118 is free: `sudo ss -ulpn | grep 15118`

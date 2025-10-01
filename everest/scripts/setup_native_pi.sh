@@ -13,6 +13,12 @@ DIST_ROOT_DEFAULT="/opt/everest/everest-core/build/dist"
 PREFIX="/usr/local"
 ETC_DIR="/etc/everest"
 SYSTEMD_DIR="/etc/systemd/system"
+JOBS="${JOBS:-$(nproc || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}"
+# Minimal cmake flags to reduce compile time on Pi
+CMAKE_OPTS_DEFAULT="-DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_RUN_CLANG_TIDY=OFF -DEVEREST_ENABLE_RUN_SCRIPT_GENERATION=OFF -DISO15118_2_GENERATE_AND_INSTALL_CERTIFICATES=OFF"
+CMAKE_OPTS="${CMAKE_OPTS:-${CMAKE_OPTS_DEFAULT}}"
+USE_DIST="${USE_DIST:-}"
+SKIP_CORE="${SKIP_CORE:-0}"
 
 log() { printf "[setup-pi] %s\n" "$*"; }
 err() { printf "[setup-pi][ERROR] %s\n" "$*" 1>&2; }
@@ -38,13 +44,39 @@ step_build_everest_core() {
   cd "${ROOT}/everest-core"
   # Ensure submodules are present (idempotent)
   git submodule update --init --recursive || true
-  cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
-  cmake --build build -j$(nproc)
+  cmake -B build -S . ${CMAKE_OPTS}
+  cmake --build build -j"${JOBS}"
   cmake --install build
   # Sanity: ensure manager is discoverable
   if ! command -v manager >/dev/null 2>&1 && [[ ! -x "/usr/local/bin/manager" ]]; then
     err "manager binary not found after install; check build logs"
   fi
+}
+
+step_install_prebuilt_dist() {
+  local src="$1"
+  local tmp=""
+  # Allow URL
+  if [[ "$src" =~ ^https?:// ]]; then
+    tmp=$(mktemp -d)
+    log "Downloading prebuilt dist from URL: $src"
+    curl -L "$src" -o "$tmp/dist.tar.gz"
+    src="$tmp/dist.tar.gz"
+  fi
+  if [[ -f "$src" ]]; then
+    tmp=$(mktemp -d)
+    log "Extracting prebuilt dist tarball: $src"
+    tar -xf "$src" -C "$tmp"
+    src="$tmp"
+  fi
+  if [[ ! -d "$src" ]]; then err "Prebuilt dist not found: $src"; exit 2; fi
+  if [[ ! -x "$src/bin/manager" ]]; then err "Invalid dist: missing bin/manager"; exit 2; fi
+  log "Installing prebuilt dist from $src"
+  install -d "${PREFIX}/bin" "${PREFIX}/libexec/everest" "${PREFIX}/etc/everest" "${PREFIX}/share/everest"
+  rsync -a --no-owner --no-group "$src/bin/" "${PREFIX}/bin/"
+  rsync -a --no-owner --no-group "$src/libexec/everest/" "${PREFIX}/libexec/everest/"
+  rsync -a --no-owner --no-group "$src/etc/everest/" "${PREFIX}/etc/everest/" || true
+  rsync -a --no-owner --no-group "$src/share/everest/" "${PREFIX}/share/everest/" || true
 }
 
 step_install_modules() {
@@ -112,7 +144,13 @@ NOTE
 main() {
   require_root
   step_pkgs
-  step_build_everest_core
+  if [[ -n "$USE_DIST" ]]; then
+    step_install_prebuilt_dist "$USE_DIST"
+  elif [[ "$SKIP_CORE" != "1" ]]; then
+    step_build_everest_core
+  else
+    log "Skipping everest-core build as requested"
+  fi
   step_install_modules
   step_install_configs
   step_stage_pnc || true
