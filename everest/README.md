@@ -54,12 +54,13 @@ Notes:
 
 ### 2) Build and Install EVerest Core (Ubuntu + Pi)
 - Automated scripts pass minimal flags to reduce build time on Pi/low‑power machines.
+- By default, only the core modules required for PLC‑only DC are compiled: `EvseSlac;EvseV2G;EvseManager;EvseSecurity` (set via `-DEVEREST_INCLUDE_MODULES`).
 - Manual steps if preferred:
   - Ensure submodules: `git submodule update --init --recursive`
   - Install build tools: `sudo apt-get update && sudo apt-get install -y cmake build-essential libssl-dev libboost-all-dev libpcap-dev libevent-dev libcap-dev libsqlite3-dev python3 python3-pip python3-venv ethtool`
   - Build/install manager with minimal flags:
     - `cd everest/everest-core`
-    - `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_RUN_CLANG_TIDY=OFF -DEVEREST_ENABLE_RUN_SCRIPT_GENERATION=OFF -DISO15118_2_GENERATE_AND_INSTALL_CERTIFICATES=OFF`
+    - `cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_RUN_CLANG_TIDY=OFF -DEVEREST_ENABLE_RUN_SCRIPT_GENERATION=OFF -DISO15118_2_GENERATE_AND_INSTALL_CERTIFICATES=OFF -DEVEREST_INCLUDE_MODULES=EvseSlac;EvseV2G;EvseManager;EvseSecurity`
     - `cmake --build build -j$(nproc)`
     - `sudo cmake --install build`
 - Verify:
@@ -158,3 +159,7 @@ Notes:
 
 ## Docker (Optional)
 - For development/simulation, Docker compose definitions are in `everest/docker`. Native is recommended for Pi hardware.
+### Building Additional Modules
+- To include more EVerest modules (e.g., OCPP201), extend `EVEREST_INCLUDE_MODULES`:
+  - Example: `CMAKE_OPTS="-DEVEREST_INCLUDE_MODULES=EvseSlac;EvseV2G;EvseManager;EvseSecurity;OCPP201" bash everest/scripts/build_everest_core.sh`
+- To build everything (slower): remove the flag or set an empty include list.

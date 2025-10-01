@@ -15,13 +15,19 @@ ETC_DIR="/etc/everest"
 SYSTEMD_DIR="/etc/systemd/system"
 JOBS="${JOBS:-$(nproc || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)}"
 # Minimal cmake flags to reduce compile time on Pi
-CMAKE_OPTS_DEFAULT="-DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_RUN_CLANG_TIDY=OFF -DEVEREST_ENABLE_RUN_SCRIPT_GENERATION=OFF -DISO15118_2_GENERATE_AND_INSTALL_CERTIFICATES=OFF"
+# Build only the modules needed for PLC-only DC profile by default
+NEEDED_MODULES="EvseSlac;EvseV2G;EvseManager;EvseSecurity"
+CMAKE_OPTS_DEFAULT="-DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_RUN_CLANG_TIDY=OFF -DEVEREST_ENABLE_RUN_SCRIPT_GENERATION=OFF -DISO15118_2_GENERATE_AND_INSTALL_CERTIFICATES=OFF -DEVEREST_INCLUDE_MODULES=${NEEDED_MODULES}"
 CMAKE_OPTS="${CMAKE_OPTS:-${CMAKE_OPTS_DEFAULT}}"
 USE_DIST="${USE_DIST:-}"
 SKIP_CORE="${SKIP_CORE:-0}"
 
 log() { printf "[setup-pi] %s\n" "$*"; }
 err() { printf "[setup-pi][ERROR] %s\n" "$*" 1>&2; }
+
+have_systemd() {
+  command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]
+}
 
 require_root() {
   if [[ $(id -u) -ne 0 ]]; then err "Run as root (sudo)."; exit 1; fi
@@ -114,9 +120,14 @@ EOF
 
 step_stage_pnc() {
   local dist_root="${DIST_ROOT:-${DIST_ROOT_DEFAULT}}"
-  log "Staging demo PnC certs from ${dist_root}/etc/everest/certs to ${ETC_DIR}/certs"
-  install -d "${ETC_DIR}/certs"
-  rsync -a --delete "${dist_root}/etc/everest/certs/" "${ETC_DIR}/certs/"
+  local src_dir="${dist_root}/etc/everest/certs"
+  if [[ -d "${src_dir}" ]]; then
+    log "Staging demo PnC certs from ${src_dir} to ${ETC_DIR}/certs"
+    install -d "${ETC_DIR}/certs"
+    rsync -a --delete "${src_dir}/" "${ETC_DIR}/certs/"
+  else
+    log "No demo PnC certs found at ${src_dir}; skipping"
+  fi
 }
 
 step_systemd() {
@@ -126,9 +137,13 @@ step_systemd() {
   if [[ -f "${ROOT}/systemd/qca-watchdog.service" ]]; then
     install -m 0644 "${ROOT}/systemd/qca-watchdog.service" "${SYSTEMD_DIR}/qca-watchdog.service"
   fi
-  systemctl daemon-reload
-  systemctl enable everest-hw.service
-  log "You can now start with: systemctl start everest-hw"
+  if have_systemd; then
+    systemctl daemon-reload || true
+    systemctl enable everest-hw.service || true
+    log "You can now start with: systemctl start everest-hw"
+  else
+    log "systemd not active in this environment; skipping enable/reload"
+  fi
 }
 
 step_plc_driver_note() {
@@ -143,7 +158,11 @@ NOTE
 
 main() {
   require_root
-  step_pkgs
+  if [[ "${SKIP_PKGS:-0}" != "1" ]]; then
+    step_pkgs
+  else
+    log "Skipping package installation as requested"
+  fi
   if [[ -n "$USE_DIST" ]]; then
     step_install_prebuilt_dist "$USE_DIST"
   elif [[ "$SKIP_CORE" != "1" ]]; then

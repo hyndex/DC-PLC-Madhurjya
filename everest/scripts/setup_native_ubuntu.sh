@@ -15,13 +15,17 @@ ETC_DIR="/etc/everest"
 SYSTEMD_DIR="/etc/systemd/system"
 JOBS="${JOBS:-$(nproc || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 # Minimal cmake flags to speed up build on dev machines
-CMAKE_OPTS_DEFAULT="-DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_RUN_CLANG_TIDY=OFF -DEVEREST_ENABLE_RUN_SCRIPT_GENERATION=OFF -DISO15118_2_GENERATE_AND_INSTALL_CERTIFICATES=OFF"
+# Build only the modules needed for PLC-only DC profile by default
+NEEDED_MODULES="EvseSlac;EvseV2G;EvseManager;EvseSecurity"
+CMAKE_OPTS_DEFAULT="-DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DCMAKE_RUN_CLANG_TIDY=OFF -DEVEREST_ENABLE_RUN_SCRIPT_GENERATION=OFF -DISO15118_2_GENERATE_AND_INSTALL_CERTIFICATES=OFF -DEVEREST_INCLUDE_MODULES=${NEEDED_MODULES}"
 CMAKE_OPTS="${CMAKE_OPTS:-${CMAKE_OPTS_DEFAULT}}"
 
 log() { printf "[setup-ubuntu] %s\n" "$*"; }
 err() { printf "[setup-ubuntu][ERROR] %s\n" "$*" 1>&2; }
 
 require_root() { if [[ $(id -u) -ne 0 ]]; then err "Run as root (sudo)."; exit 1; fi; }
+
+have_systemd() { command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; }
 
 step_pkgs() {
   log "Installing system dependencies"
@@ -78,9 +82,13 @@ EOF
 step_systemd() {
   log "Installing systemd unit (optional)"
   install -m 0644 "${ROOT}/systemd/everest-hw.service" "${SYSTEMD_DIR}/everest-hw.service"
-  systemctl daemon-reload
-  systemctl enable everest-hw.service || true
-  log "You can start with: systemctl start everest-hw"
+  if have_systemd; then
+    systemctl daemon-reload || true
+    systemctl enable everest-hw.service || true
+    log "You can start with: systemctl start everest-hw"
+  else
+    log "systemd not active; skipping daemon-reload/enable"
+  fi
 }
 
 # Optional: install a prebuilt dist instead of building (same layout as make_dist.sh)
@@ -112,11 +120,19 @@ step_install_prebuilt_dist() {
 
 main() {
   require_root
-  step_pkgs
+  if [[ "${SKIP_PKGS:-0}" != "1" ]]; then
+    step_pkgs
+  else
+    log "Skipping package installation as requested"
+  fi
   if [[ -n "${USE_DIST:-}" ]]; then
     step_install_prebuilt_dist "${USE_DIST}"
   else
-    step_build_everest_core
+    if [[ "${SKIP_CORE:-0}" == "1" ]]; then
+      log "Skipping everest-core build as requested"
+    else
+      step_build_everest_core
+    fi
   fi
   step_install_modules
   step_install_configs
