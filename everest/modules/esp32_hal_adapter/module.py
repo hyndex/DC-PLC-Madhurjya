@@ -44,6 +44,20 @@ class Runner:
             self._kick_enable = bool(int(os.getenv('EVSE_DEBUG_FORCE_CP_C', '0')))
         except Exception:
             self._kick_enable = False
+        # Auto SLAC restart hint support via ESP32 firmware (does not depend on allow_power_on)
+        try:
+            self._slac_hint_enable = bool(int(os.getenv('EVSE_SLAC_HINT_ENABLE', '1')))
+        except Exception:
+            self._slac_hint_enable = True
+        try:
+            self._slac_hint_ms = int(os.getenv('EVSE_SLAC_HINT_MS', '400'))
+        except Exception:
+            self._slac_hint_ms = 400
+        try:
+            self._slac_hint_period_s = float(os.getenv('EVSE_SLAC_HINT_PERIOD_S', '6.0'))
+        except Exception:
+            self._slac_hint_period_s = 6.0
+        self._last_slac_hint_ts: float = 0.0
 
         setup = self.m.say_hello()
         cfg = setup.configs.module
@@ -155,11 +169,18 @@ class Runner:
                     # Optional repeated PWM kick to help CP transition from B to C
                     try:
                         now = time.time()
-                        if self._kick_enable:
+                        if self._kick_enable or self._slac_hint_enable:
                             cur = st.state[:1].upper()
                             self._last_cp_state = cur
-                            # If we are stuck in B for > 3s after allow_power_on, kick again
-                            if cur == 'B' and self._power_allowed and (now - self._last_kick_ts) > 3.0:
+                            # Periodic SLAC restart hint independent of allow_power_on
+                            if cur == 'B' and self._slac_hint_enable and (now - self._last_slac_hint_ts) > self._slac_hint_period_s:
+                                try:
+                                    c.cp_restart_slac_hint(reset_ms=int(self._slac_hint_ms))
+                                except Exception:
+                                    pass
+                                self._last_slac_hint_ts = now
+                            # Optional PWM nudge every ~10s when enabled
+                            if cur == 'B' and self._kick_enable and (now - self._last_kick_ts) > 10.0:
                                 try:
                                     c._send_cp({"cmd": "set_mode", "mode": "manual"})
                                     c._send_cp({"cmd": "set_pwm", "duty": 5, "enable": True})
