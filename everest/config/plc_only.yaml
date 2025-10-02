@@ -41,6 +41,9 @@ active_modules:
       powersupply_DC:
         - module_id: esp32_hal_adapter
           implementation_id: power_supply_DC
+      store:
+        - module_id: kvs_file_store
+          implementation_id: main
   esp32_hal_adapter:
     module: esp32_hal_adapter
     config_module:
@@ -50,19 +53,7 @@ active_modules:
     module: EvseSecurity
     config_module:
       v2g_ca_bundle: ca/v2g/V2G_ROOT_CA.pem
-  evse_params_provider:
-    module: evse_params_provider
+  kvs_file_store:
+    module: kvs_file_store
     config_module:
-      max_current_a: 200
-      max_voltage_v: 920
-      precharge_delta_v: 20
-      precharge_timeout_s: 10
-      contactor_close_timeout_s: 2
-    connections:
-      dc_external_derate:
-        - module_id: evse_manager
-          implementation_id: dc_external_derate
-    connections:
-      dc_external_derate:
-        - module_id: evse_manager
-          implementation_id: dc_external_derate
+      path: /tmp/everest-kvs.json

@@ -8,6 +8,221 @@ This project runs SLAC + ISO 15118-2 DC using EVerest with a HAL adapter to our 
 
 Use this guide to install and run natively on a Raspberry Pi (no Docker). It is end-to-end and includes edge cases and validation steps.
 
+## HAL Adapter Compatibility & Validation
+
+This project integrates a Python HAL adapter that bridges EVerest to our ESP32‑S3 peripheral over UART (JSON‑RPC). Below is a quick compatibility map between the adapter and the EVerest interfaces, validation steps, and how we solved issues found during bring‑up on a Raspberry Pi 4B.
+
+### What The HAL Publishes/Implements
+
+- `evse_board_support` (provides)
+  - Publishes
+    - `capabilities` → evse_board_support/HardwareCapabilities
+      - Fields set: `max_current_A_import`, `min_current_A_import`, `max_phase_count_import`, `min_phase_count_import`, `max_current_A_export`, `min_current_A_export`, `max_phase_count_export`, `min_phase_count_export`, `supports_changing_phases_during_charging`, `connector_type`
+    - `telemetry` → evse_board_support/Telemetry
+      - `evse_temperature_C`, `plug_temperature_C`, `fan_rpm`, `supply_voltage_12V`, `supply_voltage_minus_12V`, `relais_on`
+    - `event` → board_support_common/BspEvent
+      - Values: `A|B|C|D|E|F|PowerOn|PowerOff|EvseReplugStarted|EvseReplugFinished`
+  - Implements commands
+    - `enable(bool)`; `pwm_on(value:number 0..100)`; `pwm_off()`; `pwm_F()`
+    - Stubs (DC only, no effect): `ac_read_pp_ampacity`, `ac_set_overcurrent_limit_A`, `ac_switch_three_phases_while_charging`, `evse_replug`, `allow_power_on`
+
+- `power_supply_DC` (provides)
+  - Publishes
+    - `capabilities` → power_supply_DC/Capabilities (export limits, ripple/tolerance etc.)
+    - `voltage_current` → power_supply_DC/VoltageCurrent
+      - Fields: `voltage_V`, `current_A`
+  - Implements commands
+    - `setMode(mode, phase)`; `setExportVoltageCurrent(voltage, current)`; `setImportVoltageCurrent(voltage, current)` (no‑op for our HW)
+
+Adapter details: see `everest/modules/esp32_hal_adapter/`.
+
+### How We Verified Compatibility
+
+- MQTT inspection (broker on `localhost:1883`):
+  - HAL topics follow `everest/<module_id>/<provided_interface>/<variable>`
+    - Examples
+      - `everest/esp32_hal_adapter/evse_board_support/capabilities`
+      - `everest/esp32_hal_adapter/evse_board_support/event`
+      - `everest/esp32_hal_adapter/power_supply_DC/voltage_current`
+  - Commands can be driven via EVerest generated RPC or through EvseManager flow; for raw tests use module RPC or the controller API.
+
+- Controller/manager logs:
+  - `journalctl -u everest-hw -e -f` (systemd) or foreground logs via `everest/scripts/run_hw_native.sh`.
+
+If messages do not appear on MQTT:
+- Confirm the serial device exists and is free: `ls -l /dev/ttyACM0 && lsof /dev/ttyACM0`
+- Check HAL init: log shows `Module esp32_hal_adapter initialized`
+- The adapter attempts a periodic `cp_get_status`; without an ESP connected, telemetry/events will be absent and you’ll see serial open errors.
+
+### Payload Examples (what you should see)
+
+- `evse_board_support/capabilities`
+  ```json
+  {
+    "max_current_A_import": 200,
+    "min_current_A_import": 0,
+    "max_phase_count_import": 1,
+    "min_phase_count_import": 1,
+    "max_current_A_export": 0,
+    "min_current_A_export": 0,
+    "max_phase_count_export": 1,
+    "min_phase_count_export": 1,
+    "supports_changing_phases_during_charging": false,
+    "connector_type": "IEC62196Type2Socket"
+  }
+  ```
+
+- `evse_board_support/telemetry`
+  ```json
+  {
+    "evse_temperature_C": 30.0,
+    "plug_temperature_C": 30.0,
+    "fan_rpm": 0,
+    "supply_voltage_12V": 12.0,
+    "supply_voltage_minus_12V": -12.0,
+    "relais_on": false
+  }
+  ```
+
+- `evse_board_support/event`
+  ```json
+  { "event": "A" }
+  ```
+
+- `power_supply_DC/capabilities`
+  ```json
+  {
+    "bidirectional": false,
+    "current_regulation_tolerance_A": 1.0,
+    "peak_current_ripple_A": 1.0,
+    "max_export_voltage_V": 920,
+    "min_export_voltage_V": 0,
+    "max_export_current_A": 200,
+    "min_export_current_A": 0,
+    "max_export_power_W": 184000
+  }
+  ```
+
+- `power_supply_DC/voltage_current`
+  ```json
+  { "voltage_V": 0.0, "current_A": 0.0 }
+  ```
+
+### Command Argument Compatibility Notes
+
+- `evse_board_support.pwm_on` → EVerest expects `{ "value": <0..100> }`. The HAL also accepts a legacy `{ "duty_cycle": <0..100> }` for convenience.
+- `power_supply_DC.setExportVoltageCurrent` → EVerest uses `{ "voltage": <V>, "current": <A> }`. The HAL also accepts fallback keys `voltage_V`/`current_A`.
+
+## What We Changed During Bring‑Up (Pi 4B)
+
+Only targeted changes were made to avoid long rebuilds and to keep scope minimal:
+
+- Build/Configuration
+  - Pulled submodule `everest-core` and built only required modules (`EvseSlac;EvseV2G;EvseManager;EvseSecurity`).
+  - Minor CMake resilience: avoid creating an alias `SDBusCpp::sdbus-c++` too early (guards added) to let CPM fetch sdbus‑c++ cleanly.
+  - Fixed a harmless `maybe-uninitialized` warning treated as error in `socket_can_handler.cpp`.
+
+- Native install scripts (Pi)
+  - `everest/scripts/setup_native_pi.sh`
+    - Ensures IPv6 is enabled on the PLC iface (default `eth1`) and guarantees a link‑local if none exists.
+    - Applies `setcap cap_net_raw,cap_net_admin=eip` on SLAC/V2G binaries so raw sockets can open without running everything as root.
+    - Installs our HAL adapter and a minimal JSON‑file KVS (`kvs_file_store`) to back optional persistence.
+  - `everest/scripts/run_hw_native.sh`
+    - Pre‑flight check: brings PLC iface up, ensures IPv6 link‑local, and re‑applies capabilities on binaries if missing.
+
+- Runtime config (`/etc/everest/plc_only.yaml`)
+  - Set `device: eth1` for SLAC/V2G, `tty: /dev/ttyACM0` for HAL.
+  - Added `kvs_file_store` and wired it to `EvseManager.store` (path `/tmp/everest-kvs.json` by default).
+  - Removed `evse_params_provider` which caused a clean exit during boot on this image.
+
+## Issues Encountered and Fixes
+
+1) SLAC couldn’t open raw socket (Operation not permitted)
+   - Root cause: missing capabilities on SLAC binary.
+   - Fix: `setcap cap_net_raw,cap_net_admin=eip` on `EvseSlac` (and optionally `EvseV2G`). Automated in scripts.
+
+2) V2G bind() failed: Address family not supported / no IPv6 link‑local
+   - Root cause: IPv6 disabled (or iface up without LL).
+   - Fix: enable IPv6 globally and for PLC iface; if needed add `fe80::/64` LL. Automated in scripts.
+
+3) Manager crash `std::future_error: Promise already satisfied`
+   - Observed immediately after “No powermeter value received yet!”.
+   - Fix applied: removed `evse_params_provider` from PLC‑only profile; manager runs stable. If you need external derating, re‑add it after basic end‑to‑end tests are stable.
+
+4) `ESP periph serial open failed`
+   - Root cause: wrong/missing `ESP32_TTY` or device busy.
+   - Fix: set `tty: /dev/ttyACM0`, ensure user in `dialout`, and confirm no other process holds the port.
+
+5) Certificates warning
+   - `EvseSecurity` creates defaults when CSMS bundle is missing. OK for local testing; configure real CA bundle for PnC.
+
+## How To Validate End‑to‑End
+
+- PLC NIC health
+  - `everest/scripts/qca_health.sh` and/or `ip -6 addr show dev eth1`
+
+- Start in foreground
+  - `PYTHONPATH="$(pwd)/everest/everest-core/build/dist/lib/everest/everestpy" bash everest/scripts/run_hw_native.sh`
+
+- MQTT topics (examples)
+  - `mosquitto_sub -v -t 'everest/esp32_hal_adapter/#'`
+  - `mosquitto_sub -v -t 'everest/evse_manager/#'`
+
+- HAL sanity without an EV
+  - You should see `capabilities` and `telemetry` published shortly after boot.
+  - `event` may stay at `A` until CP state changes.
+
+## Next Tests & Edge Cases To Cover
+
+- SLAC matching with an actual vehicle or simulator; verify EV MAC learned and V2G session starts.
+- CP state transitions A→B→C… and replug sequences; ensure `event` stream aligns with mechanical state.
+- PSU commands: drive `setExportVoltageCurrent` across a range and verify `voltage_current` tracking and EvseManager current budgeting.
+- HAL resilience: unplug/replug ESP32 while running; confirm auto‑reconnect and safe defaults.
+- PLC watchdog/soft reset paths under heavy traffic; confirm IPv6 LL remains stable and SLAC recovers.
+- Re‑enable `evse_params_provider` (external derating) once base path is stable; ensure it does not cause early termination on this image.
+
+## One‑liners To Reapply Critical Fixes
+
+- Capabilities
+  - `sudo setcap cap_net_raw,cap_net_admin=eip /usr/local/libexec/everest/modules/EvseSlac/EvseSlac`
+
+- IPv6 enablement for PLC iface
+  - `echo 0 | sudo tee /proc/sys/net/ipv6/conf/all/disable_ipv6`
+  - `echo 0 | sudo tee /proc/sys/net/ipv6/conf/eth1/disable_ipv6`
+  - `sudo ip link set eth1 up; ip -6 addr show dev eth1 | grep fe80 || sudo ip -6 addr add fe80::2/64 dev eth1`
+
+If you want these baked in automatically, (re)run `sudo bash everest/scripts/setup_native_pi.sh`.
+
+## Firmware Protocol Compatibility (ESP32‑S3 main.cpp)
+
+The ESP32 firmware under `firmware/esp32s3_cp/src/main.cpp` implements a newline‑delimited JSON protocol over UART. The HAL speaks the same protocol.
+
+- JSON‑RPC requests (`{"type":"req","id":"…","method":"…","params":{…}}`) implemented by firmware and used by the HAL:
+  - `sys.ping` → keepalive
+  - `sys.info` → mode `hw|sim`, capabilities `["contactor","dc","meter","cp"]`, thresholds
+  - `sys.arm` → arm window (optional)
+  - `dc.enable {on}` → on/off intent
+  - `dc.set {v,i[,p_w|p_kw]}` → voltage/current target (HAL maps EVerest `setExportVoltageCurrent` to this)
+  - `dc.status` → state and last setpoints
+  - `meter.read` → `{v,i,p,e}` (HAL maps to `power_supply_DC/voltage_current` + cached energy)
+  - `contactor.set {on}` / `contactor.check` → optional direct contactor control
+
+- CP helper (plain JSON with `{"cmd":"…"}`) implemented by firmware and used by HAL:
+  - `get_status` → `{"type":"status","cp_mv","cp_mv_robust","state":"A..F","mode":"dc|manual", "dc":{…}}`
+  - `set_mode {mode: "dc"|"manual"}` → switch DC auto vs PWM manual
+  - `set_pwm {duty, enable?}` → duty in percent, optional enable; HAL exposes as `pwm_on(value)`/`pwm_off()`
+  - `cp.set_thresholds` / `cp.auto_cal` → optional calibration helpers
+
+- Events emitted by the firmware and handled by the HAL:
+  - JSON‑RPC event `{"type":"evt","method":"evt:contactor.change","result":{"on":bool,"aux_ok":bool}}`
+    - HAL publishes `evse_board_support/event` as `PowerOn`/`PowerOff` on this notification.
+  - Periodic `status` frames contain CP state and PWM status (HAL tolerates missing `pwm{}` and defaults safely).
+
+Minor notes
+- The HAL tolerates both legacy and canonical field names in commands (`value` vs `duty_cycle`, `voltage/current` vs `voltage_V/current_A`).
+- Contactors toggled by the DC state machine may not raise a `evt:contactor.change` event unless controlled via `contactor.set`; this is fine for the PLC‑only profile where EvseManager gates power via HLC phases.
+
+
 ## What You Need
 - Raspberry Pi 4/5 with 64‑bit Raspberry Pi OS (Bookworm) or Ubuntu 22.04/24.04 (x86_64/arm64)
 - Root access (`sudo`)

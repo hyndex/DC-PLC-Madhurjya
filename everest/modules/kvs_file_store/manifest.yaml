@@ -1,0 +1,15 @@
+description: Simple JSON-backed key-value store for persistence
+config:
+  path:
+    description: JSON file path to persist keys
+    type: string
+    default: /var/lib/everest/kvs.json
+provides:
+  main:
+    interface: kvs
+    description: Implements the kvs interface using a local JSON file
+metadata:
+  license: https://opensource.org/licenses/Apache-2.0
+  authors:
+    - Joulepoint
+

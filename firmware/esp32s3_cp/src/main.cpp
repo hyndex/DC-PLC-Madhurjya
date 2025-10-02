@@ -447,6 +447,9 @@ static bool g_last_selftest_pass = false;
 #endif
 static bool g_estop_latched = false;
 static volatile bool g_test_running = false;
+// Fallback simulated measurements when module/meter absent
+static float g_fake_v_meas = 0.0f;
+static float g_fake_i_meas = 0.0f;
 
 // Helpers
 static inline float clampf(float x, float lo, float hi){ return x<lo?lo:(x>hi?hi:x); }
@@ -900,6 +903,10 @@ static void process_line(String &line) {
       if (on && !g_contactor_aux) { g_contactor_cmd=true; if (g_periph_mode==MODE_HW) { hw_contactor_set(true); delay(60); g_contactor_aux=hw_contactor_aux(); } else { delay(40); g_contactor_aux=true; } }
       g_dc_enabled = on;
       if (!on) { /* soft stop handled by state machine */ }
+      // Emit contactor change event (also in sim mode) so higher layers can react
+      StaticJsonDocument<160> evt; evt["type"]="evt"; evt["id"]=0; evt["ts"]=millis(); evt["method"]="evt:contactor.change";
+      JsonObject er = evt.createNestedObject("result"); er["on"]=g_dc_enabled; er["aux_ok"]=g_contactor_aux;
+      rpc_send(evt);
       StaticJsonDocument<128> res; res["enabled"]=g_dc_enabled; res["state"]=(int)g_dc_state; send_res(res.as<JsonVariant>()); return;
     }
 
@@ -997,8 +1004,8 @@ static void process_line(String &line) {
     if (!strcmp(method, "meter.stream_stop"))  { g_meter_stream = false; StaticJsonDocument<64> res; res["ok"]=true; send_res(res.as<JsonVariant>()); return; }
     if (!strcmp(method, "meter.reset"))        { g_meter_e_kwh = 0.0f; g_meter_last_ms = millis(); StaticJsonDocument<64> res; res["ok"]=true; send_res(res.as<JsonVariant>()); return; }
     if (!strcmp(method, "meter.read")) {
-      float v = (g_module_count>0)? (g_modules[0].last_v_mv/1000.0f) : 0.0f;
-      float i = (g_module_count>0)? (g_modules[0].last_i_ma/1000.0f) : 0.0f;
+      float v = (g_module_count>0)? (g_modules[0].last_v_mv/1000.0f) : g_fake_v_meas;
+      float i = (g_module_count>0)? (g_modules[0].last_i_ma/1000.0f) : g_fake_i_meas;
       float p = (v*i)/1000.0f; // kW
       StaticJsonDocument<192> res; res["v"]=v; res["i"]=i; res["p"]=p; res["e"]=g_meter_e_kwh; send_res(res.as<JsonVariant>()); return;
     }
@@ -1233,8 +1240,27 @@ void loop() {
 
   // Meter integration + event
   if (g_meter_last_ms == 0) g_meter_last_ms = now;
-  float v = (g_module_count>0)? (g_modules[0].last_v_mv/1000.0f) : 0.0f;
-  float i = (g_module_count>0)? (g_modules[0].last_i_ma/1000.0f) : 0.0f;
+  float v = 0.0f, i = 0.0f;
+  if (g_module_count>0) {
+    v = (g_modules[0].last_v_mv/1000.0f);
+    i = (g_modules[0].last_i_ma/1000.0f);
+  } else {
+    // Simulate measured values when module is not present
+    float dt = (now - g_meter_last_ms) / 1000.0f;
+    if (dt < 0) dt = 0;
+    float dv = 60.0f * dt;  // V/s
+    float di = 20.0f * dt;  // A/s
+    float i_tgt = (g_dc_i_target_A>0.0f) ? g_dc_i_target_A : 3.0f;
+    if (g_dc_enabled && (g_dc_state!=DCState::E_STOP)) {
+      g_fake_v_meas = step_towards(g_fake_v_meas, g_dc_v_set_V, dv);
+      g_fake_i_meas = step_towards(g_fake_i_meas, i_tgt, di);
+    } else {
+      g_fake_v_meas = step_towards(g_fake_v_meas, 0.0f, dv);
+      g_fake_i_meas = step_towards(g_fake_i_meas, 0.0f, di);
+    }
+    v = g_fake_v_meas;
+    i = g_fake_i_meas;
+  }
   float p_kW = (v*i)/1000.0f;
   if (p_kW > 0.0f) {
     float dt_h = (now - g_meter_last_ms) / 3600000.0f;

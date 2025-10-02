@@ -3,7 +3,7 @@ import time
 import threading
 
 try:
-    from everestpy import Module
+    from everest.framework import Module
 except Exception:
     class Module:
         def __init__(self, *args, **kwargs): pass

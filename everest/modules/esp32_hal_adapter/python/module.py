@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any
 
 try:
     # Real runtime for Python modules in EVerest
-    from everestpy import Module
+    from everest.framework import Module
 except Exception:
     # Minimal stub to allow local testing without everestd
     class Module:  # type: ignore
@@ -22,7 +22,13 @@ except Exception:
         def register_command(self, iface: str, name: str, handler):
             setattr(self, f"cmd_{iface}_{name}", handler)
 
-from .esp_periph_client import EspPeriphClient, CPStatus, MeterSample
+try:
+    from .esp_periph_client import EspPeriphClient, CPStatus, MeterSample
+except Exception:
+    # Fallback when executed as a script (no package context)
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(__file__))
+    from esp_periph_client import EspPeriphClient, CPStatus, MeterSample  # type: ignore
 
 
 @dataclass

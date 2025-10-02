@@ -88,9 +88,18 @@ step_install_prebuilt_dist() {
 step_install_modules() {
   log "Installing Joulepoint modules (HAL + derate)"
   install -d "${PREFIX}/libexec/everest/modules/esp32_hal_adapter" \
-             "${PREFIX}/libexec/everest/modules/evse_params_provider"
+             "${PREFIX}/libexec/everest/modules/evse_params_provider" \
+             "${PREFIX}/libexec/everest/modules/kvs_file_store"
   rsync -a "${ROOT}/modules/esp32_hal_adapter/" "${PREFIX}/libexec/everest/modules/esp32_hal_adapter/"
   rsync -a "${ROOT}/modules/evse_params_provider/" "${PREFIX}/libexec/everest/modules/evse_params_provider/"
+  rsync -a "${ROOT}/modules/kvs_file_store/" "${PREFIX}/libexec/everest/modules/kvs_file_store/"
+  # Also mirror modules into build dist tree if present (so manager can load from project dist)
+  local dist_mods="${ROOT}/everest-core/build/dist/libexec/everest/modules"
+  if [[ -d "$dist_mods" ]]; then
+    rsync -a "${ROOT}/modules/esp32_hal_adapter/" "$dist_mods/esp32_hal_adapter/" || true
+    rsync -a "${ROOT}/modules/evse_params_provider/" "$dist_mods/evse_params_provider/" || true
+    rsync -a "${ROOT}/modules/kvs_file_store/" "$dist_mods/kvs_file_store/" || true
+  fi
   # Helper scripts used by watchdog/health checks
   install -d "${PREFIX}/libexec/everest/scripts"
   install -m 0755 "${ROOT}/scripts/qca_watchdog.sh" "${PREFIX}/libexec/everest/scripts/qca_watchdog.sh"
@@ -115,6 +124,33 @@ ESP32_BAUD=115200
 EVSE_MAX_CURRENT_A=200
 EVSE_MAX_VOLTAGE_V=920
 EOF
+  fi
+}
+
+step_capabilities() {
+  log "Setting CAP_NET_RAW+CAP_NET_ADMIN on SLAC/V2G binaries (if present)"
+  local root_dist="${PREFIX}/libexec/everest/modules"
+  for bin in \
+    "${root_dist}/EvseSlac/EvseSlac" \
+    "${root_dist}/EvseV2G/EvseV2G"; do
+    if [[ -x "$bin" ]]; then
+      setcap cap_net_raw,cap_net_admin=eip "$bin" 2>/dev/null || true
+    fi
+  done
+}
+
+step_enable_ipv6_plc() {
+  local ifc="${PLC_IFACE:-${IFACE:-eth1}}"
+  log "Ensuring IPv6 enabled on ${ifc} and link-local present"
+  install -d /etc/sysctl.d
+  cat > /etc/sysctl.d/everest-plc.conf <<EOF
+net.ipv6.conf.all.disable_ipv6 = 0
+net.ipv6.conf.${ifc}.disable_ipv6 = 0
+EOF
+  sysctl -p /etc/sysctl.d/everest-plc.conf >/dev/null 2>&1 || true
+  ip link set dev "$ifc" up 2>/dev/null || true
+  if ! ip -6 addr show dev "$ifc" | grep -q 'fe80::'; then
+    ip -6 addr add fe80::2/64 dev "$ifc" scope link 2>/dev/null || true
   fi
 }
 
@@ -172,8 +208,12 @@ main() {
   fi
   step_install_modules
   step_install_configs
+  # Create state dir for local kvs module and other runtime files
+  install -d /var/lib/everest
   step_stage_pnc || true
   step_systemd
+  step_capabilities || true
+  step_enable_ipv6_plc || true
   step_plc_driver_note
   log "Setup complete. Edit ${ETC_DIR}/ev.env and ${ETC_DIR}/plc_only.yaml as needed, then: systemctl start everest-hw"
 }
