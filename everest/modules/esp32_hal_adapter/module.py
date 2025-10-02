@@ -38,6 +38,12 @@ class Runner:
         self._sim_v: float = 0.0
         self._sim_i: float = 0.0
         self._last_meter_ok_ts: float = 0.0
+        self._last_cp_state: str | None = None
+        self._last_kick_ts: float = 0.0
+        try:
+            self._kick_enable = bool(int(os.getenv('EVSE_DEBUG_FORCE_CP_C', '0')))
+        except Exception:
+            self._kick_enable = False
 
         setup = self.m.say_hello()
         cfg = setup.configs.module
@@ -146,6 +152,24 @@ class Runner:
                 if st:
                     ev = {'event': st.state[:1].upper()}
                     self.m.publish_variable('evse_board_support', 'event', ev)
+                    # Optional repeated PWM kick to help CP transition from B to C
+                    try:
+                        now = time.time()
+                        if self._kick_enable:
+                            cur = st.state[:1].upper()
+                            self._last_cp_state = cur
+                            # If we are stuck in B for > 3s after allow_power_on, kick again
+                            if cur == 'B' and self._power_allowed and (now - self._last_kick_ts) > 3.0:
+                                try:
+                                    c._send_cp({"cmd": "set_mode", "mode": "manual"})
+                                    c._send_cp({"cmd": "set_pwm", "duty": 5, "enable": True})
+                                    time.sleep(0.6)
+                                    c._send_cp({"cmd": "set_mode", "mode": "dc"})
+                                except Exception:
+                                    pass
+                                self._last_kick_ts = now
+                    except Exception:
+                        pass
                 # Try real meter first
                 published = False
                 try:
@@ -274,6 +298,18 @@ class Runner:
         try:
             if self._client:
                 self._client.send_req('dc.enable', {'on': bool(allow)}, timeout=0.5)
+                # Optional: force CP to C briefly to help vehicles that need PWM kick
+                if allow and os.getenv('EVSE_DEBUG_FORCE_CP_C', '0') == '1':
+                    try:
+                        self._client._send_cp({"cmd": "set_mode", "mode": "manual"})
+                        self._client._send_cp({"cmd": "set_pwm", "duty": 5, "enable": True})
+                        time.sleep(1.0)
+                    except Exception:
+                        pass
+                    try:
+                        self._client._send_cp({"cmd": "set_mode", "mode": "dc"})
+                    except Exception:
+                        pass
         except Exception:
             pass
         return True

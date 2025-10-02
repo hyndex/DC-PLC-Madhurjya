@@ -4,9 +4,13 @@ active_modules:
     config_implementation:
       main:
         device: ${PLC_IFACE}
-        set_key_timeout_ms: 1000
+        set_key_timeout_ms: 5000
         link_status_detection: true
         publish_mac_on_match_cnf: true
+        publish_mac_on_first_parm_req: true
+        do_chip_reset: true
+        chip_reset_delay_ms: 200
+        chip_reset_timeout_ms: 1000
   evse_v2g:
     module: EvseV2G
     config_module:
