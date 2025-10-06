@@ -1,0 +1,1 @@
+$ bash -lc 'cd firmware/esp32s3_cp && UPLOAD_PORT=/dev/ttyACM0 ../../.venv/bin/platformio run -t upload --upload-port /dev/ttyACM0'
