@@ -1,1 +1,187 @@
 EVSE_SIM_CONTACTOR=1 EVSE_PERIPH_MODE=sim EVSE_SDP_WATCHDOG_S=3 EVSE_SDP_REBIND_ON_WATCHDOG=1 EVSE_PLC_SOFT_RESET=1 EVSE_PLC_AUTO_SOFT_RESET_SPEED=8000000 EVSE_PLC_AUTO_SOFT_RESET_BURST=5000 PLC_IFACE=eth1 EVSE_CP_HOST_HINTS=1 EVSE_TEE_JSON=/tmp/evse_e2e.jsonl scripts/start_evse_hal.sh --evse-id INJPSE0006360 --adapter esp-periph --port /dev/ttyACM0 --json /tmp/evse_e2e.jsonl
+
+(.venv) joulepoint@jpi:~/Desktop/DC-PLC-Madhurjya $ sudo EVSE_PLC_SOFT_RESET=1 EVSE_PLC_AUTO_SOFT_RESET_SPEED=8000000 EVSE_PLC_AUTO_SOFT_RESET_BURST=5000 PLC_IFACE=eth1 EVSE_CP_HOST_HINTS=1 EVSE_TEE_JSON=/tmp/evse_e2e.jsonl scripts/start_evse_hal.sh --evse-id INJPSE0006360 --adapter esp-periph --port /dev/ttyACM0 --json /tmp/evse_e2e.jsonl
+[start-evse-hal] EVSE_ID=INJPSE0006360 IFACE=eth1 ADAPTER=esp-periph PORT=/dev/ttyACM0
+[start-evse-hal] LOG_LEVEL=INFO LOG_FORMAT=text (tee -> /tmp/evse_e2e.jsonl)
+[start-evse-hal] Python=/opt/evse-venv/bin/python
+[start-evse-hal] Cleaning up previous runs (if any) ...
+[start-evse-hal] Performing PLC soft reset (qcaspi) ...
+[plc-soft-reset] Bringing PLC interface down (if present) ...
+[plc-soft-reset] Attempting module reload (qcaspi) ...
+[plc-soft-reset] Rebinding SPI device if driver path exists ...
+[plc-soft-reset] Waiting for netdev ...
+[plc-soft-reset] Detected PLC if: eth1
+[plc-soft-reset] Bringing iface up and permissive ...
+[plc-soft-reset] ethtool driver stats:
+NIC statistics:
+     Triggered resets: 1
+     Device resets: 0
+     Reset timeouts: 0
+     Read errors: 0
+     Write errors: 0
+     Read buffer errors: 0
+     Write buffer errors: 0
+     Out of memory: 0
+     Write buffer misses: 0
+     Transmit ring full: 0
+     SPI errors: 0
+     Write verify errors: 0
+     Buffer available errors: 0
+     Bad signature: 0
+[plc-soft-reset] Done.
+[start-evse-hal] Pre-warming EXI codec ...
+2025-10-06 21:04:02,441 INFO slac_session: 
+
+#################################################
+ ###### Starting PySlac version: 0.8.3 #######
+#################################################
+
+2025-10-06 21:04:02,443 INFO util.standards_check: Timing summary (CCS/ISO 15118)
+2025-10-06 21:04:02,444 INFO util.standards_check: SLAC: init_timeout=50.000s, atten_results_timeout=EV-defined (<=1200ms)
+2025-10-06 21:04:02,444 INFO util.standards_check: ISO15118 Shared: SDP_REQ=0.250s, SAP_REQ=2.000s, COMM_SETUP=20.000s, SEQ_TO=60.000s, ONGOING=60.000s
+2025-10-06 21:04:02,445 INFO util.standards_check: ISO15118-2: SESSION_SETUP=2.000s, SERVICE_DISCOVERY=2.000s, CPD=2.000s, CURRENT_DEMAND=0.250s
+2025-10-06 21:04:02,445 INFO util.standards_check: ISO15118-20: COMM_SETUP=20.000s, SEQ_TO=60.000s, AC_CL=0.500s, DC_CL=0.500s
+2025-10-06 21:04:02,448 INFO evse.main: PLC interface detected
+2025-10-06 21:04:02,526 INFO esp.periph: ESP periph serial open
+2025-10-06 21:04:02,572 INFO hal.esp.periph: ESP periph info
+2025-10-06 21:04:02,686 INFO hal.esp.periph: ESP periph dc.cfg
+2025-10-06 21:04:02,745 INFO evse.main: HAL mode: waiting for CP states to start SLAC
+2025-10-06 21:04:02,807 INFO hal.esp.periph: CP state (init)
+2025-10-06 21:04:02,957 INFO evse.main: Vehicle detected via CP
+2025-10-06 21:04:02,963 INFO evse.main: PLC interface detected
+2025-10-06 21:04:02,990 INFO slac_session: CM_SET_KEY: Started...
+2025-10-06 21:04:12,994 INFO slac_session: CM_SET_KEY: Finished!
+2025-10-06 21:04:12,995 INFO evse.main: CM_SET_KEY succeeded
+2025-10-06 21:04:19,255 INFO evse.main: HAL SLAC proactive nudge
+2025-10-06 21:04:31,301 INFO evse.main: HAL SLAC proactive nudge
+2025-10-06 21:04:43,302 INFO evse.main: HAL SLAC proactive nudge
+2025-10-06 21:04:55,307 INFO evse.main: HAL SLAC proactive nudge
+2025-10-06 21:05:03,043 WARNING slac_session: Timeout waiting for CM_SLAC_PARM.REQ: 
+2025-10-06 21:05:03,043 ERROR slac_utils: Exception raised by task: Session for EVSE INJPSE0006360
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/asyncio/tasks.py", line 507, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "/home/joulepoint/Desktop/DC-PLC-Madhurjya/src/pyslac/pyslac/sockets/async_linux_socket.py", line 172, in readeth
+    bytes_rcvd = await loop.sock_recv(s, rcv_frame_size)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.13/asyncio/selector_events.py", line 384, in sock_recv
+    return await fut
+           ^^^^^^^^^
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/joulepoint/Desktop/DC-PLC-Madhurjya/src/pyslac/pyslac/utils.py", line 175, in task_callback
+    task.result()
+    ~~~~~~~~~~~^^
+  File "/home/joulepoint/Desktop/DC-PLC-Madhurjya/src/pyslac/pyslac/session.py", line 924, in start_matching
+    await slac_session.evse_slac_parm()
+  File "/home/joulepoint/Desktop/DC-PLC-Madhurjya/src/pyslac/pyslac/session.py", line 370, in evse_slac_parm
+    raise e
+  File "/home/joulepoint/Desktop/DC-PLC-Madhurjya/src/pyslac/pyslac/session.py", line 364, in evse_slac_parm
+    data_rcvd = await self.rcv_frame(
+                ^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "/home/joulepoint/Desktop/DC-PLC-Madhurjya/src/pyslac/pyslac/session.py", line 259, in rcv_frame
+    return await asyncio.wait_for(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+    ...<2 lines>...
+    )
+    ^
+  File "/usr/lib/python3.13/asyncio/tasks.py", line 506, in wait_for
+    async with timeouts.timeout(timeout):
+               ~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "/usr/lib/python3.13/asyncio/timeouts.py", line 116, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+2025-10-06 21:05:03,279 WARNING evse.main: SLAC match timeout (attempt 1/5); applying restart hint
+2025-10-06 21:05:03,280 INFO evse.main: HAL SLAC restart hint requested
+2025-10-06 21:05:03,280 INFO slac_session: CM_SET_KEY: Started...
+2025-10-06 21:05:13,289 INFO slac_session: CM_SET_KEY: Finished!
+2025-10-06 21:05:15,003 INFO evse.main: Vehicle detected via CP
+2025-10-06 21:05:15,008 INFO evse.main: PLC interface detected
+2025-10-06 21:05:15,026 INFO slac_session: CM_SET_KEY: Started...
+2025-10-06 21:05:25,038 INFO slac_session: CM_SET_KEY: Finished!
+2025-10-06 21:05:25,039 INFO evse.main: CM_SET_KEY succeeded
+2025-10-06 21:05:31,288 INFO evse.main: HAL SLAC proactive nudge
+2025-10-06 21:05:36,124 INFO slac_session: Matching ongoing (EVSE ID: INJPSE0006360. Run ID: b'\xf5\xea\xe3\x7f\xb4o\xaeb').
+2025-10-06 21:05:36,124 INFO evse.main: SLAC matching in progress for INJPSE0006360
+2025-10-06 21:05:36,237 INFO evse.main: SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=46:11:30:45:be:97:06 run_id=f5:ea:e3:7f:b4:6f:ae:62
+2025-10-06 21:05:37,084 INFO slac_session: PEV-EVSE MATCHED Successfully, Link Established (EVSE ID: INJPSE0006360. Run ID: b'\xf5\xea\xe3\x7f\xb4o\xaeb').
+2025-10-06 21:05:37,177 INFO evse.main: SLAC peer info: ev_mac=38:1f:26:33:9d:b0 nid=46:11:30:45:be:97:06 run_id=f5:ea:e3:7f:b4:6f:ae:62
+2025-10-06 21:05:37,179 INFO evse.main: Launching ISO 15118 SECC
+2025-10-06 21:05:37,237 INFO evse.main: EVSE controller=hal
+2025-10-06 21:05:40,548 INFO iso15118.shared.exi_codec: EXI Codec version: 1.55
+2025-10-06 21:05:40,548 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.SAP): {"supportedAppProtocolRes": {"ResponseCode": "OK_SuccessfulNegotiation", "SchemaID": 0}}
+2025-10-06 21:05:40,707 INFO iso15118.shared.exi_codec: EXI Codec version: 1.55
+2025-10-06 21:05:40,708 INFO iso15118.secc: Starting 15118 version: 0.31.0
+2025-10-06 21:05:40,709 INFO iso15118.secc.comm_session_handler: Communication session handler started
+2025-10-06 21:05:40,711 INFO iso15118.secc.transport.udp_server: UDP server socket ready
+2025-10-06 21:05:40,711 INFO iso15118.secc.transport.udp_server: UDP server started at address FF02::1%eth1 and port 15118
+2025-10-06 21:05:41,055 INFO iso15118.secc.comm_session_handler: SDPRequest received: [Security: NO_TLS, Protocol: TCP]
+2025-10-06 21:05:41,060 INFO iso15118.secc.transport.tcp_server: TCP bind succeeded on fe80::d818:86ff:feb7:7143%eth1:50627
+2025-10-06 21:05:41,062 INFO iso15118.secc.transport.tcp_server: TCP server started at address fe80::d818:86ff:feb7:7143%eth1 and port 50627
+2025-10-06 21:05:41,067 INFO iso15118.secc.comm_session_handler: Sending SDPResponse: [ IP address: fe80::d818:86ff:feb7:7143, Port: 50627 , Security: NO_TLS , Transport: TCP ]
+2025-10-06 21:05:41,148 INFO iso15118.secc.transport.udp_server: UDP server has been paused.
+2025-10-06 21:05:41,149 INFO iso15118.secc.comm_session_handler: TCP client connected, client address is ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 47).
+2025-10-06 21:05:41,149 INFO hlc: ISO EVSEID
+2025-10-06 21:05:41,174 INFO iso15118.shared.comm_session: Starting a new communication session
+2025-10-06 21:05:41,175 INFO iso15118.shared.states: Entered state SupportedAppProtocol
+2025-10-06 21:05:41,435 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.SAP): {"supportedAppProtocolReq":{"AppProtocol":[{"ProtocolNamespace":"urn:din:70121:2012:MsgDef","VersionNumberMajor":2,"VersionNumberMinor":0,"SchemaID":1,"Priority":2},{"ProtocolNamespace":"urn:iso:15118:2:2013:MsgDef","VersionNumberMajor":2,"VersionNumberMinor":0,"SchemaID":0,"Priority":1}]}}
+2025-10-06 21:05:41,436 INFO iso15118.shared.comm_session: supportedAppProtocolReq received
+2025-10-06 21:05:41,437 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.SAP): {"supportedAppProtocolRes": {"ResponseCode": "OK_SuccessfulNegotiation", "SchemaID": 0}}
+2025-10-06 21:05:41,450 INFO iso15118.secc.states.sap_states: Chosen protocol: ISO_15118_2
+2025-10-06 21:05:41,451 INFO iso15118.shared.comm_session: Sent supportedAppProtocolRes
+2025-10-06 21:05:41,451 INFO iso15118.secc.controller.simulator: iso15118 state: SupportedAppProtocol
+2025-10-06 21:05:41,452 INFO hlc: ISO15118 state
+2025-10-06 21:05:41,457 INFO iso15118.shared.states: Entered state SessionSetup
+2025-10-06 21:05:41,458 INFO iso15118.secc.controller.simulator: iso15118 state: SessionSetup
+2025-10-06 21:05:41,458 INFO hlc: ISO15118 state
+2025-10-06 21:05:41,899 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"00"},"Body":{"SessionSetupReq":{"EVCCID":"381F26339DB0"}}}}
+2025-10-06 21:05:41,901 INFO iso15118.shared.comm_session: SessionSetupReq received
+2025-10-06 21:05:41,902 INFO hlc: ISO EVSEID
+2025-10-06 21:05:41,903 INFO iso15118.secc.quirks: EVCC identified: 381F26339DB0
+2025-10-06 21:05:41,904 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "52B450F7C1288BFD"}, "Body": {"SessionSetupRes": {"ResponseCode": "OK_NewSessionEstablished", "EVSEID": "INJPSE0006360", "EVSETimeStamp": 1759764941}}}}
+2025-10-06 21:05:42,202 INFO iso15118.shared.comm_session: Sent SessionSetupRes
+2025-10-06 21:05:42,202 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 697 ms
+2025-10-06 21:05:42,203 INFO iso15118.secc.controller.simulator: iso15118 state: SessionSetup
+2025-10-06 21:05:42,203 INFO hlc: ISO15118 state
+2025-10-06 21:05:42,203 INFO iso15118.shared.states: Entered state ServiceDiscovery
+2025-10-06 21:05:42,204 INFO iso15118.secc.controller.simulator: iso15118 state: ServiceDiscovery
+2025-10-06 21:05:42,204 INFO hlc: ISO15118 state
+2025-10-06 21:05:42,455 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"52B450F7C1288BFD"},"Body":{"ServiceDiscoveryReq":{}}}}
+2025-10-06 21:05:42,456 INFO iso15118.shared.comm_session: ServiceDiscoveryReq received
+2025-10-06 21:05:42,479 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "52B450F7C1288BFD"}, "Body": {"ServiceDiscoveryRes": {"ResponseCode": "OK", "PaymentOptionList": {"PaymentOption": ["ExternalPayment"]}, "ChargeService": {"ServiceID": 1, "ServiceName": "AC_DC_Charging", "ServiceCategory": "EVCharging", "FreeService": false, "SupportedEnergyTransferMode": {"EnergyTransferMode": ["DC_core", "DC_extended"]}}}}}}
+2025-10-06 21:05:42,752 INFO iso15118.shared.comm_session: Sent ServiceDiscoveryRes
+2025-10-06 21:05:42,753 WARNING iso15118.shared.comm_session: Charge-loop processing latency high: 507 ms
+2025-10-06 21:05:42,753 INFO iso15118.secc.controller.simulator: iso15118 state: ServiceDiscovery
+2025-10-06 21:05:42,753 INFO hlc: ISO15118 state
+2025-10-06 21:05:42,975 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"52B450F7C1288BFD"},"Body":{"PaymentServiceSelectionReq":{"SelectedPaymentOption":"ExternalPayment","SelectedServiceList":{"SelectedService":[{"ServiceID":1}]}}}}}
+2025-10-06 21:05:42,978 INFO iso15118.shared.comm_session: PaymentServiceSelectionReq received
+2025-10-06 21:05:42,978 INFO iso15118.shared.states: Entered state PaymentServiceSelection
+2025-10-06 21:05:42,979 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "52B450F7C1288BFD"}, "Body": {"PaymentServiceSelectionRes": {"ResponseCode": "OK"}}}}
+2025-10-06 21:05:43,170 INFO iso15118.shared.comm_session: Sent PaymentServiceSelectionRes
+2025-10-06 21:05:43,170 INFO iso15118.secc.controller.simulator: iso15118 state: PaymentServiceSelection
+2025-10-06 21:05:43,171 INFO hlc: ISO15118 state
+2025-10-06 21:05:43,389 INFO iso15118.shared.exi_codec: Decoded message (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message":{"Header":{"SessionID":"52B450F7C1288BFD"},"Body":{"AuthorizationReq":{}}}}
+2025-10-06 21:05:43,389 INFO iso15118.shared.comm_session: AuthorizationReq received
+2025-10-06 21:05:43,390 INFO iso15118.shared.states: Entered state Authorization
+2025-10-06 21:05:43,391 INFO iso15118.shared.exi_codec: Message to encode (ns=Namespace.ISO_V2_MSG_DEF): {"V2G_Message": {"Header": {"SessionID": "52B450F7C1288BFD"}, "Body": {"AuthorizationRes": {"ResponseCode": "OK", "EVSEProcessing": "Finished"}}}}
+2025-10-06 21:05:43,577 INFO iso15118.shared.comm_session: Sent AuthorizationRes
+2025-10-06 21:05:43,578 INFO iso15118.secc.controller.simulator: iso15118 state: Authorization
+2025-10-06 21:05:43,578 INFO hlc: ISO15118 state
+2025-10-06 21:05:43,578 INFO iso15118.shared.states: Entered state ChargeParameterDiscovery
+2025-10-06 21:05:43,579 INFO iso15118.secc.controller.simulator: iso15118 state: ChargeParameterDiscovery
+2025-10-06 21:05:43,579 INFO hlc: ISO15118 state
+2025-10-06 21:05:44,866 INFO iso15118.shared.comm_session: The data link will SessionStopAction.TERMINATE in 2 seconds and the TCP connection will close in 5 seconds. 
+2025-10-06 21:05:44,867 INFO iso15118.shared.comm_session: Reason: TCP peer closed connection
+2025-10-06 21:05:44,867 INFO iso15118.shared.comm_session: v2g_metrics: {"type": "v2g_session_metrics", "session_id": "52B450F7C1288BFD", "peer": "('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 47)", "protocol": "ISO_15118_2", "successful": false, "reason": "TCP peer closed connection", "rx_decode_errors": 0, "rx_validation_errors": 0, "rx_invalid_v2gtp": 0, "dup_resent_count": 0, "dup_resend_enabled": true, "dup_window_s": 2.0, "dup_resend_max": 3, "tx_drop_prob": 0.0}
+2025-10-06 21:05:44,909 WARNING iso15118.secc.transport.tcp_server: Closing TCP server
+2025-10-06 21:05:46,910 INFO iso15118.secc.controller.simulator: Session ended in ChargeParameterDiscovery (TCP peer closed connection).
+2025-10-06 21:05:46,910 INFO iso15118.shared.comm_session: SessionStopAction.TERMINATEd the data link
+2025-10-06 21:05:49,911 INFO iso15118.shared.comm_session: TCP connection closed to peer with address ('fe80::3a1f:26ff:fe33:9db0', 49153, 0, 47)
+2025-10-06 21:05:49,911 INFO iso15118.secc.transport.udp_server: UDP server has been resumed.
